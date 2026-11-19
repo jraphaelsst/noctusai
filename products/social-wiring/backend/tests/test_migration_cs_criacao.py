@@ -27,7 +27,10 @@ from tests.test_migration_cs_unified_chat import (  # the shared harness + SQL h
 )
 from tests.test_migration_cs_unified_chat import pytestmark  # noqa: F401 - same skip when the harness is absent
 
-NAMES = ("cs_criacao_posts", "cs_criacao_jobs", "cs_post_eventos_criacao", "cs_consentimentos_voz", "cs_criacao_cotas")
+NAMES = (
+    "cs_criacao_posts", "cs_criacao_jobs", "cs_post_eventos_criacao", "cs_consentimentos_voz", "cs_criacao_cotas",
+    "cs_post_criacao_transicionar",
+)
 FILES = {n: migration_path(BACKEND, n) for n in NAMES}
 
 ORG_Z = "00000000-0000-0000-0000-0000000000a0"  # default-labelled board, has Pronto
@@ -111,6 +114,26 @@ def passo(passo_: str, status: str, dados: str = "{}") -> str:
 
 def ev(tipo: str) -> str:
     return f"(SELECT count(*) FROM cs_post_eventos WHERE post_id = p AND tipo = '{tipo}')"
+
+
+def transicao(de: str, para: str, tipo: str, dados: str = "{}", falha: str = "NULL", ator: str = "NULL", rota: str = "NULL") -> str:
+    """``r := cs_post_criacao_transicionar(...)`` (369) as a SQL fragment; ``de``/``para``/``tipo`` are SQL literals."""
+    return f"r := cs_post_criacao_transicionar(o, p, {de}, {para}, {tipo}, '{dados}'::jsonb, {falha}, {ator}, {rota});"
+
+
+def tl001(call: str) -> str:
+    """The transition-log guards refuse with SQLSTATE TL001 (not raise_exception): ``call`` must raise exactly that."""
+    return (
+        f"BEGIN {call}; RAISE EXCEPTION 'no refusal (expected TL001)'; "
+        "EXCEPTION WHEN OTHERS THEN IF SQLSTATE <> 'TL001' THEN RAISE; END IF; END;"
+    )
+
+
+def estado_mudou(call: str) -> str:
+    return (
+        f"BEGIN {call}; RAISE EXCEPTION 'no refusal (expected estado_mudou)'; "
+        "EXCEPTION WHEN OTHERS THEN IF SQLERRM NOT LIKE 'estado_mudou:%' THEN RAISE; END IF; END;"
+    )
 
 
 SCENARIOS: dict[str, str] = {
@@ -252,8 +275,8 @@ SCENARIOS: dict[str, str] = {
           + expect("(from_state, to_state, actor_id::text)::text FROM cs_criacao_cota_events WHERE org_id = o AND seq = 2",
                    "(1500,4000,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
           + expect("round(((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric, 2)", "40.00", "state read in dollars")
-          + sqlstate("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o", "raise_exception")
-          + sqlstate("DELETE FROM cs_criacao_cota_events WHERE org_id = o", "raise_exception")
+          + tl001("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o")
+          + tl001("DELETE FROM cs_criacao_cota_events WHERE org_id = o")
           + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_cents = -1 WHERE org_id = o", "check_violation"),
     "M-E: month-to-date spend sums the ledger (failed steps spent too) and counts the steps with no measured cost": (
         passo("tts", "em_andamento")
@@ -268,6 +291,36 @@ SCENARIOS: dict[str, str] = {
         + "INSERT INTO cs_criacao_cotas (org_id, limite_usd_cents) VALUES (o, 300);"
         + "r := cs_criacao_cota_estado(o);"
         + "IF (r->>'restante_usd')::numeric <> -0.75 THEN RAISE EXCEPTION 'over quota: %', r; END IF;"
+    ),
+    "S5 transicionar: state + its event in one call; falha_codigo only for falhou; aprovado_em stamped once; the rota is kept": (
+        transicao("NULL", "'aprovado'", "NULL")
+        + expect("criacao_estado || '/' || (aprovado_em IS NOT NULL)::text FROM cs_posts WHERE id = p", "aprovado/true", "aprovado")
+        + expect(ev("criacao_enfileirada"), "0", "no event for an own-event state")
+        + transicao("'aprovado'", "'na_fila'", "'criacao_enfileirada'", '{"rota":"reel_narrado"}', rota="'reel_narrado'")
+        + expect("(criacao_estado, criacao_rota)::text FROM cs_posts WHERE id = p", "(na_fila,reel_narrado)", "queued")
+        + expect("(de, para, dados->>'rota')::text FROM cs_post_eventos WHERE post_id = p AND tipo = 'criacao_enfileirada'",
+                 "(aprovado,na_fila,reel_narrado)", "event de/para/dados")
+        + transicao("'na_fila'", "'falhou'", "NULL", falha="'cota'")
+        + expect("(criacao_estado, falha_codigo)::text FROM cs_posts WHERE id = p", "(falhou,cota)", "failed")
+        + transicao("'falhou'", "'na_fila'", "'criacao_enfileirada'")
+        + expect("(criacao_estado, falha_codigo IS NULL, criacao_rota)::text FROM cs_posts WHERE id = p",
+                 "(na_fila,t,reel_narrado)", "failure code cleared, rota kept")
+        + expect(ev("criacao_enfileirada"), "2", "two queue events")
+        + expect("count(*) FROM cs_post_eventos WHERE post_id = p AND ator_id IS NULL", "2", "actor rides on the row")
+    ),
+    "S5 transicionar: refusals are coded and write nothing (stale de, foreign org, missing code, unknown event)": (
+        transicao("NULL", "'aprovado'", "NULL")
+        + estado_mudou("PERFORM cs_post_criacao_transicionar(o, p, 'na_fila', 'gerando', NULL, '{}'::jsonb, NULL, NULL, NULL)")
+        + estado_mudou("PERFORM cs_post_criacao_transicionar(o, p, NULL, 'na_fila', 'criacao_enfileirada', '{}'::jsonb, NULL, NULL, NULL)")
+        + refuses("PERFORM cs_post_criacao_transicionar(gen_random_uuid(), p, 'aprovado', 'na_fila', 'criacao_enfileirada', '{}'::jsonb, NULL, NULL, NULL)",
+                  "post_nao_encontrado")
+        + refuses("PERFORM cs_post_criacao_transicionar(o, p, 'aprovado', 'falhou', NULL, '{}'::jsonb, NULL, NULL, NULL)", "falha_codigo_obrigatorio")
+        + refuses("PERFORM cs_post_criacao_transicionar(o, p, 'aprovado', 'falhou', NULL, '{}'::jsonb, 'Cota!', NULL, NULL)", "falha_codigo_obrigatorio")
+        + refuses("PERFORM cs_post_criacao_transicionar(o, p, 'aprovado', 'na_fila', 'criacao_enfileirada', '[]'::jsonb, NULL, NULL, NULL)", "dados_invalidos")
+        + sqlstate("PERFORM cs_post_criacao_transicionar(o, p, 'aprovado', 'na_fila', 'evento_inventado', '{}'::jsonb, NULL, NULL, NULL)", "check_violation")
+        + sqlstate("PERFORM cs_post_criacao_transicionar(o, p, 'aprovado', 'estado_inventado', 'criacao_enfileirada', '{}'::jsonb, NULL, NULL, NULL)", "check_violation")
+        + expect("criacao_estado FROM cs_posts WHERE id = p", "aprovado", "state untouched by every refusal")
+        + expect("count(*) FROM cs_post_eventos WHERE post_id = p", "0", "no event written by a refusal")
     ),
     "access: service_role reads the tables and EXECUTEs the RPCs, never writes the ledger; no browser role has anything": """
   IF NOT has_table_privilege('service_role', 'social_wiring.cs_criacao_jobs', 'SELECT') THEN RAISE EXCEPTION 'service cannot read jobs'; END IF;
@@ -285,13 +338,17 @@ SCENARIOS: dict[str, str] = {
     IF has_table_privilege('authenticated', s, 'SELECT') OR has_table_privilege('anon', s, 'SELECT') THEN
       RAISE EXCEPTION 'browser role reads %', s; END IF;
   END LOOP;
+  IF NOT has_function_privilege('service_role', 'social_wiring.cs_post_criacao_transicionar(uuid,uuid,text,text,text,jsonb,text,uuid,text)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'social_wiring.cs_post_criacao_transicionar(uuid,uuid,text,text,text,jsonb,text,uuid,text)', 'EXECUTE')
+     OR has_function_privilege('anon', 'social_wiring.cs_post_criacao_transicionar(uuid,uuid,text,text,text,jsonb,text,uuid,text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'transicionar grants are wrong'; END IF;
   IF has_function_privilege('authenticated', 'social_wiring.cs_criacao_passo_registrar(uuid,uuid,integer,text,text,jsonb)', 'EXECUTE')
      OR has_function_privilege('anon', 'social_wiring.cs_criacao_cota_estado(uuid)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'social_wiring.cs_consentimento_voz_vigente(uuid,uuid,text,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'browser executes a definer'; END IF;
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
    WHERE ns.nspname = 'social_wiring' AND p.prosecdef AND p.proconfig::text NOT LIKE '%search_path%'
-     AND (p.proname LIKE 'cs\\_criacao\\_%' OR p.proname LIKE 'cs\\_consentimento%' OR p.proname LIKE 'guard\\_cs\\_c%');
+     AND (p.proname LIKE 'cs\\_criacao\\_%' OR p.proname LIKE 'cs\\_post\\_criacao%' OR p.proname LIKE 'cs\\_consentimento%' OR p.proname LIKE 'guard\\_cs\\_c%');
   IF n <> 0 THEN RAISE EXCEPTION 'unpinned definers: %', n; END IF;
   IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'social_wiring'
        AND tablename IN ('cs_criacao_jobs', 'cs_consentimentos_voz', 'cs_criacao_cotas', 'cs_criacao_cota_events')

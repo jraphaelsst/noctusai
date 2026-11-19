@@ -53,9 +53,15 @@ export interface KanbanCardProps {
    * drag. With `onActivate` the card is a keyboard-reachable button (Enter / Space activate it). Default `true`.
    */
   draggable?: boolean;
+  /**
+   * Declared slot rendered INSIDE the card, after `children` (a live status line, a progress bar). Products fill it
+   * (`KanbanBoard`'s `statusSlot` render prop) instead of forking the organ. Inside the draggable wrapper, so a press
+   * on it drags like the rest of the card; interactive elements in it should `stopPropagation`.
+   */
+  statusSlot?: ReactNode;
 }
 
-export function KanbanCard({ id, children, className, onActivate, draggable = true }: KanbanCardProps) {
+export function KanbanCard({ id, children, className, onActivate, draggable = true, statusSlot }: KanbanCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     // Lets the board tell a card drag from a column drag by `data.type`.
@@ -128,6 +134,7 @@ export function KanbanCard({ id, children, className, onActivate, draggable = tr
           : {})}
       >
         {children}
+        {statusSlot}
       </div>
     );
   }
@@ -149,6 +156,7 @@ export function KanbanCard({ id, children, className, onActivate, draggable = tr
       data-kanban-card-id={id}
     >
       {children}
+      {statusSlot}
     </div>
   );
 }

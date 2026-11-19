@@ -3,12 +3,14 @@
 * :class:`SupabaseLedger`  -- ``LedgerPort`` over ``cs_criacao_jobs`` through the definer RPC
   ``cs_criacao_passo_registrar`` (the only writer: forward-only status + the step's ``cs_post_eventos`` row, one
   transaction). ``carregar`` reads the same rows back: the ledger IS the graph state, so a restarted worker resumes
-  from it.
+  from it. The first running step moves the card's sub-state ``na_fila -> gerando`` through the system mover.
 * :class:`SupabaseQuota`   -- ``QuotaPort`` over ``cs_criacao_cota_estado`` (US$15 / org / month by default).
-* :class:`SupabaseMover`   -- ``MoverPort``: moves the card with the seed ``move_card`` as the system actor
-  (``motivo='auto:<evento>'``) and writes the projection + its events through ``cs_post_criacao_projetar`` (one tx).
+* :class:`SistemaMover`    -- ``MoverPort`` over S5's :class:`CriacaoMover` (the ONE system mover: the Criação gate, the
+  history row, the sub-state projection + its event, the live stream). Finish -> Edição / Aprovação final; failure ->
+  ``falhou`` with the failed step's code.
+* :class:`ProgressoComposto` -- ``ProgressPort``: the per-rodada job scope (the progress SSE), the per-post scope
+  (``/posts/{id}/criacao/progress``) and the card's live ``pipeline.card_state``.
 * :class:`VozConsentimento` -- which voice a marca may use and the ``ConsentChecker`` the seed TTS client calls.
-* ``ProgressPort`` is the seed default ``BusProgress`` -- built in :mod:`criacao_service`, nothing to implement here.
 
 Every DB call is a blocking PostgREST call: each port method runs it in a thread, never on the event loop.
 """
@@ -21,20 +23,18 @@ from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from noctusai_lib.domain.media_production import PassoRow, QuotaExceeded, StepError
+from noctusai_lib.domain.media_production.ports import BusProgress
 from noctusai_lib.domain.media_production.runner import EVENTO_CONCLUIDA, EVENTO_PASSO_FALHOU
 from noctusai_lib.domain.media_production.types import CONCLUIDO, EXECUTANDO, FALHOU
-from noctusai_lib.domain.pipeline import list_stages, move_card
+from noctusai_lib.realtime import JobProgress, RealtimeBus, publish_job_progress
 
-from app.modules.media_creation.criacao_rotas import resolver_rota
-from app.modules.media_creation.esteira_config import PIPELINE_ESTEIRA, ROLE_APROVACAO_MIDIA, ROLE_EDICAO
+from app.modules.media_creation import criacao_estado as est
+from app.modules.media_creation.services.criacao_mover import CriacaoMover
 
 logger = logging.getLogger(__name__)
 
 LEDGER = "cs_criacao_jobs"
 POSTS = "cs_posts"
-
-#: The actor of every automatic move / event (``pipeline_movimentos.responsavel_id`` is a plain uuid, no FK).
-SISTEMA_ATOR_ID = "00000000-0000-4000-8000-0000000c5e51"
 
 #: Status names the DB uses that differ from the seed runner's.
 _PARA_DB = {EXECUTANDO: "em_andamento"}
@@ -42,13 +42,6 @@ _DE_DB = {"em_andamento": EXECUTANDO}
 
 #: Conservative USD per credit used ONLY for the quota pre-flight when the org's real price is not configured.
 CRIACAO_USD_POR_CREDITO_TETO = Decimal("0.0003")
-
-ESTADO_NA_FILA = "na_fila"
-ESTADO_GERANDO = "gerando"
-ESTADO_AGUARDANDO_EDICAO = "aguardando_edicao"
-ESTADO_AGUARDANDO_MIDIA = "aguardando_aprovacao_midia"
-ESTADO_FALHOU = "falhou"
-CODIGO_ETAPA_AUSENTE = "etapa_destino_ausente"
 
 
 def _jsonable(v: Any) -> Any:
@@ -78,8 +71,10 @@ def _dec(v: Any) -> Optional[Decimal]:
 class SupabaseLedger:
     """``LedgerPort`` over ``cs_criacao_jobs`` (RPC writer, table reader)."""
 
-    def __init__(self, db: Any) -> None:
+    def __init__(self, db: Any, on_inicio: Optional[Callable[[str, str], None]] = None) -> None:
         self._db = db
+        #: called (blocking, in the same thread) the moment a step starts running: ``(org_id, post_id)``
+        self._on_inicio = on_inicio
 
     async def registrar(self, row: PassoRow) -> None:
         await asyncio.to_thread(self._registrar, row)
@@ -138,13 +133,8 @@ class SupabaseLedger:
                 "p_status": _PARA_DB.get(row.status, row.status), "p_dados": dados,
             },
         ).execute()
-        if row.status == EXECUTANDO:
-            # the sub-state projection: queued -> generating (only from the queue; a re-run sets `na_fila` first)
-            self._db.rpc(
-                "cs_post_criacao_projetar",
-                {"p_org": row.org_id, "p_post": row.post_id, "p_estado": ESTADO_GERANDO, "p_falha": None,
-                 "p_eventos": [], "p_somente_de": [ESTADO_NA_FILA]},
-            ).execute()
+        if row.status == EXECUTANDO and self._on_inicio is not None:
+            self._on_inicio(row.org_id, row.post_id)
 
     def _carregar(self, org_id: str, post_id: str) -> list[PassoRow]:
         linhas = self._linhas(org_id, post_id)
@@ -195,87 +185,70 @@ class SupabaseQuota:
             )
 
 
-# ── mover ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── mover + progress ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-class SupabaseMover:
-    """``MoverPort``. Idempotent: the move is a no-op when the card is already there, and the projection RPC writes
-    nothing when the sub-state already equals the target -- so a retried job never double-moves or double-logs."""
+class SistemaMover:
+    """``MoverPort`` over S5's ``CriacaoMover``. Idempotent where the mover is: a retried job re-reads the post."""
 
-    def __init__(self, db: Any, cfg: Any = PIPELINE_ESTEIRA) -> None:
-        self._db, self._cfg = db, cfg
+    def __init__(self, db: Any, bus: Optional[RealtimeBus] = None, factory: Optional[Callable[[str], Any]] = None) -> None:
+        self._db, self._bus = db, bus
+        #: ``org_id -> CriacaoMover`` (the DI seam: tests pass one over their own DB)
+        self._factory = factory or (lambda org: CriacaoMover(db, org, bus=bus))
 
-    async def mover(self, post_id: str, evento: str) -> None:
-        await asyncio.to_thread(self._mover, post_id, evento)
+    def _mover(self, org_id: str) -> CriacaoMover:
+        return self._factory(org_id)
 
-    def _post(self, post_id: str) -> dict:
-        rows = (
-            self._db.table(POSTS).select("id,org_id,etapa_id,formato,criacao_rota").eq("id", post_id).execute().data
-        )
+    def _org_do_post(self, post_id: str) -> str:
+        rows = self._db.table("cs_posts").select("id,org_id").eq("id", post_id).execute().data
         if not rows:
             raise LookupError(f"post {post_id} não encontrado")
-        return rows[0]
+        return str(rows[0]["org_id"])
 
-    def _projetar(self, org: str, post: str, estado: str, falha: Optional[str], eventos: list[dict]) -> None:
-        self._db.rpc(
-            "cs_post_criacao_projetar",
-            {"p_org": org, "p_post": post, "p_estado": estado, "p_falha": falha, "p_eventos": eventos,
-             "p_somente_de": None},
-        ).execute()
+    def iniciar(self, org_id: str, post_id: str) -> None:
+        """``na_fila -> gerando`` (only from the queue: a later step / a retry finds ``gerando`` already)."""
+        post = self._db.table("cs_posts").select("criacao_estado").eq("id", post_id).eq("org_id", org_id).execute().data
+        if post and post[0].get("criacao_estado") == est.NA_FILA:
+            self._mover(org_id).iniciar_geracao(post_id)
 
-    def _mover(self, post_id: str, evento: str) -> None:
-        post = self._post(post_id)
-        org = str(post["org_id"])
-        if evento == EVENTO_PASSO_FALHOU:
-            falhos = [
-                r for r in (
-                    self._db.table(LEDGER).select("passo,rodada,erro_codigo,terminado_em")
-                    .eq("org_id", org).eq("post_id", post_id).eq("status", FALHOU)
-                    .order("terminado_em", desc=True).limit(1).execute().data or []
-                )
-            ]
-            codigo = (falhos[0]["erro_codigo"] if falhos else None) or "erro_interno"
-            self._projetar(org, post_id, ESTADO_FALHOU, codigo, [])  # the card stays in Criação, with the visible code
+    async def mover(self, post_id: str, evento: str) -> None:
+        await asyncio.to_thread(self._mover_sync, post_id, evento)
+
+    def _mover_sync(self, post_id: str, evento: str) -> None:
+        org = self._org_do_post(post_id)
+        mv = self._mover(org)
+        if evento == EVENTO_CONCLUIDA:
+            mv.concluir_geracao(post_id)
             return
-        if evento != EVENTO_CONCLUIDA:
+        if evento != EVENTO_PASSO_FALHOU:
             raise ValueError(f"evento de criação desconhecido: {evento}")
-
-        rota = resolver_rota(post.get("formato") or "reel", post.get("criacao_rota"))
-        papel_destino = ROLE_EDICAO if rota.edicao else ROLE_APROVACAO_MIDIA
-        etapas = list_stages(self._db, self._cfg, org_id=org)
-        destino = next((s for s in etapas if s.get("papel") == papel_destino), None)
-        if destino is None:
-            logger.error("criacao: sem etapa com papel %s na org %s (migração 362 aplicada?)", papel_destino, org)
-            self._projetar(org, post_id, ESTADO_FALHOU, CODIGO_ETAPA_AUSENTE, [])
-            return
-        de_etapa = str(post["etapa_id"]) if post.get("etapa_id") else None
-        mudou = de_etapa != str(destino["id"])
-        if mudou:
-            ids = [str(s["id"]) for s in etapas]
-            if not rota.edicao:
-                # the skipped Edição stage is traversed, visibly (contract 1: `rota:pulado`)
-                edicao = next((s for s in etapas if s.get("papel") == ROLE_EDICAO), None)
-                if (
-                    edicao is not None and de_etapa in ids and str(edicao["id"]) != de_etapa
-                    and ids.index(de_etapa) < ids.index(str(edicao["id"])) < ids.index(str(destino["id"]))
-                ):
-                    move_card(
-                        self._db, self._cfg, card_id=post_id, to_stage_id=str(edicao["id"]), user_id=SISTEMA_ATOR_ID,
-                        motivo="rota:pulado", org_id=org,
-                    )
-            move_card(
-                self._db, self._cfg, card_id=post_id, to_stage_id=str(destino["id"]), user_id=SISTEMA_ATOR_ID,
-                motivo=f"auto:{EVENTO_CONCLUIDA}", org_id=org,
-            )
-        eventos = [{"tipo": EVENTO_CONCLUIDA, "dados": {"rota": rota.chave}}]
-        if mudou:
-            eventos.append({
-                "tipo": "card_movido_automaticamente",
-                "dados": {"de_etapa_id": de_etapa, "para_etapa_id": str(destino["id"]), "motivo": f"auto:{EVENTO_CONCLUIDA}"},
-            })
-        self._projetar(
-            org, post_id, ESTADO_AGUARDANDO_EDICAO if rota.edicao else ESTADO_AGUARDANDO_MIDIA, None, eventos
+        falhos = (
+            self._db.table(LEDGER).select("passo,rodada,erro_codigo,terminado_em")
+            .eq("org_id", org).eq("post_id", post_id).eq("status", FALHOU)
+            .order("terminado_em", desc=True).limit(1).execute().data or []
         )
+        codigo = (falhos[0]["erro_codigo"] if falhos else None) or "erro_interno"
+        mv.falhar(post_id, codigo=codigo, mensagem=f"Falhou: {falhos[0]['passo'] if falhos else 'criação'} ({codigo})")
+
+
+class ProgressoComposto:
+    """``ProgressPort``: job scope ``{post}:{rodada}`` (seed ``BusProgress``), post scope ``{post}`` (latest rodada) and the
+    card's live state (``pipeline.card_state``, best-effort)."""
+
+    def __init__(self, bus: RealtimeBus, factory: Optional[Callable[[str], Any]] = None) -> None:
+        self._bus, self._por_rodada, self._factory = bus, BusProgress(bus), factory
+
+    async def publicar(self, org_id, post_id, rodada, stage, progress, message, terminal) -> None:
+        await self._por_rodada.publicar(org_id, post_id, rodada, stage, progress, message, terminal)
+        await publish_job_progress(
+            self._bus, org_id, post_id,
+            JobProgress("concluido" if terminal else "executando", progress, stage, message, terminal),
+        )
+        if self._factory is not None and not terminal:  # the terminal card_state is the mover's (it knows the new stage)
+            await asyncio.to_thread(
+                self._factory(org_id).progresso,
+                post_id, passo=stage, rodada=rodada, progresso=progress, mensagem=message,
+            )
 
 
 # ── voice + consent ─────────────────────────────────────────────────────────────────────────────────────────────────

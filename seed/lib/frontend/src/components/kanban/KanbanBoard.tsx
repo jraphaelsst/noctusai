@@ -123,6 +123,11 @@ export interface KanbanBoardProps<TCard, TStageId extends string = string> {
   getCardId: (card: TCard) => string;
   getCardStage: (card: TCard) => TStageId;
   renderCard: (card: TCard, state: KanbanCardRenderState) => ReactNode;
+  /**
+   * Declared slot rendered inside each card after `renderCard`'s content — a product's live status line / progress
+   * bar (`usePipelineStream` feeds it) without forking the organ. Not rendered in the drag overlay.
+   */
+  statusSlot?: (card: TCard, state: KanbanCardRenderState) => ReactNode;
   onMove: KanbanOnMove<TStageId>;
   /**
    * A genuine card click — press and release without a drag. Omit and cards
@@ -198,6 +203,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
   getCardId,
   getCardStage,
   renderCard,
+  statusSlot,
   onMove,
   onCardActivate,
   isLoading = false,
@@ -307,6 +313,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
                 column={column}
                 getCardId={getCardId}
                 renderCard={renderCard}
+                statusSlot={statusSlot}
                 onCardActivate={onCardActivate}
                 renderHeader={renderColumnHeader}
                 emptyState={columnEmptyState ? columnEmptyState(column.stage) : undefined}
@@ -323,6 +330,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
               column={column}
               getCardId={getCardId}
               renderCard={renderCard}
+              statusSlot={statusSlot}
               onCardActivate={onCardActivate}
               renderHeader={renderColumnHeader}
               emptyState={columnEmptyState ? columnEmptyState(column.stage) : undefined}

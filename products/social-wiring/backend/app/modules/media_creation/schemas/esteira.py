@@ -141,5 +141,29 @@ class HeadlineBind(StrictHttpModel):
         return self
 
 
+class ReprovarRequest(StrictHttpModel):
+    """Rejection of a headline / the final media. The reason is optional for a headline, required for the media."""
+
+    motivo: Optional[str] = Field(default=None, max_length=MAX_MOTIVO)
+
+
+class AprovacaoRequest(StrictHttpModel):
+    """The unified approval call the FE makes (S11): one endpoint for the three human gates of a post."""
+
+    alvo: Literal["headline", "roteiro", "midia"]
+    decisao: Literal["aprovar", "aprovado", "reprovar", "reprovado"]
+    motivo: Optional[str] = Field(default=None, max_length=MAX_MOTIVO)
+
+    @model_validator(mode="after")
+    def _motivo_na_reprovacao(self):
+        if self.decisao in ("reprovar", "reprovado") and not (self.motivo or "").strip():
+            raise ValueError("motivo_obrigatorio")
+        return self
+
+    @property
+    def aprovada(self) -> bool:
+        return self.decisao in ("aprovar", "aprovado")
+
+
 class RoteiroBind(StrictHttpModel):
     roteiro_id: uuid.UUID

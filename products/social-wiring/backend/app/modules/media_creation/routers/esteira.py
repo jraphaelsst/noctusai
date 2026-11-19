@@ -9,18 +9,31 @@ Four routers, mounted in this order (``ROUTERS``):
    ``/posts/documentos/tipos``); MUST precede ``router``'s bare ``/posts/{id}``.
 3. ``router`` — board, posts CRUD, ``mover-etapa``, headline/roteiro binding.
 4. ``hub_entity_router`` — the card hub's ``/posts/{post_id}/...`` routes.
+5. ``stream_router`` — the live board (SSE ``/stream``, seed ``create_pipeline_stream_router``, tier org).
+
+``router`` also carries the criação edges (criacao-pipeline-contract 1): headline approval, ``criacao/iniciar`` (the
+``system`` mover, Roteiro -> Criação), final media approval/rejection.
 
 Auth ``get_current_user_org``; ``success_response`` envelope; a foreign id is a 404; coded refusals
 are ``HTTPException(status, detail={"code", "detail", ...})``.
 """
 import json
+
+import anyio.from_thread
 from typing import Any, Optional
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import ValidationError
 
+from noctusai_lib.domain.approvals import ApprovalError, ApprovalService
 from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
-from noctusai_lib.domain.pipeline import PipelineContext, ensure_default_stages, pipeline_stages_router
+from noctusai_lib.domain.pipeline import (
+    PipelineContext,
+    create_pipeline_stream_router,
+    ensure_default_stages,
+    pipeline_stages_router,
+)
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
@@ -31,10 +44,22 @@ from app.modules.media_creation.schemas.esteira import (
     HeadlineBind,
     MoverEtapaRequest,
     PostCreate,
+    AprovacaoRequest,
     PostUpdate,
+    ReprovarRequest,
     RoteiroBind,
 )
+from app.modules.media_creation.services import headline_aprovacao as hl_aprov
+from app.modules.media_creation.routers.criacao import get_criacao_service
+from app.modules.media_creation.services.criacao_mover import CriacaoMover
+from app.modules.media_creation.services.criacao_service import PASSO_PADRAO_REPROVA, CriacaoError, CriacaoService
 from app.modules.media_creation.services.esteira_service import LIMITE_PADRAO, EsteiraError, EsteiraService
+from app.modules.media_creation.services.esteira_stream import esteira_bus
+from app.modules.media_creation.services.roteiro_aprovacao import (
+    AprovacaoRoteiroError,
+    make_approvals,
+    solicitar_aprovacao_roteiro,
+)
 
 PREFIX = "/api/media-creation/esteira"
 
@@ -57,11 +82,20 @@ def _org(auth) -> str:
 
 
 def _svc(auth, db) -> EsteiraService:
-    return EsteiraService(db, _org(auth), str(auth[0].id))
+    return EsteiraService(db, _org(auth), str(auth[0].id), bus=esteira_bus())
+
+
+def _mover_sistema(auth, db) -> CriacaoMover:
+    return CriacaoMover(db, _org(auth), bus=esteira_bus())
 
 
 def _raise(exc: EsteiraError):
     raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+
+
+def _raise_aprovacao(exc: hl_aprov.AprovacaoHeadlineError):
+    """The approvals refusal as the Esteira's coded shape (``code`` + pt-BR ``detail``, never exception text)."""
+    raise HTTPException(status_code=exc.status, detail={"code": exc.codigo, "detail": exc.mensagem}) from exc
 
 
 # ── 1. stages (seed router) ─────────────────────────────────────────────────
@@ -225,5 +259,178 @@ def desvincular_roteiro(post_id: str, auth=Depends(get_current_user_org), db=Dep
         _raise(exc)
 
 
+# ── 5. headline approval (the other half of the Criação gate) ───────────────
+
+
+def get_headline_approvals() -> ApprovalService:
+    """DI seam for the approvals organ (headline subject). Tests override with a service over the Fake ledger."""
+    return make_approvals(get_esteira_db())
+
+
+def _headline_do_post(db, auth, post_id: str) -> str:
+    row = _svc(auth, db)._row(post_id)
+    if not row.get("headline_id"):
+        raise HTTPException(status_code=409, detail={"code": "sem_headline", "detail": "Este post ainda não tem headline."})
+    return str(row["headline_id"])
+
+
+@router.get("/posts/{post_id}/headline/aprovacao")
+def estado_aprovacao_headline(
+    post_id: str, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    approvals: ApprovalService = Depends(get_headline_approvals),
+):
+    try:
+        return success_response(
+            hl_aprov.estado_aprovacao_headline(db, _org(auth), _headline_do_post(db, auth, post_id), approvals=approvals)
+        )
+    except EsteiraError as exc:
+        _raise(exc)
+    except hl_aprov.AprovacaoHeadlineError as exc:
+        _raise_aprovacao(exc)
+
+
+@router.post("/posts/{post_id}/headline/aprovar")
+def aprovar_headline(
+    post_id: str, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    approvals: ApprovalService = Depends(get_headline_approvals),
+):
+    """Approve the post's headline (any org member). With both approvals standing, ``/criacao/iniciar`` moves the card."""
+    try:
+        return success_response(
+            hl_aprov.aprovar_headline(
+                db, _org(auth), _headline_do_post(db, auth, post_id), actor_id=str(auth[0].id), approvals=approvals
+            )
+        )
+    except EsteiraError as exc:
+        _raise(exc)
+    except hl_aprov.AprovacaoHeadlineError as exc:
+        _raise_aprovacao(exc)
+
+
+@router.post("/posts/{post_id}/headline/reprovar")
+def reprovar_headline(
+    post_id: str, body: ReprovarRequest, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    approvals: ApprovalService = Depends(get_headline_approvals),
+):
+    try:
+        return success_response(
+            hl_aprov.reprovar_headline(
+                db, _org(auth), _headline_do_post(db, auth, post_id), actor_id=str(auth[0].id), motivo=body.motivo,
+                approvals=approvals,
+            )
+        )
+    except EsteiraError as exc:
+        _raise(exc)
+    except hl_aprov.AprovacaoHeadlineError as exc:
+        _raise_aprovacao(exc)
+
+
+@router.post("/posts/{post_id}/aprovacoes")
+def decidir_aprovacao(
+    post_id: str, body: AprovacaoRequest, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    approvals: ApprovalService = Depends(get_headline_approvals),
+    criacao: CriacaoService = Depends(get_criacao_service),
+):
+    """The three human gates through one call: ``alvo`` headline | roteiro | midia, ``decisao`` aprovar | reprovar
+    (``motivo`` required on rejection, 422 ``motivo_obrigatorio`` -- validated by the schema). Returns the card."""
+    user = str(auth[0].id)
+    try:
+        row = _svc(auth, db)._row(post_id)
+        if body.alvo == "midia":
+            _mover_sistema(auth, db).decidir_midia(post_id, aprovada=body.aprovada, user_id=user, motivo=body.motivo)
+            if not body.aprovada:  # re-queued by the mover: queue the rejected step's job (this route runs in a worker thread)
+                anyio.from_thread.run(lambda: criacao.enfileirar(post_id, org_id=_org(auth), ator_id=user, passo=PASSO_PADRAO_REPROVA))
+        elif body.alvo == "headline":
+            hid = _headline_do_post(db, auth, post_id)
+            if body.aprovada:
+                hl_aprov.aprovar_headline(db, _org(auth), hid, actor_id=user, approvals=approvals)
+            else:
+                hl_aprov.reprovar_headline(db, _org(auth), hid, actor_id=user, motivo=body.motivo, approvals=approvals)
+        else:
+            if not row.get("roteiro_id"):
+                raise HTTPException(status_code=409, detail={"code": "sem_roteiro", "detail": "Este post ainda não tem roteiro."})
+            rt = db.table("cs_roteiros").select("versao").eq("id", row["roteiro_id"]).eq("org_id", _org(auth)).execute().data
+            versao = int((rt[0] if rt else {}).get("versao") or 1)
+            solicitar_aprovacao_roteiro(db, _org(auth), str(row["roteiro_id"]), actor_id=user, approvals=approvals)
+            try:
+                if body.aprovada:
+                    approvals.approve(_org(auth), "roteiro", str(row["roteiro_id"]), versao, actor_id=user)
+                else:
+                    approvals.reject(_org(auth), "roteiro", str(row["roteiro_id"]), versao, actor_id=user, motivo=body.motivo)
+            except ApprovalError as exc:
+                raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "detail": exc.message}) from exc
+        return success_response(_svc(auth, db).detalhe(post_id))
+    except EsteiraError as exc:
+        _raise(exc)
+    except CriacaoError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+    except hl_aprov.AprovacaoHeadlineError as exc:
+        _raise_aprovacao(exc)
+    except AprovacaoRoteiroError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.codigo, "detail": exc.mensagem}) from exc
+
+
+# ── 6. criação (the system mover's human-triggered edges) ────────────────────
+
+
+@router.post("/posts/{post_id}/criacao/iniciar", status_code=202)
+async def iniciar_criacao(
+    post_id: str, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    criacao: CriacaoService = Depends(get_criacao_service),
+):
+    """Roteiro -> Criação by the ``system`` actor, once headline AND roteiro are approved (coded 409 ``pendencias``
+    with ``faltando`` otherwise); queues the creation job through the ONE enqueue (``criacao_service.enfileirar``: the
+    mover moves the card + sub-state, the service registers the graph). Idempotent."""
+    try:
+        await criacao.enfileirar(post_id, org_id=_org(auth), ator_id=str(auth[0].id))
+        return success_response(await run_in_threadpool(lambda: _svc(auth, db).detalhe(post_id)))
+    except EsteiraError as exc:
+        _raise(exc)
+    except CriacaoError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+
+
+@router.post("/posts/{post_id}/midia/aprovar")
+def aprovar_midia(post_id: str, auth=Depends(get_current_user_org), db=Depends(get_esteira_db)):
+    """Final approval of the media: Aprovação final -> Pronto (the person is the event's actor)."""
+    try:
+        _mover_sistema(auth, db).decidir_midia(post_id, aprovada=True, user_id=str(auth[0].id))
+        return success_response(_svc(auth, db).detalhe(post_id))
+    except EsteiraError as exc:
+        _raise(exc)
+
+
+@router.post("/posts/{post_id}/midia/reprovar")
+async def reprovar_midia(
+    post_id: str, body: ReprovarRequest, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
+    criacao: CriacaoService = Depends(get_criacao_service),
+):
+    """Reject the media: back to Criação with the reason (required), re-queued; only the rejected step (and what depends
+    on it) re-runs -- ``render_motion`` of the reel route."""
+    try:
+        await run_in_threadpool(
+            lambda: _mover_sistema(auth, db).decidir_midia(post_id, aprovada=False, user_id=str(auth[0].id), motivo=body.motivo)
+        )
+        await criacao.enfileirar(post_id, org_id=_org(auth), ator_id=str(auth[0].id), passo=PASSO_PADRAO_REPROVA)
+        return success_response(await run_in_threadpool(lambda: _svc(auth, db).detalhe(post_id)))
+    except EsteiraError as exc:
+        _raise(exc)
+    except CriacaoError as exc:
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+
+
+# ── 7. live stream (SSE, tier org) ───────────────────────────────────────────
+
+stream_router = APIRouter(prefix=PREFIX, tags=["Media Creation — Esteira (stream)"])
+stream_router.include_router(
+    create_pipeline_stream_router(
+        PIPELINE_ESTEIRA,
+        esteira_bus(),
+        auth_dependency=get_current_user_org,
+        org_resolver=lambda _request, auth: _org(auth),
+        path="/stream",
+    )
+)
+
 #: Mount order matters (see the module docstring).
-ROUTERS = [stages_router, hub_collection_router, router, hub_entity_router]
+ROUTERS = [stages_router, hub_collection_router, router, hub_entity_router, stream_router]

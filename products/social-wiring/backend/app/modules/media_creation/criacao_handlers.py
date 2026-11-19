@@ -33,9 +33,10 @@ from noctusai_lib.integrations.motion_render import MotionRenderer, MotionRender
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.tts import TtsClient, TtsError, TtsNotConfigured, TtsRefused, TtsUpstreamError
 
-from app.modules.media_creation.criacao_ports import SISTEMA_ATOR_ID, VozConsentimento
-from app.modules.media_creation.criacao_rotas import PASSO_MUX, PASSO_RENDER, PASSO_TTS
+from app.modules.media_creation.criacao_passos import PASSO_MUX, PASSO_RENDER, PASSO_TTS
+from app.modules.media_creation.criacao_ports import VozConsentimento
 from app.modules.media_creation.midia_storage import MIDIA_BUCKET, chave_upload
+from app.modules.media_creation.services.criacao_mover import SISTEMA_ATOR_ID
 from app.modules.media_creation.services.post_assets_service import (
     MidiaProbe,
     PostAssetsService,

@@ -23,20 +23,20 @@ from noctusai_lib.realtime.bus import FakeRealtimeBus
 
 from app.modules.media_creation.criacao_handlers import CriacaoDeps, build_handlers, montar_spec
 from app.modules.media_creation.criacao_ports import (
-    SISTEMA_ATOR_ID,
+    SistemaMover,
     SupabaseLedger,
-    SupabaseMover,
     SupabaseQuota,
     VozConsentimento,
 )
 from app.modules.media_creation.esteira_config import PIPELINE_ESTEIRA
+from app.modules.media_creation.services.criacao_mover import SISTEMA_ATOR_ID
 from app.modules.media_creation.services.criacao_service import (
     CriacaoError,
     CriacaoService,
     progresso_das_linhas,
 )
 from app.modules.media_creation.services.post_assets_service import MidiaFato
-from tests.modules.media_creation.criacao_fakes import FakeDb
+from tests.modules.media_creation.criacao_fakes import FakeDb, FakeSistema
 
 ORG, MARCA, POST, ROTEIRO = (str(uuid.uuid4()) for _ in range(4))
 ST = {k: str(uuid.uuid4()) for k in ("ideacao", "roteiro", "criacao", "edicao", "aprovacao", "pronto")}
@@ -108,15 +108,17 @@ class Rig:
             db=self.db, storage=self.storage, consent=consent, make_tts=make_tts, renderer=self.renderer,
             workdir=self.tmp / "work", probe=lambda _b, _n: MidiaFato("video", 1080, 1920, 12.5), permitir_stub=True,
         )
+        self.fabrica = lambda org: FakeSistema(self.db, org)
+        mover = SistemaMover(self.db, self.bus, self.fabrica)
         self.runner = MediaGraphRunner(
-            jobs=self.jobs, ledger=SupabaseLedger(self.db), progress=self.progress, quota=SupabaseQuota(self.db),
-            mover=SupabaseMover(self.db), registry=build_handlers(self.deps), max_retries=0,
+            jobs=self.jobs, ledger=SupabaseLedger(self.db, on_inicio=mover.iniciar), progress=self.progress,
+            quota=SupabaseQuota(self.db), mover=mover, registry=build_handlers(self.deps), max_retries=0,
         )
         self.worker = Worker(
             self.jobs, worker_id=f"w-{len(self.tts_clients)}-{uuid.uuid4().hex[:4]}", handlers=self.runner.handlers,
             retry_policy=RetryPolicy(max_retries=0, backoff_seconds=0),
         )
-        self.service = CriacaoService(self.db, self.runner, self.deps, self.bus, usd_por_credito=Decimal("0.0002"))
+        self.service = CriacaoService(self.db, self.runner, self.deps, self.bus, usd_por_credito=Decimal("0.0002"), mover_factory=self.fabrica)
 
     async def drain(self) -> None:
         while await self.worker.run_once():
@@ -187,7 +189,8 @@ class TestReelNarrado:
         ]
         assert [e["tipo"] for e in rig.eventos()] == [
             "criacao_enfileirada", "passo_iniciado", "passo_concluido", "passo_iniciado", "passo_concluido",
-            "passo_iniciado", "passo_concluido", "criacao_concluida", "card_movido_automaticamente",
+            "passo_iniciado", "passo_concluido", "criacao_concluida",
+            "card_movido_automaticamente", "card_movido_automaticamente",  # Edicao traversed, then Aprovacao final
         ]
         assert out["progresso_id"] == f"{POST}:1"
         snap = run(rig.service.snapshot(ORG, POST, 1))
@@ -298,15 +301,14 @@ class TestRefusals:
             run(rig.service.enfileirar(POST, org_id=str(uuid.uuid4())))
         assert e.value.status == 404
 
-    def test_a_second_start_while_running_is_refused(self, rig):
+    def test_a_second_start_while_running_returns_the_running_graph(self, rig):
         async def go():
             await rig.service.enfileirar(POST, org_id=ORG)
-            with pytest.raises(CriacaoError) as e:
-                await rig.service.enfileirar(POST, org_id=ORG)
-            return e.value
+            return await rig.service.enfileirar(POST, org_id=ORG)
 
-        err = run(go())
-        assert (err.status, err.code) == (409, "criacao_em_andamento")
+        out = run(go())
+        assert out["ja_em_andamento"] is True and out["rodada"] == 1  # idempotent: one graph, never two
+        assert len(rig.ledger()) == 3
 
 
 # ── re-run of ONE step ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -346,7 +348,7 @@ class TestRerun:
         assert rig.etapa() == "aprovacao" and rig.post()["criacao_estado"] == "aguardando_aprovacao_midia"
         assert rig.post()["falha_codigo"] is None and len(rig.db.rows("cs_post_assets")) == 1
         enf = rig.eventos("criacao_enfileirada")
-        assert len(enf) == 2 and enf[1]["dados"]["refazer"] == "render_motion"
+        assert len(enf) == 2  # failed -> na_fila again, one event each
 
     def test_only_a_failed_or_rejected_post_can_rerun(self, rig):
         async def go():
@@ -355,7 +357,7 @@ class TestRerun:
             with pytest.raises(CriacaoError) as e:
                 await rig.service.reexecutar(POST, "render_motion", org_id=ORG)
             assert e.value.code == "reexecucao_indevida"
-            rig.post()["criacao_estado"] = "midia_reprovada"  # the S5/S11 rejection projection
+            rig.post()["criacao_estado"] = "na_fila"  # what the system mover leaves after a media rejection
             with pytest.raises(CriacaoError) as e:
                 await rig.service.reexecutar(POST, "inexistente", org_id=ORG)
             assert e.value.code == "passo_desconhecido"

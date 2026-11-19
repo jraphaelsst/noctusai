@@ -2,7 +2,7 @@
 
 Only the surface the criação ports use: ``table().select/insert/update/eq/in_/order/limit/execute`` and ``rpc().execute``.
 The RPC bodies mirror the SQL of migrations 363 (``cs_criacao_passo_registrar``: forward-only status, the
-``medicao_ausente`` rule, the step's event), 364/368 (``cs_post_criacao_projetar``), 365 (``cs_consentimento_voz_vigente``)
+``medicao_ausente`` rule, the step's event), 364/368 (S5's mover is faked by ``FakeSistema`` below; ), 365 (``cs_consentimento_voz_vigente``)
 and 366 (``cs_criacao_cota_estado``). The SQL itself is replayed on a real Postgres in ``test_migration_cs_criacao*.py``;
 this fake exists to run the PYTHON side end to end, and it refuses what the real SQL refuses.
 """
@@ -173,23 +173,6 @@ class FakeDb:
                 self._evento(p_org, p_post, "cota_excedida", None, p_status, dados)
         return {"id": row["id"], "status": p_status, "mudou": True}
 
-    # -- 368 --
-    def _rpc_cs_post_criacao_projetar(self, p_org, p_post, p_estado, p_falha, p_eventos, p_somente_de):
-        post = next((r for r in self.rows("cs_posts") if r["id"] == p_post and r["org_id"] == p_org), None)
-        if post is None:
-            raise RpcRefused("post_nao_encontrado")
-        if p_estado == "falhou" and not p_falha:
-            raise RpcRefused("falha_obrigatoria")
-        old, falha = post.get("criacao_estado"), (p_falha if p_estado == "falhou" else None)
-        if p_somente_de is not None and (old is None or old not in p_somente_de):
-            return {"mudou": False, "estado": old}
-        if old == p_estado and post.get("falha_codigo") == falha:
-            return {"mudou": False, "estado": old}
-        post["criacao_estado"], post["falha_codigo"] = p_estado, falha
-        for ev in p_eventos or []:
-            self._evento(p_org, p_post, ev["tipo"], old, p_estado, ev.get("dados"), ev.get("ator_id"))
-        return {"mudou": True, "estado": p_estado, "de": old}
-
     # -- 365 --
     def _rpc_cs_consentimento_voz_vigente(self, p_org, p_marca, p_vendor, p_voice_id):
         for c in sorted(self.rows("cs_consentimentos_voz"), key=lambda r: r["created_at"], reverse=True):
@@ -209,3 +192,70 @@ class FakeDb:
         )
         lim = self.limite_usd_mes
         return {"limite_usd_mes": str(lim), "gasto_usd_mes": str(gasto), "restante_usd": str(lim - gasto), "passos_sem_custo": 0}
+
+
+class FakeSistema:
+    """S5's ``CriacaoMover`` over the FakeDb: the REAL transition matrix (``criacao_estado``), the card moves with their
+    ``motivo`` / system actor, the intent-named events. (The real mover is pinned by ``test_criacao_stages``.)"""
+
+    ATOR = "00000000-0000-0000-0000-00000000c0de"
+
+    def __init__(self, db: FakeDb, org: str):
+        self.db, self.org = db, org
+        self.estados: list[tuple[str | None, str]] = []
+
+    def _post(self, post_id):
+        return next(r for r in self.db.rows("cs_posts") if r["id"] == post_id and r["org_id"] == self.org)
+
+    def _estado(self, post, para, tipo=None, falha=None, dados=None):
+        from app.modules.media_creation import criacao_estado as est
+
+        de = post.get("criacao_estado")
+        if not est.transicao_valida(de, para):
+            raise RpcRefused(f"transicao_invalida {de}->{para}")
+        post["criacao_estado"], post["falha_codigo"] = para, (falha if para == "falhou" else None)
+        self.estados.append((de, para))
+        ev = est.evento_da_entrada(para, tipo)
+        if ev:
+            self.db._evento(self.org, post["id"], ev, de, para, dados, self.ATOR)
+
+    def _mover(self, post, papel, motivo):
+        etapas = sorted((e for e in self.db.rows("pipeline_stages") if e["org_id"] == self.org), key=lambda e: e["posicao"])
+        ids = [e["id"] for e in etapas]
+        alvo = next(e for e in etapas if e["papel"] == papel)
+        atual = post["etapa_id"]
+        if atual == alvo["id"]:
+            return
+        for meio in etapas[ids.index(atual) + 1: ids.index(alvo["id"])]:
+            self._uma(post, meio, "rota:pulado")
+        self._uma(post, alvo, motivo)
+
+    def _uma(self, post, etapa, motivo):
+        self.db.tables.setdefault("pipeline_movimentos", []).append(
+            {"entidade_id": post["id"], "de_etapa_id": post["etapa_id"], "para_etapa_id": etapa["id"], "motivo": motivo,
+             "responsavel_id": self.ATOR})
+        post["etapa_id"] = etapa["id"]
+        self.db._evento(self.org, post["id"], "card_movido_automaticamente", None, etapa["id"], {"motivo": motivo}, self.ATOR)
+
+    # the CriacaoMover surface the worker uses
+    def entrar_em_criacao(self, post_id):
+        post = self._post(post_id)
+        self._mover(post, "criacao", "auto:criacao_enfileirada")
+        if post.get("criacao_estado") in (None, "aguardando_aprovacao", "refinando", "cancelado"):
+            self._estado(post, "aprovado")
+        if post.get("criacao_estado") != "na_fila":
+            self._estado(post, "na_fila", dados={"rota": post.get("criacao_rota") or "reel_narrado"})
+
+    def iniciar_geracao(self, post_id):
+        self._estado(self._post(post_id), "gerando")
+
+    def progresso(self, post_id, **kw):
+        self.estados.append(("progresso", kw.get("mensagem")))
+
+    def concluir_geracao(self, post_id):
+        post = self._post(post_id)
+        self._estado(post, "aguardando_aprovacao_midia")
+        self._mover(post, "aprovacao_midia", "auto:criacao_concluida")
+
+    def falhar(self, post_id, *, codigo, mensagem):
+        self._estado(self._post(post_id), "falhou", falha=codigo, dados={"mensagem": mensagem})
