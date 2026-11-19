@@ -106,6 +106,7 @@ def register() -> Any:
         esteira_legenda,
         post_assets,
         post_publicacoes,
+        criacao,
     )
     from app.modules.media_creation import cerebro_scheduler
     from app.modules.media_creation.services import cerebro_transcricao
@@ -198,6 +199,8 @@ def register() -> Any:
             equipe.router,
             post_assets.router,
             post_publicacoes.router,
+            # Criação (S6): manual start / step re-run + the live progress SSE (the worker is a separate process).
+            criacao.router,
             *esteira.ROUTERS,
         ],
         # No extra standard routers — the LLM seam is auto-wired by

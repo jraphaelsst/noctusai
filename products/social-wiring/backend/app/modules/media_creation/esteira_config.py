@@ -63,14 +63,14 @@ BUCKET_ESTEIRA = "sw-esteira"
 
 #: By position; the entry stage is the first one.
 ESTEIRA_PADRAO: tuple[StageDefault, ...] = (
-    StageDefault("ideacao", "Ideação", "secondary"),
-    StageDefault("headline_roteiro", "Roteiro", "primary", ROLE_ROTEIRO),
-    StageDefault("criacao", "Criação", "warning", ROLE_CRIACAO),
-    StageDefault("edicao", "Edição", "warning", ROLE_EDICAO),
-    StageDefault("aprovacao_final", "Aprovação final", "warning", ROLE_APROVACAO_MIDIA),
-    StageDefault("pronto", "Pronto", "success", ROLE_PRONTO),
-    StageDefault("postado", "Postado", "success", ROLE_POSTADO),
-    StageDefault("bloqueado_cancelado", "Bloqueado/cancelado", "destructive", ROLE_CANCELADO),
+    StageDefault("ideacao", "Ideação", "secondary"),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("headline_roteiro", "Roteiro", "primary", ROLE_ROTEIRO),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("criacao", "Criação", "warning", ROLE_CRIACAO),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("edicao", "Edição", "warning", ROLE_EDICAO),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("aprovacao_final", "Aprovação final", "warning", ROLE_APROVACAO_MIDIA),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("pronto", "Pronto", "success", ROLE_PRONTO),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("postado", "Postado", "success", ROLE_POSTADO),  # noc-allow: stage-list — content board, not a CRM funnel
+    StageDefault("bloqueado_cancelado", "Bloqueado/cancelado", "destructive", ROLE_CANCELADO),  # noc-allow: stage-list — content board, not a CRM funnel
 )
 
 PIPELINE_ESTEIRA = PipelineConfig(

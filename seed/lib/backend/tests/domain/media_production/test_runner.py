@@ -174,3 +174,46 @@ def test_vendor_cost_row_shape() -> None:
     assert row.category == "vendor_credits" and row.currency == "USD" and row.fx_pending
     with pytest.raises(ValueError):
         vendor_credit_usd(None, Decimal("0.0001"))
+
+
+def test_worker_restart_resumes_from_job_payload() -> None:
+    """A fresh runner (empty memory) claiming the persisted jobs rebuilds the graph -- inputs and
+    quota estimate included -- from the payload, finishes it, and measures child-process CPU."""
+    runner, worker, ledger, progress, mover, calls, graph = build(quota_estimate=Decimal("2"))
+    graph = GraphSpec(ORG, POST, (
+        StepSpec("tts", "Sintetizando voz", peso=2, estimativa_usd=Decimal("2"), entradas={"texto": "oi"}),
+        *graph.passos[1:],
+    ))
+    seen: list[dict] = []
+
+    async def go():
+        await runner.enqueue_graph(graph)
+        await worker.run_once()  # tts only
+        # "restart": new runner + registry sharing ONLY the queue and the ledger
+        reg = StepRegistry()
+
+        async def tts(ctx):
+            seen.append(ctx.entradas)
+            return StepResult(saida={"audio": "a.mp3"}, vendor="fake-tts", custo_usd=Decimal("0"),
+                              unidades={"caracteres": 2})
+
+        async def render(ctx):
+            return StepResult(saida={"video": "v.mp4"})
+
+        async def mux(ctx):
+            return StepResult(saida={"final": "f.mp4"})
+
+        for n, h in (("tts", tts), ("render", render), ("mux", mux)):
+            reg.register_step(n, h)
+        quota = FakeQuota()
+        novo = MediaGraphRunner(jobs=runner._jobs, ledger=ledger, progress=progress, quota=quota,
+                                mover=mover, registry=reg, max_retries=0)
+        w2 = Worker(runner._jobs, worker_id="w2", handlers=novo.handlers,
+                    retry_policy=RetryPolicy(max_retries=0, backoff_seconds=0))
+        await drain(w2)
+        return quota
+
+    run(go())
+    assert all(r.status == "concluido" for r in ledger.rows.values())
+    assert mover.movimentos[-1] == (POST, "criacao_concluida")
+    assert all(r.cpu_s is not None for r in ledger.rows.values())
