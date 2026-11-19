@@ -3,15 +3,17 @@
  * `conhecimento_venda`, `conhecimento_locacao`, `conhecimento_politicas` (long text, at most `max_chars` each).
  *
  *   GET /api/julia/conhecimento-editor → {data: {itens[{chave, rotulo, valor, declarada, updated_at, updated_by_nome, sugestao}], max_chars}}
- *   PUT /api/julia/conhecimento-editor {valores: {chave: texto}} → the same body   (NoctusAI platform admin only: owner 2026-11-04)
+ *   PUT /api/julia/conhecimento-editor {valores: {chave: texto}} → the same body   (org admin; owner 2026-11-18: org-owned data)
  *
  * `sugestao` = what the old knowledge form held for that key (never written until the person saves). Loading = two signals
  * off `data` (never `isLoading`); a refusal is a pt-BR sentence, never silent.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { JULIA_ESPECIFICACOES_KEY } from "@/hooks/useJuliaEspecificacoes";
 
 export type ChaveConhecimento = "conhecimento_venda" | "conhecimento_locacao" | "conhecimento_politicas";
 
@@ -35,9 +37,6 @@ const URL = "/api/julia/conhecimento-editor";
 
 export function mensagemErroConhecimento(err: unknown, fallback: string): string {
   const code = (err as { body?: { error?: { code?: unknown } } } | null | undefined)?.body?.error?.code;
-  if (code === "edicao_restrita_plataforma") {
-    return "O conhecimento da Julia é configurado pela equipe NoctusAI. Para alterar, fale com o suporte.";
-  }
   return mensagemErroJulia(err, fallback);
 }
 
@@ -52,11 +51,13 @@ export function useJuliaConhecimentoEditor() {
   });
 }
 
-/** The answer carries every key's saved state: it replaces the cached read. */
+/** The answer carries every key's saved state: it replaces the cached read; the generic specs read is refreshed. */
 export function useSalvarConhecimento() {
-  const qc = useQueryClient();
-  return useMutation<ConhecimentoEditor, unknown, Partial<Record<ChaveConhecimento, string>>>({
+  return useCacheWriteMutation<ConhecimentoEditor, Partial<Record<ChaveConhecimento, string>>>({
     mutationFn: async (valores) => (await api.put<{ data: ConhecimentoEditor }>(URL, { valores })).data,
-    onSuccess: (saved) => qc.setQueryData(JULIA_CONHECIMENTO_EDITOR_KEY, saved),
+    targets: [
+      { queryKey: JULIA_CONHECIMENTO_EDITOR_KEY, commit: (_old: ConhecimentoEditor | undefined, saved) => saved },
+      { queryKey: JULIA_ESPECIFICACOES_KEY },
+    ],
   });
 }

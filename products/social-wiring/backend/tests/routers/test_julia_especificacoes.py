@@ -100,17 +100,17 @@ def test_a_member_is_refused_and_agents_is_never_called(member, metodo):
     assert member.w.agents.especificacoes_salvas == []
 
 
-def test_an_org_admin_who_is_not_a_platform_admin_cannot_write_403(org_admin):
+def test_an_org_admin_who_is_not_a_platform_admin_can_write_and_agents_gets_the_actor_with_role(org_admin):
     r = org_admin.req("put", {"valores": {"agencia": "x"}})
-    assert r.status_code == 403 and _codigo(r) == "edicao_restrita_plataforma"
-    assert org_admin.w.agents.especificacoes_salvas == []
-    assert org_admin.req("get").status_code == 200  # reading stays available to the org admin
+    assert r.status_code == 200
+    assert org_admin.w.agents.especificacoes_salvas == [("julia", {"agencia": "x"})]
+    assert org_admin.w.agents.especificacoes_atores[-1]["papel"] == "admin"
 
 
-def test_agents_edicao_restrita_403_is_passed_through_not_read_as_a_bad_token(admin):
-    admin.w.agents.especificacoes_script.append(EspecificacoesResposta(403, {"code": "edicao_restrita_plataforma", "detail": "restrito"}))
-    r = admin.req("put", {"valores": {"agencia": "x"}})
-    assert r.status_code == 403 and r.json()["code"] == "edicao_restrita_plataforma"
+def test_agents_allowlist_refusal_is_passed_through_untouched(admin):
+    admin.w.agents.especificacoes_script.append(EspecificacoesResposta(422, {"code": "spec_nao_editavel_pela_org", "detail": "so a equipe"}))
+    r = admin.req("put", {"valores": {"cnpj_oficial": "x"}})
+    assert r.status_code == 422 and r.json()["code"] == "spec_nao_editavel_pela_org"
 
 
 def test_get_passes_agents_body_through(admin):

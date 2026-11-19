@@ -76,12 +76,12 @@ describe("ContatosSetoriaisCard", () => {
 
   it("a refusal is shown, never swallowed", async () => {
     api.get.mockResolvedValue({ data: { ...BASE, contatos: [JURIDICO] } });
-    api.put.mockRejectedValue(serverError("edicao_restrita_plataforma"));
+    api.put.mockRejectedValue(serverError("agents_indisponivel", 502));
     renderCard(<ContatosSetoriaisCard isAdmin />);
     await screen.findByTestId("contatos-lista");
     fireEvent.change(screen.getByLabelText("Nome do contato 1"), { target: { value: "Outra Pessoa" } });
     fireEvent.click(screen.getByText("Salvar contatos"));
-    expect((await screen.findByTestId("contatos-erro-salvar")).textContent).toContain("ainda não foi liberado");
+    expect((await screen.findByTestId("contatos-erro-salvar")).textContent).toContain("Não foi possível falar com a Julia agora");
   });
 
   it("a non-admin sees the list without inputs to change it", async () => {
@@ -142,13 +142,13 @@ describe("ConhecimentoEditorCard", () => {
     expect((screen.getByText("Salvar conhecimento") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("an org admin refused by the platform rule sees the pt-BR sentence", async () => {
+  it("a refused save shows the pt-BR sentence and keeps the draft", async () => {
     api.get.mockResolvedValue({ data: EDITOR });
-    api.put.mockRejectedValue(serverError("edicao_restrita_plataforma"));
+    api.put.mockRejectedValue(serverError("agents_indisponivel", 502));
     renderCard(<ConhecimentoEditorCard isAdmin />);
     fireEvent.change(await screen.findByLabelText("Vendas"), { target: { value: "novo" } });
     fireEvent.click(screen.getByText("Salvar conhecimento"));
-    expect((await screen.findByTestId("conhecimento-erro-salvar")).textContent).toContain("equipe NoctusAI");
+    expect((await screen.findByTestId("conhecimento-erro-salvar")).textContent).toContain("Não foi possível falar com a Julia agora");
   });
 
   it("error state offers a retry", async () => {

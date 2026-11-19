@@ -118,7 +118,7 @@ today) and so is the strict scope allow-list the grant token admin mints from.
 | `GET /api/studio/plataforma/agents/{key}/products/{product}/orgs` | staff picker: orgs with a LIVE grant + status/`editavel` (platform admin) |
 | `GET\|PUT /api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs` | NoctusAI staff fill that org's agent specs; needs the admin login AND a grant `ativo`+unexpired for exactly (org, key, product) with `especificacoes_editor='plataforma'` (migration 064; else 409 `sem_concessao_ativa` / `editor_nao_plataforma`); audit = the real admin |
 
-**Org business specs (Julia-line S9).** `GET|PUT /api/channels/agents/{key}/specs` (`routers/channel_specs_router.py`) is what
+**Org business specs (Julia-line S9).** Org admins write them in SW since 2026-11-18, only the closed allowlist `CHAVES_EDITAVEIS_PELA_ORG` (other keys: 422 `spec_nao_editavel_pela_org`; platform staff keep the studio route for every key). `GET|PUT /api/channels/agents/{key}/specs` (`routers/channel_specs_router.py`) is what
 social-wiring's editor calls with the granted channel token (scope `agents:channel-specs`, bound to the org instance; the org
 is the token's). It runs the studio PUT's own code (`aplicar_org_specs` / `ler_org_specs`): declared keys only,
 `especificacoes_service.validar`, the PUT's required, product-attested `ator {user_id, nome?, email?}` (422 `ator_obrigatorio`; stored as `updated_by*`, migration 062), 200 + `invalidas` in report mode, 422 + `violacoes` in block mode, 422 `spec_nao_declarada`.

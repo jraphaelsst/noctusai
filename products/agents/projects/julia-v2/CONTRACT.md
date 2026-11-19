@@ -380,7 +380,7 @@ mandate of 2026-10-19 (no org may read the platform's prompts/rules).
     audit `specs_org_editadas` has `actor` = the attested user and `depois` = `{chaves, token_id, ator{user_id,nome,email}}`.
     GET/PUT `valores[]` gain `updated_by` + `updated_by_nome` ("alterado por X em `updated_at`"). The studio PUT is unchanged
     (the signed-in human, no `ator` field, `updated_by_nome` null).
-  - **Staff route, authorised by the grant (owner 2026-11-05)**: SW stays read-only (403 `edicao_restrita_plataforma`). A grant is one
+  - **Staff route, authorised by the grant (owner 2026-11-05)**: SW may write only the org-owned allowlist (owner 2026-11-18; 422 `spec_nao_editavel_pela_org` for any other key), so this staff route stays the way to write EVERY key. A grant is one
     `(agent, product, org)` with its OWN personal token (a token never reaches another agent). NoctusAI staff fill that org's specs, with no
     agents licence for the org, via `GET /api/studio/plataforma/agents/{key}/products/{product}/orgs` (picker: live grants + status) and
     `GET|PUT /api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs` (`plataforma_org_specs_router`). Needs the

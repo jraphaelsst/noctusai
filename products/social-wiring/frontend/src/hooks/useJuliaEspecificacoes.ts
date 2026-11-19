@@ -4,7 +4,8 @@
  * instructions; Julia's core stays managed by NoctusAI.
  *
  *   GET /api/julia/especificacoes   org admin: declarations + current values + what is missing / invalid
- *   (READ-ONLY here: the PUT is NoctusAI-only, an org admin gets 403 `edicao_restrita_plataforma`; there is no save hook)
+ *   PUT /api/julia/especificacoes {valores: {chave: texto}}   org admin (owner 2026-11-18); agents holds the closed allowlist of
+ *   org-editable keys (`editavel_pela_org` on each declaration), any other key is its 422 `spec_nao_editavel_pela_org`
  *
  * Refusals (all typed): 409 `agente_nao_conectado`;
  * 502/503 `agents_indisponivel` | `agents_token_invalido`. Where the code sits in the body varies with how the server
@@ -13,6 +14,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 export type TipoEspecificacao =
   | "texto_curto"
@@ -35,6 +37,8 @@ export interface EspecificacaoDeclarada {
   tipo: TipoEspecificacao;
   obrigatoria: boolean;
   exemplo: string | null;
+  /** True when the org's own admin may write this key (agents' closed allowlist); false/absent = NoctusAI only. */
+  editavel_pela_org?: boolean;
 }
 
 export interface ValorEspecificacao {
@@ -94,6 +98,8 @@ export function mensagemErroEspec(err: unknown): string | null {
       return "A Julia ainda não está conectada à plataforma. Veja o cartão “Conexão com a plataforma”.";
     case "agents_indisponivel":
       return "A Julia está indisponível agora, então não conseguimos ler ou salvar as especificações. Tente de novo em instantes.";
+    case "spec_nao_editavel_pela_org":
+      return "Esta informação só pode ser alterada pela equipe NoctusAI. Nada foi salvo.";
     case "agents_token_invalido":
       return "A conexão da Julia com a plataforma foi recusada. Peça ao suporte NoctusAI para reconectar.";
     default:
@@ -110,5 +116,13 @@ export function useJuliaEspecificacoes() {
       const s = leituraErroEspec(err).status;
       return (s === null || s >= 500) && n < 2;
     },
+  });
+}
+
+/** The server's answer is the whole specs view: it replaces the cached read (values, `faltando`, `invalidas`, who changed). */
+export function useSalvarEspecificacoes() {
+  return useCacheWriteMutation<Especificacoes, Record<string, string>>({
+    mutationFn: async (valores) => desembrulhar(await api.put<Especificacoes | { data: Especificacoes }>(URL, { valores })),
+    targets: [{ queryKey: JULIA_ESPECIFICACOES_KEY, commit: (_old: Especificacoes | undefined, saved) => saved }],
   });
 }
