@@ -464,10 +464,10 @@ if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/r
 fi
 
 # ─── 6b-ter-ter. recurring refusal classes have an owner (WARN-first SHADOW) ──
-# Keeper `check_refusal_classes_owned`: a refusal class that fired >=3x in 14d with no open fix. Reads the
-# machine-local gate event log only; warn-only until the shadow record supports blocking.
+# Keeper `check_refusal_classes_owned`: a refusal class that fired >=3x in 14d with no owner. Advisory here
+# (NOC_GATE_ADVISORY: its own run is a `warn`, never counted as a refusal); BLOCKING at pre-push.
 if have_py; then
-    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-refusal-classes-owned || echo "[pre-commit] WARNING (shadow): refusal-classes-owned — a recurring refusal has no fix owner; see '--gate-alignment refusals'." >&2
+    NOC_GATE_ADVISORY=1 "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-refusal-classes-owned || echo "[pre-commit] WARNING: refusal-classes-owned — a recurring refusal has no owner (pre-push will block); run '--gate-alignment refusals --file-walls'." >&2
 fi
 
 # ─── 6b-ter-bis. merge drivers have contract coverage (WARN-first SHADOW) ──

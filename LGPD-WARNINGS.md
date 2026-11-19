@@ -15,6 +15,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
+- [ ] **cs_consentimentos_voz stores consent for cloning a real person's voice/avatar (biometric data, LGPD art. 5 II / 11): pessoa_nome plus a path+sha256 to the signed consent document; vendors ElevenLabs and HeyGen receive the voice/audio.** at `products/social-wiring/backend/migrations/365_cs_consentimentos_voz.sql` — Criação pipeline M-D (owner decision 10.1: one ElevenLabs voice clone feeds HeyGen as audio). Egress of biometric data to two third-party vendors; retention and erasure path not yet defined.
+  - *Mitigation*: Append-only ledger (revocation = new row), clone_voice refused without a valid unrevoked row (cs_consentimento_voz_vigente), document in a private bucket served by signed URL, DELETE only via a future GUC-gated erasure function (NOC-REMEDIATE[cs-consentimentos-voz-expurgo-lgpd]). Owner-gated: per-creator signed consent before any clone; vendor DPAs and retention to be set.
+  - *Flagged*: 2026-11-19
 - [ ] **Clinical session notes (anotações) are LGPD art. 11 sensitive health data stored per session** at `products/nosnolimiar` — Weekly-care feature adds a per-session clinical note. Mitigated by design: own table client_session_notes (service role only, no authenticated grant), therapist-only (org admin) routes GET/PUT /api/clients/sessions/{id}/clinical-note with 403 before any lookup, never in list/agenda/history payloads (events log only the fact), not in exports, not in any agent/WhatsApp context, FE drops it from cache on close. Open: retention/erasure policy for notes (deleting a session cascades its note; no patient-level erasure endpoint yet), encryption at rest beyond the platform default, and an access-read audit row.
   - *Mitigation*: Own table, service-role only; therapist-only routes; never in lists/events/exports/agents; cache dropped on close.
   - *Flagged*: 2026-11-17

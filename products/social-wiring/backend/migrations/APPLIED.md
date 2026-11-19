@@ -697,6 +697,10 @@ Authored 2026-11-15. CONTRACT step of the 344/345 expand-migrate-contract: drops
 
 Authored 2026-11-15 (re-cut v3 of the 2026-11-04 Vista sync-and-history work; the WhatsApp digest and its `destino_user_id` are KEPT, owner option 1). ADDs `vista_escrita_ativa boolean NOT NULL DEFAULT false` (the owner's switch to edit Vista), and creates the append-only `imovel_historico` (UPDATE/DELETE revoked + seed GUC carve-out guard trigger; DELETE only for a future LGPD erasure that sets `social_wiring.imovel_historico_expurgo`). Apply BEFORE deploying the image: the sync writes `imovel_historico` and the config reads `vista_escrita_ativa`. Idempotent.
 
+## 362-366 — CoreStudio criação pipeline (M-A..M-E) — NOT APPLIED (owner-gated)
+
+Authored 2026-11-19 (criacao-pipeline-contract.md). 362 `cs_criacao_posts` (cs_posts criação state/CTA/fontes, hashtags cap 5, papel CHECK, **per-org data step: Gravação -> Criação role `criacao`, Roteiro/Edição/Pronto roles, inserts Aprovação final**), 363 `cs_criacao_jobs` (measured step ledger + `cs_criacao_passo_registrar`), 364 `cs_post_eventos_criacao` (event vocabulary), 365 `cs_consentimentos_voz` (append-only voice/avatar consent; LGPD flag), 366 `cs_criacao_cotas` (US$15/month quota + events + spend view). **Apply 362 TOGETHER with the S5 image** (the previous image gates on role `gravacao`, which the data step renames to `criacao`); 363's RPC needs 364 before its first call; 366 needs 363. Run `predeploy_check` first. Forward-only, idempotent.
+
 ## 367 — cs_chat_proposta_publicacoes — NOT APPLIED
 
 Authored 2026-11-19 (criação pipeline S9). Creates `cs_chat_proposta_publicacoes` (the validated `### Publicação` block of a chat proposta: legenda, exactly 5 hashtags, primeiro comentário, CTA objective/justification, fontes) and WIDENS the `cs_fluxo_eventos.tipo` CHECK with `opcoes_selecionadas`, `publicacao_gerada`, `publicacao_invalida`, `publicacao_falhou`. Additive; **apply BEFORE deploying the image** (the chat writes the table and the new event names; an N-1 image ignores both). Requires 352/358. Forward-only, idempotent.

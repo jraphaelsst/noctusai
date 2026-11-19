@@ -20,4 +20,4 @@ class TestRefusalClassesOwned:
         evs = [{"gate": "g", "outcome": "deny", "class": "g:x", "session": f"s{i}",
                 "ts": (now - dt.timedelta(days=i)).isoformat()} for i in (1, 2, 3)]
         (issue,) = check_refusal_classes_owned(paths=[], repo_root=tmp_path, events=evs)
-        assert issue["severity"] == "warning"
+        assert issue["severity"] == "high"

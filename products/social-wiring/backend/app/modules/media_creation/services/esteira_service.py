@@ -40,6 +40,7 @@ from app.modules.media_creation.esteira_config import (
     ESTEIRA_PADRAO,
     PIPELINE_ESTEIRA,
     ROLE_CANCELADO,
+    ROLE_CRIACAO,
     ROLE_GRAVACAO,
     ROLE_POSTADO,
 )
@@ -368,10 +369,10 @@ class EsteiraService:
 
     @staticmethod
     def _gated(stages: list[dict], target: dict) -> bool:
-        """True when ``target`` is at or after the ``gravacao`` role stage (except the cancel stage)."""
+        """True when ``target`` is at or after the ``criacao`` role stage -- ``gravacao`` is its one-release alias (except the cancel stage)."""
         if target.get("papel") == ROLE_CANCELADO:
             return False
-        grav = next((s for s in stages if s.get("papel") == ROLE_GRAVACAO), None)
+        grav = next((s for s in stages if s.get("papel") in (ROLE_CRIACAO, ROLE_GRAVACAO)), None)
         if grav is None:
             return False
         order = [s["id"] for s in stages]

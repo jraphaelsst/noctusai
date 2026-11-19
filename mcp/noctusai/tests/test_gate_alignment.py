@@ -310,7 +310,7 @@ class TestUnownedKeeper:
         now = dt.datetime.now(dt.timezone.utc)
         mk = lambda i: {"gate": "g", "outcome": "deny", "ts": (now - dt.timedelta(days=i)).isoformat(), "session": f"s{i}", "class": "g:x"}
         issues = compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2), mk(3)])
-        assert [i["severity"] for i in issues] == ["warning"] and "g:x" in issues[0]["issue"]
+        assert [i["severity"] for i in issues] == ["high"] and "g:x" in issues[0]["issue"] and "--file-walls" in issues[0]["issue"]
         assert compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2)]) == []
 
 
@@ -352,3 +352,125 @@ class TestScaffoldKeeperOutputPassesItsOwnTriad:
         for _ in range(2):
             ga.declare_gate("keeper:check-xyz", "scaffold: t", "o", source="KB § x", decision="d", root=root)
         assert len(json.loads((root / ga.INVENTORY_REL).read_text())["decisions"]) == 1
+
+
+class TestRefusalBacklogConstruction:
+    """The recurrence backlog cannot build up (2026-11-19): a class that crosses N>=3 gets its finding opened by
+    the system, intended refusals are declared and never counted, and per-instance tails collapse to one class."""
+
+    def _evs(self, key, n=3):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        return [{"gate": "g", "outcome": "deny", "class": key, "session": f"s{i}",
+                 "ts": (now - dt.timedelta(days=i)).isoformat(), "reason": "boom"} for i in range(1, n + 1)]
+
+    def _policy(self, root, *entries):
+        (root / ga.POLICY_REL).parent.mkdir(parents=True, exist_ok=True)
+        (root / ga.POLICY_REL).write_text(json.dumps({"intended": list(entries)}))
+
+    @staticmethod
+    def _owners(monkeypatch, rows):
+        def init(self, root):
+            self.policy, self.pointers, self.rows, self.markers = [], [], rows, {}
+        monkeypatch.setattr(ga._Owners, "__init__", init)
+
+    def test_canonical_class_collapses_per_instance_tails(self):
+        c = ga.canonical_class
+        assert c("keeper:x:pre-push:no-branch-pointer-found-for-feat/some-branch-v2") == \
+            "keeper:x:pre-push:no-branch-pointer-found-for-feat/*"
+        assert c("keeper:y:pre-commit:products/agents/backend/migrations/-_eval_x") == \
+            "keeper:y:pre-commit:products/*/backend/migrations/*"
+        assert ga.event_class({"class": "k:engineer-slice-feat/abc-def"}) == "k:engineer-slice-feat/*"
+        assert c("deliverable:scoped_green:unmeasured") == "deliverable:scoped_green:unmeasured"
+
+    def test_two_branches_of_one_kind_are_one_class(self):
+        a = {"outcome": "deny", "gate": "g", "reason": "stage=pre-push code=no-pointer-for-feat/a"}
+        b = {"outcome": "deny", "gate": "g", "reason": "stage=pre-push code=no-pointer-for-feat/b"}
+        assert ga.event_class(a) == ga.event_class(b)
+
+    def test_declared_intended_class_is_owned_not_backlog(self, tmp_path):
+        self._policy(tmp_path, {"match": "guard:primary-write:refused-", "rationale": "primary write refused by design"})
+        k = "guard:primary-write:refused-this-would-write-the-primary"
+        (r,) = ga.refusal_recurrence([k], root=tmp_path, events=self._evs(k))
+        assert r["open_fix"] == "intended:guard:primary-write:refused-"
+        assert ga.unowned_classes(tmp_path, events=self._evs(k)) == []
+        # a sibling class of the same guard (a timeout) is NOT intended
+        t = "guard:primary-write:guard-timed-out"
+        assert [x["class"] for x in ga.unowned_classes(tmp_path, events=self._evs(t))] == [t]
+
+    def test_policy_entry_without_a_rationale_is_ignored(self, tmp_path):
+        self._policy(tmp_path, {"match": "g:", "rationale": "x"})
+        assert ga.load_policy(tmp_path) == []
+
+    @pytest.mark.parametrize("status,owned", [("open", True), ("in-progress", True), ("accepted", True), ("fixed", False)])
+    def test_findings_row_states_decide_ownership(self, tmp_path, monkeypatch, status, owned):
+        k = "keeper:check-x:pre-commit:y"
+        self._owners(monkeypatch, {ga.FINDING_KEY_PREFIX + k: {"id": "GW-1", "status": status, "target": k}})
+        assert bool(ga._Owners(tmp_path).find(k)) is owned
+
+    def test_a_wall_finding_on_the_gate_owns_its_stage_variants(self, tmp_path, monkeypatch):
+        self._owners(monkeypatch, {"wall:keeper:check-x": {"id": "GW-9", "status": "open", "target": "keeper:check-x", "kind": "wall"}})
+        assert ga._Owners(tmp_path).find("keeper:check-x:pre-push:some-code") == "findings:GW-9"
+        assert ga._Owners(tmp_path).find("keeper:check-z:pre-push:some-code") is None
+
+    def test_file_missing_findings_opens_one_row_per_unowned_class_and_only_those(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NOCTUS_REFUSAL_BACKLOG_LOG", str(tmp_path / "bl.ndjson"))
+        evs = self._evs("keeper:check-a:pre-commit:x") + self._evs("keeper:check-b", n=2)
+        filed: list[dict] = []
+        res = ga.file_missing_findings(tmp_path, events=evs, filer=lambda **kw: (filed.append(kw), {"ok": True, "id": "GW-1"})[1])
+        assert [f["target"] for f in filed] == ["keeper:check-a:pre-commit:x"]
+        f = filed[0]
+        assert (f["status"], f["key"], f["source"], f["kind"]) == (
+            "open", "refusal:keeper:check-a:pre-commit:x", ga.FINDING_SOURCE, "refusal-class")
+        assert "triage by" in f["note"] and "3x across 3 session(s)" in f["note"]
+        assert res["filed"][0]["id"] == "GW-1" and res["failed"] == []
+
+    def test_file_missing_findings_reports_a_failed_write_loudly(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NOCTUS_REFUSAL_BACKLOG_LOG", str(tmp_path / "bl.ndjson"))
+        res = ga.file_missing_findings(tmp_path, events=self._evs("k:x"), filer=lambda **kw: {"ok": False, "error": "offline"})
+        assert res["filed"] == [] and res["failed"][0]["error"] == "offline"
+
+    def test_live_read_auto_files_and_an_explicit_event_list_does_not(self, tmp_path, monkeypatch):
+        calls: list[dict] = []
+        monkeypatch.setattr(ga, "file_missing_findings", lambda *a, **kw: calls.append(kw) or {})
+        ga.refusal_recurrence(["k:x"], root=tmp_path, events=self._evs("k:x"))
+        assert calls == []
+        monkeypatch.setattr(ga, "read_events", lambda: self._evs("k:x"))
+        ga.refusal_recurrence(["k:x"], root=tmp_path, auto_file=True)
+        assert len(calls) == 1
+
+    def test_backlog_stats_counts_uncovered_and_intended(self, tmp_path):
+        self._policy(tmp_path, {"match": "guard:ok:", "rationale": "intended by design"})
+        evs = self._evs("guard:ok:a") + self._evs("keeper:check-q") + self._evs("keeper:check-small", n=2)
+        s = ga.backlog_stats(tmp_path, events=evs)
+        assert (s["recurring"], s["uncovered"], s["intended"]) == (2, 1, 1)
+
+    def test_snapshot_is_appended_as_telemetry(self, tmp_path, monkeypatch):
+        log = tmp_path / "bl.ndjson"
+        monkeypatch.setenv("NOCTUS_REFUSAL_BACKLOG_LOG", str(log))
+        ga.record_backlog_snapshot(tmp_path, events=self._evs("k:x"), filed=1)
+        row = json.loads(log.read_text().splitlines()[-1])
+        assert row["uncovered"] == 1 and row["filed"] == 1
+
+    def test_deny_path_autofile_is_throttled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NOCTUS_REFUSAL_AUTOFILE", "1")
+        calls: list[int] = []
+        monkeypatch.setattr(ga, "refusal_recurrence", lambda *a, **kw: calls.append(1) or [])
+        monkeypatch.setattr(ga, "all_classes", lambda **kw: [])
+        stamp = tmp_path / "stamp"
+        ga.maybe_autofile_on_deny(tmp_path, now=1_000_000.0, marker=stamp)
+        ga.maybe_autofile_on_deny(tmp_path, now=stamp.stat().st_mtime + 5, marker=stamp)
+        assert len(calls) == 1
+        ga.maybe_autofile_on_deny(tmp_path, now=stamp.stat().st_mtime + ga._AUTOFILE_THROTTLE_S + 1, marker=stamp)
+        assert len(calls) == 2
+
+    def test_the_committed_policy_is_well_formed_and_carries_a_rationale_per_entry(self):
+        raw = json.loads((REAL_ROOT / ga.POLICY_REL).read_text())["intended"]
+        assert raw and len(ga.load_policy(REAL_ROOT)) == len(raw)
+
+    def test_keeper_blocks_an_unowned_class_and_clears_when_owned(self, tmp_path):
+        evs = self._evs("keeper:check-new:pre-push:z")
+        (issue,) = compliance.check_refusal_classes_owned(repo_root=tmp_path, events=evs)
+        assert issue["severity"] == "high"
+        self._policy(tmp_path, {"match": "keeper:check-new", "rationale": "intended by design here"})
+        assert compliance.check_refusal_classes_owned(repo_root=tmp_path, events=evs) == []

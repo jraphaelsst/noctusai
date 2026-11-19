@@ -54,6 +54,7 @@ __all__ = [
     "ChannelReplyOut",
     "ChannelTurnRequest",
     "ChannelTurnResponse",
+    "TurnChannel",
     "ChannelUsageOut",
     "ChannelResumoRequest",
     "ChannelResumoResponse",
@@ -83,6 +84,10 @@ BATCH_MAX_CHARS = 6000
 
 #: Channels the turn API accepts (page 0: WhatsApp via WAHA / Cloud API).
 Channel = Literal["whatsapp"]
+#: Channels a TURN may arrive on. ``app`` is the in-product chat of an agent that declares it
+#: (:data:`app.criacao.canal_app.AGENTES_CANAL_APP`): the route refuses it for every other agent. Deletion on request
+#: (``ChannelDeleteRequest``) and the rest of the lead machinery stay ``whatsapp``-only (:data:`Channel`).
+TurnChannel = Literal["whatsapp", "app"]
 
 
 class ChannelRef(StrictHttpModel):
@@ -318,7 +323,7 @@ def _truncar_lote(messages: list[ChannelInboundMessage]) -> list[ChannelInboundM
 
 class ChannelTurnRequest(StrictHttpModel):
     agent_key: str = Field(..., min_length=1, max_length=64)
-    channel: Channel
+    channel: TurnChannel
     channel_ref: ChannelRef
     contact: ChannelContact = Field(default_factory=ChannelContact)
     #: v2: the lead. A v1-shaped request without it is keyed by its ``channel_ref`` (one release).
@@ -334,6 +339,12 @@ class ChannelTurnRequest(StrictHttpModel):
 
     @model_validator(mode="after")
     def _batch_caps(self) -> "ChannelTurnRequest":
+        if self.channel == "app" and (
+            self.contexto is not None or self.lead is not None or self.gatilho != "mensagem" or self.remetente is not None
+        ):
+            # the app channel carries NONE of the lead machinery: its ``contexto`` schema is Julia's and closed, and a
+            # "lead" / re-engagement / personal-line sender is not a thing a brand chat has
+            raise ValueError("the app channel takes only messages (no contexto, lead, gatilho or remetente)")
         if self.gatilho == "mensagem" and not self.messages:
             raise ValueError("a message turn needs at least one message")
         if self.gatilho == "reengajamento" and self.contexto is None:

@@ -13991,6 +13991,187 @@ _SW_361_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring criação pipeline (migrations 362-366, criacao-pipeline-contract.md section 2). Self-provisioning
+# like the 352 probes: every probe builds its OWN org / marca / stage / post (and, for the ledger probes, one step through
+# the real RPC) inside the rolled-back transaction. `statements` is the write under test; the LAST one must be refused.
+# The ledger's CHECK probes switch the writer GUC on first, so the CHECK (not the append-only guard) is what answers.
+# ---------------------------------------------------------------------------
+
+_SW_362_MIGRATION = "362_cs_criacao_posts.sql"
+_SW_363_MIGRATION = "363_cs_criacao_jobs.sql"
+_SW_365_MIGRATION = "365_cs_consentimentos_voz.sql"
+_SW_366_MIGRATION = "366_cs_criacao_cotas.sql"
+_SW362 = _SW_SCHEMA
+_SW363_GUC_ON = "    PERFORM set_config('social_wiring.cs_criacao_jobs_registrar', 'on', true);\n"
+
+
+def _sw365_insert(*, pessoa: str = "'Pessoa'", vendor: str = "'elevenlabs'", voice: str = "'v1'", doc: str = "'sw/doc.pdf'",
+                  sha: str = "repeat('a', 64)", escopo: str = "'clone_voz'", cols: str = "", vals: str = "") -> str:
+    return (
+        f"    INSERT INTO {_SW362}.cs_consentimentos_voz "
+        f"(org_id, marca_id, pessoa_nome, vendor, voice_id, documento_path, documento_sha256, escopo{cols}) "
+        f"VALUES (v_org, v_marca, {pessoa}, {vendor}, {voice}, {doc}, {sha}, {escopo}{vals});"
+    )
+
+
+def _sw362_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    migration: str = _SW_362_MIGRATION, with_job: bool = False,
+) -> GuardProbe:
+    """Write-refusal probe on a 362-366 guard (constraint / trigger-function name matched against the error text).
+    Fixture: v_org, v_marca, v_etapa, v_post; ``with_job`` adds v_job, a pendente ledger step created through the real RPC."""
+    fragment_lit = _sql_lit(guard_name)
+    job_setup = (
+        f"  PERFORM {_SW362}.cs_criacao_passo_registrar(v_org, v_post, 1, 'tts', 'pendente', '{{}}'::jsonb);\n"
+        f"  SELECT id INTO v_job FROM {_SW362}.cs_criacao_jobs WHERE post_id = v_post AND passo = 'tts';\n"
+        if with_job else ""
+    )
+    migrations = (_SW_362_MIGRATION,) if migration == _SW_362_MIGRATION else (_SW_362_MIGRATION, migration)
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind="write_refusal",
+        migrations=migrations, rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid; v_marca uuid; v_etapa uuid; v_post uuid; v_job uuid;
+BEGIN
+  IF to_regclass('{_SW362}.cs_posts') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW362}.cs_posts does not exist';
+  END IF;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-criacao')}  INSERT INTO {_SW362}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+  VALUES (v_org, 'esteira', 'noc_probe_criacao', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  INSERT INTO {_SW362}.cs_posts (org_id, marca_id, titulo, etapa_id) VALUES (v_org, v_marca, 'noc probe', v_etapa) RETURNING id INTO v_post;
+{job_setup}  IF v_post IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
+  BEGIN
+{statements}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+def _sw362_post(probe_id: str, guard_name: str, set_clause: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    return _sw362_probe(
+        probe_id=probe_id, guard_name=guard_name, permitted_msg=permitted_msg, rationale=rationale,
+        statements=f"    UPDATE {_SW362}.cs_posts SET {set_clause} WHERE id = v_post;",
+    )
+
+
+def _sw363_job(probe_id: str, guard_name: str, set_clause: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    return _sw362_probe(
+        probe_id=probe_id, guard_name=guard_name, permitted_msg=permitted_msg, rationale=rationale,
+        migration=_SW_363_MIGRATION, with_job=True,
+        statements=_SW363_GUC_ON + f"    UPDATE {_SW362}.cs_criacao_jobs SET {set_clause} WHERE id = v_job;",
+    )
+
+
+def _sw365_consent(probe_id: str, guard_name: str, permitted_msg: str, rationale: str, **kw: str) -> GuardProbe:
+    return _sw362_probe(
+        probe_id=probe_id, guard_name=guard_name, permitted_msg=permitted_msg, rationale=rationale,
+        migration=_SW_365_MIGRATION, statements=_sw365_insert(**kw),
+    )
+
+
+_SW_362_PROBES: tuple[GuardProbe, ...] = (
+    _sw362_post("sw362_post_criacao_estado_valido", "cs_posts_criacao_estado_check", "criacao_estado = 'inventado'",
+                "a post got an unknown criação sub-state",
+                "The sub-state is the contract's state machine (section 1): an unknown value has no mover and no card label."),
+    _sw362_post("sw362_post_criacao_rota_valida", "cs_posts_criacao_rota_check", "criacao_rota = 'outra'",
+                "a post got an unknown production route",
+                "Routes are data keyed by name (mc/criacao_rotas.py): an unknown key has no job graph."),
+    _sw362_post("sw362_post_falha_codigo_so_em_falhou", "cs_posts_falha_codigo_check", "falha_codigo = 'cota'",
+                "a failure code was stored on a post that is not in the falhou sub-state",
+                "A failure code outliving its failure would show a stale error on a healthy card."),
+    _sw362_post("sw362_post_cta_objetivo_valido", "cs_posts_cta_objetivo_check", "cta_objetivo = 'vendas'",
+                "a post got a CTA objective outside the contract's enum",
+                "The CTA objective mix is a metric (section 2.2): a free-text value would fragment it."),
+    _sw362_post("sw362_post_cta_justificativa_max", "cs_posts_cta_justificativa_check", "cta_justificativa = repeat('j', 1001)",
+                "a CTA justification over 1000 chars was stored",
+                "The justification is a short rationale shown on the card, not a second roteiro."),
+    _sw362_post("sw362_post_fontes_array", "cs_posts_fontes_check", "fontes = '{}'::jsonb",
+                "post fontes was stored as a non-array",
+                "fontes is the list of sources the roteiro cites; the FE and the verifier iterate it as an array."),
+    _sw363_job("sw363_job_rodada_minima", "cs_criacao_jobs_rodada_check", "rodada = 0",
+               "a ledger step got round 0", "Rounds start at 1; round 0 would collide with 'no round yet' in the progress scope."),
+    _sw363_job("sw363_job_passo_formato", "cs_criacao_jobs_passo_check", "passo = 'Mux 2'",
+               "a ledger step got a malformed step name", "Step names key the job graph and the metrics: snake_case only."),
+    _sw363_job("sw363_job_status_valido", "cs_criacao_jobs_status_check", "status = 'inventado'",
+               "a ledger step got an unknown status", "The status vocabulary is the state machine the RPC advances."),
+    _sw363_job("sw363_job_depende_de_max", "cs_criacao_jobs_depende_de_max",
+               "depende_de = ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 11))",
+               "a ledger step depends on more than 10 steps", "A job graph with 11 predecessors is a bug, not a graph."),
+    _sw363_job("sw363_job_terminal_tem_fim", "cs_criacao_jobs_terminado_check", "status = 'cancelado'",
+               "a terminal step was stored without terminado_em",
+               "Wall time and the month-to-date spend scan both read terminado_em: a terminal step without it vanishes from them."),
+    _sw363_job("sw363_job_em_andamento_tem_inicio", "cs_criacao_jobs_iniciado_check", "status = 'em_andamento'",
+               "a running step was stored without iniciado_em", "Duration is terminado_em - iniciado_em: a running step must carry its start."),
+    _sw363_job("sw363_job_erro_so_em_falha", "cs_criacao_jobs_erro_check", "erro_codigo = 'x'",
+               "an error code was stored on a step that did not fail",
+               "A step failed iff it carries an error code: the per-step failure rate is counted from this."),
+    _sw363_job("sw363_job_custos_nao_negativos", "cs_criacao_jobs_custos_check", "custo_usd = -1",
+               "a negative cost was stored", "A negative cost would silently reduce the month's spend and the quota check."),
+    _sw363_job("sw363_job_brl_exige_fx_ok", "cs_criacao_jobs_fx_check", "custo_brl = 1",
+               "a BRL cost was stored without an ok exchange rate",
+               "BRL is derived from USD at a known rate; without fx_status ok the figure is an estimate, which the ledger refuses."),
+    _sw363_job("sw363_job_json_objeto", "cs_criacao_jobs_json_check", "unidades = '[]'::jsonb",
+               "vendor units were stored as a non-object", "unidades / medicoes / resultado are read as key-value objects."),
+    _sw363_job("sw363_job_nao_medido_coerente", "cs_criacao_jobs_nao_medido_check", "nao_medido = ARRAY['inventado']",
+               "an unknown field was declared unmeasured",
+               "nao_medido names measurable columns only; unmeasured is NULL plus the name, never free text."),
+    _sw363_job("sw363_job_concluido_mede_ou_declara", "cs_criacao_jobs_concluido_medido_check",
+               "status = 'concluido', iniciado_em = now(), terminado_em = now()",
+               "a concluded step was stored with neither a cost/cpu measurement nor a nao_medido declaration",
+               "Unmeasured is NULL plus nao_medido, never a silent gap: a concluded step must measure or declare."),
+    _sw362_probe(
+        probe_id="sw363_job_escrita_direta_recusada", guard_name="guard_cs_criacao_jobs_append_only",
+        migration=_SW_363_MIGRATION, with_job=True,
+        statements=f"    UPDATE {_SW362}.cs_criacao_jobs SET modelo = 'x' WHERE id = v_job;",
+        permitted_msg="the ledger was updated outside cs_criacao_passo_registrar",
+        rationale="The step ledger is the measured record: only the RPC (forward-only, with its event) may write it.",
+    ),
+    _sw365_consent("sw365_consent_pessoa_nome", "cs_consentimentos_voz_pessoa_check", "a consent was stored without a person's name",
+                   "A consent for nobody cannot be shown to the person or audited.", pessoa="'   '"),
+    _sw365_consent("sw365_consent_vendor_valido", "cs_consentimentos_voz_vendor_check", "a consent was stored for an unknown vendor",
+                   "Consent is held per vendor (ElevenLabs, HeyGen): another vendor has no consent flow.", vendor="'google'"),
+    _sw365_consent("sw365_consent_voice_id", "cs_consentimentos_voz_voice_check", "a consent was stored without a voice id",
+                   "The clone gate looks a grant up by voice id: an empty one matches everything or nothing.", voice="''"),
+    _sw365_consent("sw365_consent_documento_path", "cs_consentimentos_voz_doc_path_check", "a consent was stored without its document path",
+                   "The signed term is the evidence: a consent without it is a claim.", doc="''"),
+    _sw365_consent("sw365_consent_documento_sha256", "cs_consentimentos_voz_doc_sha_check", "a consent was stored with a malformed document hash",
+                   "The hash pins the signed file so it cannot be swapped silently.", sha="'nothex'"),
+    _sw365_consent("sw365_consent_escopo_valido", "cs_consentimentos_voz_escopo_check", "a consent was stored with an unknown scope",
+                   "The scope says what was consented to (voice clone, avatar, both): an unknown one authorises nothing defined.", escopo="'tudo'"),
+    _sw365_consent("sw365_consent_fase_valida", "cs_consentimentos_voz_fase_check", "a consent was stored with an unknown phase",
+                   "A consent row is a grant or a revocation: nothing else.", cols=", fase", vals=", 'x'"),
+    _sw365_consent("sw365_consent_revogacao_aponta_a_concessao", "cs_consentimentos_voz_revogacao_check",
+                   "a revocation was stored without the grant it revokes or its date",
+                   "A revocation that names no grant cannot clear one (the valid-consent derivation joins on it).",
+                   cols=", fase", vals=", 'revogado'"),
+    _sw362_probe(
+        probe_id="sw365_consent_append_only", guard_name="guard_cs_consentimentos_voz_append_only", migration=_SW_365_MIGRATION,
+        statements=_sw365_insert() + f"\n    UPDATE {_SW362}.cs_consentimentos_voz SET pessoa_nome = 'x' WHERE org_id = v_org;",
+        permitted_msg="a voice consent row was updated",
+        rationale="Biometric consent is evidence: a revocation is a new row, history is never rewritten.",
+    ),
+    _sw362_probe(
+        probe_id="sw366_cota_limite_valido", guard_name="cs_criacao_cotas_limite_check", migration=_SW_366_MIGRATION,
+        statements=f"    INSERT INTO {_SW362}.cs_criacao_cotas (org_id, limite_usd_cents) VALUES (v_org, -1);",
+        permitted_msg="a negative vendor quota was stored",
+        rationale="A negative limit would make every paid step 'over quota' or, inverted, read as unlimited.",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -14126,6 +14307,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_352_PROBES,
     *_SW_358_PROBES,
     *_SW_361_PROBES,
+    *_SW_362_PROBES,
     *_SW_367_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
