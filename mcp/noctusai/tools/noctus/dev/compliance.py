@@ -5995,7 +5995,11 @@ def check_applied_md_ledger_parity(repo_root: Path | None = None) -> list[dict]:
 
     root = repo_root or REPO_ROOT
     issues: list[dict] = []
-    for md in sorted(root.glob("products/*/backend/migrations/APPLIED.md")):
+    from .product_scope import filter_active
+
+    mds = sorted(root.glob("products/*/backend/migrations/APPLIED.md"))  # product-scope: active (filtered below)
+    active = set(filter_active([m.parent.parent.parent.name for m in mds], root))
+    for md in (m for m in mds if m.parent.parent.parent.name in active):
         backend = md.parent.parent
         names = _am.read_ledger_names(backend)
         if names is None:
