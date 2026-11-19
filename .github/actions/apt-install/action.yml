@@ -117,7 +117,7 @@ runs:
         # Best-effort - anything missed is fetched by apt itself; apt re-verifies every file by hash.
         prefetch() {
           local first uris n
-          first="$(head -1 /etc/apt/apt-mirrors.txt 2>/dev/null | sed -E 's#/*$#/#')"
+          first="$(head -1 /etc/apt/apt-mirrors.txt 2>/dev/null | awk '{print $1}' | sed -E 's#/*$#/#')"
           uris="$(sudo apt-get install -y --no-install-recommends --print-uris $APT_OPTS $PKGS 2>/dev/null \
             | sed -nE 's/^\x27([^\x27]*)\x27 ([^ ]+) .*/\1 \2/p' \
             | sed -E "s#^mirror\+file:/etc/apt/apt-mirrors.txt/#${first}#")"
