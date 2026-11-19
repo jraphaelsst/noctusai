@@ -27647,14 +27647,19 @@ def check_gate_triad(repo_root: Path | None = None) -> list[dict]:
 
 def check_refusal_classes_owned(paths: list[Path] | None = None, repo_root: Path | None = None,
                                 events: list[dict] | None = None) -> list[dict]:
-    """Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with NO open fix
-    (branch-tree pointer naming it, in-progress gate-walls row, or NOC-REMEDIATE[<class>] marker) is a
-    recurring mistake nobody owns. Fix: open a fix branch whose brief/notes carry the class key, set a
-    gate-walls row in-progress/accepted, or leave a NOC-REMEDIATE[<class>] destination.
-    KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)."""
+    """Backstop gate (pre-push, blocking since 2026-11-19): a refusal class that fired >=3 times in 14 days
+    with NO owner is a recurring mistake nobody owns, and the merge-queue andon hard-refuses every enqueue
+    from 2026-11-21. Owner = a declared-intended class (refusal-class-policy.json), a branch-tree pointer
+    naming it, a gate-walls row (open / in-progress / accepted) or a NOC-REMEDIATE[<class>] marker. The
+    CONSTRUCTION leg auto-files the finding when a class first crosses the threshold, so this fires only when
+    that did not happen (offline ledger, throttled, a crash): the fix is one command, no triage needed first:
+    `python mcp/noctusai/cli.py --gate-alignment refusals --file-walls`. A pure read (never heals).
+    KB § PATTERNS/common/gate-methodology-sync.md (Refusal recurrence)."""
     from . import gate_alignment
-    return [{"file": "guard-events.ndjson", "severity": "warning",
-             "issue": f"refusal class `{r['class']}` recurred {r['n_14d']}x across {r['sessions']} session(s) in 14d with no open fix"}
+    return [{"file": "guard-events.ndjson", "severity": "high",
+             "issue": (f"refusal class `{r['class']}` recurred {r['n_14d']}x across {r['sessions']} session(s) in 14d with no owner. "
+                       "Run `python mcp/noctusai/cli.py --gate-alignment refusals --file-walls` to open its finding, then "
+                       "triage it (findings_ledger update: in-progress <branch> | accepted <rationale>).")}
             for r in gate_alignment.unowned_classes(repo_root or REPO_ROOT, events=events)]
 
 
