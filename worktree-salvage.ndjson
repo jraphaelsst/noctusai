@@ -1163,3 +1163,4 @@
 {"ts": "2026-11-19", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/_merged-tip-baseline-3f5f9d916", "branch": null, "sha": null, "reason": "merged-to-dev"}
 {"ts": "2026-11-19", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/agent-a487cc2865f33dc10", "branch": "fix/agents-staff-tabs", "sha": "a72cb5e426beddd295589e4d860933302f96b18d", "reason": "merged-to-dev"}
 {"ts": "2026-11-19", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/agent-a2c1511e5cbf1bca3", "branch": "feat/sw-criacao-stages", "sha": "ff49be992a52d65db937a30d18b5f50e3ea6c002", "reason": "merged-to-dev"}
+{"ts": "2026-11-19", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/agent-ad2f7a23acd8c776e", "branch": null, "sha": null, "reason": "merged-to-dev"}
