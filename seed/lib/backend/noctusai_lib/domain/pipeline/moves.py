@@ -15,6 +15,8 @@ reconstruct after the fact.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable
 
@@ -22,6 +24,9 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from .config import PipelineConfig
 from .stages import get_stage
+from .stream import CARD_MOVED_EVENT, PipelinePublisher
+
+logger = logging.getLogger(__name__)
 
 
 def move_card(
@@ -38,6 +43,7 @@ def move_card(
     extra_updates: dict[str, Any] | None = None,
     org_id: str | None = None,
     card_scoped_by_org: bool = True,
+    publish: PipelinePublisher | None = None,
 ) -> dict:
     """Move one card to `to_stage_id`, recording the transition.
 
@@ -64,6 +70,10 @@ def move_card(
             the CARD read by `org_id`. A platform-tier funnel whose card table
             has no `org_id` column (e.g. `website_leads`) passes ``False`` —
             `org_id` still scopes the stage lookup and stamps the history row.
+        publish: Optional live-stream hook `publish(event, payload)` (see
+            `stream.make_pipeline_publisher`). Called AFTER the move commits, only for a real
+            stage change, with `pipeline.card_moved`. Best-effort: a failure is logged with
+            context and never raises into the move.
 
     Returns:
         The updated card row.
@@ -136,6 +146,22 @@ def move_card(
                     "motivo": motivo,
                 },
             )
+
+        if publish:
+            try:
+                publish(CARD_MOVED_EVENT, {
+                    "card_id": card_id,
+                    "from_stage_id": de_etapa_id,
+                    "to_stage_id": to_stage_id,
+                    "motivo": motivo,
+                    "actor": user_id,
+                    "at": datetime.now(timezone.utc).isoformat(),
+                })
+            except Exception:
+                logger.warning(
+                    "pipeline publish hook failed pipeline=%s org=%s card=%s (move committed)",
+                    cfg.pipeline, org_id, card_id, exc_info=True,
+                )
 
     return row
 
