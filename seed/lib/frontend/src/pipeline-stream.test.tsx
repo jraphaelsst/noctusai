@@ -52,6 +52,29 @@ describe("applyPipelineEvent", () => {
   });
 });
 
+describe("applyPipelineEvent on a column-grouped board", () => {
+  const cols = () => [
+    { etapa: "s1", stage: {}, total: 2, exibidos: 2, cards: [{ id: "c1" }, { id: "c2" }] },
+    { etapa: "s2", stage: {}, total: 0, exibidos: 0, cards: [] as any[] },
+  ];
+
+  it("re-homes a moved card into the target column and keeps the counts honest", () => {
+    const next = applyPipelineEvent(cols(), moved("c1", "s2")) as ReturnType<typeof cols>;
+    expect(next[0].cards.map((c: any) => c.id)).toEqual(["c2"]);
+    expect(next[1].cards.map((c: any) => c.id)).toEqual(["c1"]);
+    expect([next[0].total, next[1].total]).toEqual([1, 1]);
+    expect(next[1].cards[0]).toMatchObject({ etapa_id: "s2" });
+  });
+
+  it("patches state in place, leaves unknown cards and unloaded target columns alone", () => {
+    const base = cols();
+    const st = applyPipelineEvent(base, state("c2", { criacao_estado: "gerando" })) as ReturnType<typeof cols>;
+    expect(st[0].cards[1]).toEqual({ id: "c2", criacao_estado: "gerando" });
+    expect(applyPipelineEvent(base, moved("zz", "s2"))).toBe(base);
+    expect(applyPipelineEvent(base, moved("c1", "s9"))).toBe(base);
+  });
+});
+
 function sse(frames: string[], opts: { hang?: boolean; ok?: boolean; status?: number } = {}) {
   const enc = new TextEncoder();
   let i = 0;

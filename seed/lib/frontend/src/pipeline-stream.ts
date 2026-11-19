@@ -47,6 +47,11 @@ export interface PipelineStreamAccessors<TCard = any> {
   withStage?: (card: TCard, stageId: string) => TCard;
   /** Default: shallow-merges the state into the card. */
   withState?: (card: TCard, state: Record<string, unknown>) => TCard;
+  /**
+   * Column-grouped boards (an array of `{ cards: [...] }`, what `PipelineBoard` caches): the id a stage
+   * event's `to_stage_id` is matched against. Default `col.etapa ?? col.stage?.id`.
+   */
+  getColumnId?: (column: any) => string | undefined;
 }
 
 export interface UsePipelineStreamOptions<TCard = any> extends PipelineStreamAccessors<TCard> {
@@ -99,6 +104,9 @@ export function applyPipelineEvent<TData>(
     });
     return touched ? next : cards;
   };
+  if (Array.isArray(prev) && prev.length > 0 && prev.every((c: any) => Array.isArray(c?.cards))) {
+    return applyToColumns(prev as any[], message, cardId, getId, change, accessors) as unknown as TData;
+  }
   if (Array.isArray(prev)) {
     const next = patch(prev);
     return (next === prev ? prev : next) as unknown as TData;
@@ -109,6 +117,50 @@ export function applyPipelineEvent<TData>(
     return next === cards ? prev : ({ ...(prev as any), cards: next } as TData);
   }
   return prev;
+}
+
+const defaultColumnId = (col: any): string | undefined => col.etapa ?? col.stage?.id;
+
+/** Column-grouped board: a state event patches the card in place; a move re-homes it into the target column. */
+function applyToColumns(
+  columns: any[],
+  message: Pick<RealtimeMessage, "event" | "payload">,
+  cardId: string,
+  getId: (card: any) => string,
+  change: (card: any) => any,
+  accessors: PipelineStreamAccessors,
+): any[] {
+  const from = columns.findIndex((col) => col.cards.some((c: any) => getId(c) === cardId));
+  if (from < 0) return columns; // a card the entry does not hold is never fabricated
+  if (message.event !== PIPELINE_CARD_MOVED_EVENT) {
+    return columns.map((col, i) =>
+      i === from ? { ...col, cards: col.cards.map((c: any) => (getId(c) === cardId ? change(c) : c)) } : col,
+    );
+  }
+  const colId = accessors.getColumnId ?? defaultColumnId;
+  const toStage = (message.payload as unknown as PipelineCardMoved).to_stage_id;
+  const to = columns.findIndex((col) => colId(col) === toStage);
+  if (to < 0 || to === from) return columns; // target column not loaded: the next read regroups
+  const card = change(columns[from].cards.find((c: any) => getId(c) === cardId));
+  return columns.map((col, i) => {
+    if (i === from) {
+      return {
+        ...col,
+        cards: col.cards.filter((c: any) => getId(c) !== cardId),
+        ...(typeof col.total === "number" ? { total: Math.max(col.total - 1, 0) } : {}),
+        ...(typeof col.exibidos === "number" ? { exibidos: Math.max(col.exibidos - 1, 0) } : {}),
+      };
+    }
+    if (i === to) {
+      return {
+        ...col,
+        cards: [...col.cards, card],
+        ...(typeof col.total === "number" ? { total: col.total + 1 } : {}),
+        ...(typeof col.exibidos === "number" ? { exibidos: col.exibidos + 1 } : {}),
+      };
+    }
+    return col;
+  });
 }
 
 export function usePipelineStream<TCard = any>(

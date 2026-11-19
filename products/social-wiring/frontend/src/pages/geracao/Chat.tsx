@@ -25,6 +25,7 @@ import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import {
   MAX_REFERENCIAS,
   mensagemEscolher,
+  mensagemFalhaSelecao,
   useApagarConversa,
   useContextoChat,
   useConversas,
@@ -34,6 +35,7 @@ import {
   useEscolherProposta,
   useMensagens,
   useRenomearConversa,
+  useSelecionarPropostas,
 } from "@/hooks/geracao/useChat";
 import { usePerfisMonitorados } from "@/hooks/geracao/useBiblioteca";
 import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
@@ -72,6 +74,8 @@ export default function Chat() {
   const renomear = useRenomearConversa();
   const apagar = useApagarConversa();
   const escolher = useEscolherProposta();
+  const selecionar = useSelecionarPropostas();
+  const [selecionadas, setSelecionadas] = useState<ReadonlySet<string>>(new Set());
   const toastErro = useToastErroGeracao();
   const { estado, enviar, parar, perfilPendente, limparPerfilPendente } = useEnviarMensagem();
   const perfisQ = usePerfisMonitorados();
@@ -194,6 +198,32 @@ export default function Chat() {
     }
   }
 
+  function alternarSelecao(propostaId: string) {
+    setSelecionadas((prev) => {
+      const n = new Set(prev);
+      if (n.has(propostaId)) n.delete(propostaId);
+      else n.add(propostaId);
+      return n;
+    });
+  }
+
+  /** Batch: one `selecionar` claims every picked proposta; a partly refused batch says which ones, never silently. */
+  async function onCriarSelecionadas() {
+    if (!conversaId || selecionar.isPending || selecionadas.size === 0) return;
+    const ids = [...selecionadas];
+    try {
+      const r = await selecionar.mutateAsync({ conversaId, ids });
+      const feitos = r.criados.length + r.ja_existiam.length;
+      setSelecionadas(new Set(r.falhas.map((f) => f.proposta_id)));
+      if (feitos > 0) {
+        toast.success(feitos === 1 ? "1 card criado na Esteira." : `${feitos} cards criados na Esteira.`);
+      }
+      for (const f of r.falhas) toastErro(mensagemFalhaSelecao(f.codigo), null);
+    } catch (e) {
+      toastErro(mensagemEscolher(e), e);
+    }
+  }
+
   /** The user picked the profile a name meant: the same message goes out again with it attached. */
   async function onEscolherPerfil(perfilId: string) {
     if (!perfilPendente || !conversaId || ocupado) return;
@@ -309,6 +339,8 @@ export default function Chat() {
                       truncada={m.truncada}
                       escolhendoId={escolhendoId}
                       onEscolher={(id) => void onEscolher(id)}
+                      selecionadas={selecionadas}
+                      onAlternar={alternarSelecao}
                     />
                   ))}
                   {estado.usuario && (
@@ -342,6 +374,29 @@ export default function Chat() {
               )}
               <div ref={fimRef} />
             </div>
+
+            {selecionadas.size > 0 && (
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 p-2 text-sm"
+                data-testid="selecao-barra"
+              >
+                <span role="status" aria-live="polite">
+                  {selecionadas.size === 1 ? "1 proposta selecionada" : `${selecionadas.size} propostas selecionadas`}
+                </span>
+                <span className="flex gap-2">
+                  <Button type="button" size="sm" variant="ghost" disabled={selecionar.isPending} onClick={() => setSelecionadas(new Set())}>
+                    Limpar
+                  </Button>
+                  <Button type="button" size="sm" disabled={selecionar.isPending} onClick={() => void onCriarSelecionadas()}>
+                    {selecionar.isPending
+                      ? "Criando cards…"
+                      : selecionadas.size === 1
+                        ? "Criar 1 card"
+                        : `Criar ${selecionadas.size} cards`}
+                  </Button>
+                </span>
+              </div>
+            )}
 
             <Composer
               valor={texto}

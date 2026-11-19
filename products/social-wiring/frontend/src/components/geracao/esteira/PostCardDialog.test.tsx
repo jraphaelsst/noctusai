@@ -11,7 +11,6 @@ const m = vi.hoisted(() => ({
   atualizar: vi.fn(),
   vincularH: vi.fn(),
   desvincularH: vi.fn(),
-  gerar: vi.fn(),
   lista: vi.fn(),
   toastErr: vi.fn(),
   roteiroModal: vi.fn(),
@@ -27,6 +26,13 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: m.toastErr } }));
+vi.mock("@/hooks/geracao/useCriacao", () => ({
+  useAprovarEtapa: () => ({ mutate: vi.fn(), isPending: false }),
+  mensagemAprovacao: () => "falha",
+  useCriacaoProgresso: () => ({ progresso: null, mode: "idle", ativo: false }),
+  ESTADO_ROTULO: {},
+  emAndamentoCriacao: () => false,
+}));
 
 const idle = { mutate: vi.fn(), isPending: false };
 vi.mock("@/hooks/geracao/useEsteira", () => ({
@@ -37,7 +43,6 @@ vi.mock("@/hooks/geracao/useEsteira", () => ({
   useDesvincularHeadline: () => ({ mutate: m.desvincularH, isPending: false }),
   useVincularRoteiro: () => idle,
   useDesvincularRoteiro: () => idle,
-  useGerarLegenda: () => ({ mutate: m.gerar, isPending: false }),
   useExcluirPost: () => ({ mutate: m.excluir, isPending: false }),
   useEquipe: () => ({
     data: [
@@ -325,35 +330,12 @@ describe("Roteiro", () => {
 });
 
 describe("Publicação / legenda", () => {
-  it("gerar legenda fica desabilitado sem roteiro completo", () => {
+  it("não oferece mais o botão Gerar legenda com IA (gerada por construção, só editável)", () => {
+    m.post.mockReturnValue(ok(postBase({ headline, roteiro: roteiroOk, legenda: "Legenda pronta" })));
     montar();
     tab("publicacao");
-    expect(screen.getByText("Gerar legenda com IA")).toBeDisabled();
-  });
-
-  it("gerar legenda preenche os campos e NÃO salva", () => {
-    m.post.mockReturnValue(ok(postBase({ headline, roteiro: roteiroOk })));
-    m.gerar.mockImplementation((_id: string, o: any) =>
-      o.onSuccess({ legenda: "Legenda IA", hashtags: ["cafe", "reels"], primeiro_comentario: "Comenta aí" }),
-    );
-    montar();
-    tab("publicacao");
-    fireEvent.click(screen.getByText("Gerar legenda com IA"));
-    expect(m.gerar).toHaveBeenCalledWith("p1", expect.any(Object));
-    expect(screen.getByLabelText("Legenda")).toHaveValue("Legenda IA");
-    expect(screen.getByLabelText("Hashtags")).toHaveValue("#cafe #reels");
-    expect(screen.getByLabelText("Primeiro comentário")).toHaveValue("Comenta aí");
-    expect(m.atualizar).not.toHaveBeenCalled();
-  });
-
-  it("falha na geração mostra o erro e não altera os campos", () => {
-    m.post.mockReturnValue(ok(postBase({ legenda: "Atual", roteiro: roteiroOk })));
-    m.gerar.mockImplementation((_id: string, o: any) => o.onError(new Error("cota diária atingida")));
-    montar();
-    tab("publicacao");
-    fireEvent.click(screen.getByText("Gerar legenda com IA"));
-    expect(screen.getByTestId("legenda-erro")).toHaveTextContent("cota diária atingida");
-    expect(screen.getByLabelText("Legenda")).toHaveValue("Atual");
+    expect(screen.queryByText("Gerar legenda com IA")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Legenda")).toHaveValue("Legenda pronta");
   });
 
   it("Salvar envia legenda, hashtags e primeiro comentário", async () => {

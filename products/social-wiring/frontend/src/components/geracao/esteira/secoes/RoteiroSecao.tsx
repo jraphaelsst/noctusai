@@ -18,6 +18,7 @@ import { useReprocessarRoteiro, useRoteiro, useRoteiros } from "@/hooks/geracao/
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
+import { AprovacaoAcoes } from "../AprovacaoAcoes";
 
 function Picker({
   open,
@@ -143,6 +144,7 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
             <StatusBadge status={r.status} />
             {detalhe.data?.etapa && <span className="text-xs text-muted-foreground">{detalhe.data.etapa}</span>}
           </div>
+          <AprovacaoAcoes postId={post.id} alvo="roteiro" aprovado={!!post.roteiro_aprovado} disponivel={r.status === "completo"} indisponivelMotivo="Disponível quando o roteiro estiver completo." />
           {r.headline_diferente && (
             <p className="text-sm text-warning-foreground" data-testid="roteiro-headline-diferente">
               Este roteiro foi escrito para outra headline.

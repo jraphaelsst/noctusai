@@ -26,6 +26,7 @@ import { useDesvincularHeadline, useVincularHeadline } from "@/hooks/geracao/use
 import { useHeadline, useHeadlinesLista, useLotesDoPost, type ListaHeadlines } from "@/hooks/geracao/useHeadlines";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
+import { AprovacaoAcoes } from "../AprovacaoAcoes";
 
 function Picker({
   open,
@@ -209,6 +210,7 @@ export function HeadlineSecao({ post }: { post: PostDetalhe }) {
             {h.texto}
           </p>
           <AvisoTamanhoHeadline headline={h} />
+          <AprovacaoAcoes postId={post.id} alvo="headline" aprovado={!!post.headline_aprovada} disponivel={!post.lote_ativo} indisponivelMotivo="Aguarde a geração terminar para decidir." />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => setEditando(true)}>
               Editar

@@ -12,6 +12,8 @@ import { useAtualizarPost } from "@/hooks/geracao/useEsteira";
 import { postHub } from "@/hooks/geracao/usePostHub";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { LinkProducao, PostDetalhe } from "@/types/esteira";
+import { AprovacaoAcoes } from "../AprovacaoAcoes";
+import { CriacaoStatusLine } from "../CriacaoStatusLine";
 
 export const LINKS_MAX = 10;
 
@@ -55,6 +57,15 @@ export function ProducaoSecao({ post }: { post: PostDetalhe }) {
 
   return (
     <section className="space-y-4" data-testid="secao-producao">
+      <div className="space-y-2" data-testid="producao-midia">
+        <h3 className="text-sm font-semibold">Mídia final</h3>
+        <CriacaoStatusLine postId={post.id} estado={post.criacao_estado} falhaCodigo={post.falha_codigo} />
+        {post.criacao_estado === "aguardando_aprovacao_midia" || post.midia_aprovada ? (
+          <AprovacaoAcoes postId={post.id} alvo="midia" aprovado={!!post.midia_aprovada} disponivel />
+        ) : (
+          <p className="text-xs text-muted-foreground">A aprovação da mídia final aparece aqui quando a criação terminar.</p>
+        )}
+      </div>
       <div className="space-y-2">
         <h3 className="text-sm font-semibold">Links de produção</h3>
         {links.length === 0 ? (

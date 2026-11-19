@@ -25,6 +25,7 @@ from noctusai_lib.domain.pipeline import (
     ensure_default_stages,
     group_into_colunas,
     list_stages,
+    make_pipeline_publisher,
     move_card,
     orphan_cards,
     position_for_index,
@@ -45,6 +46,7 @@ from app.modules.media_creation.esteira_config import (
     ROLE_POSTADO,
 )
 from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
+from app.modules.media_creation.services.headline_aprovacao import headline_aprovada
 from app.modules.media_creation.services.roteiro_aprovacao import roteiro_aprovado
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,8 @@ ROTEIROS = "cs_roteiros"
 LOTES = "cs_headline_lotes"
 CFG = PIPELINE_ESTEIRA
 LIMITE_PADRAO = 50
+#: ``faltando`` code of the Criação gate: the card has a headline but nobody approved it (contract 1).
+CODIGO_HEADLINE_NAO_APROVADA = "headline_nao_aprovado"
 PERMALINK_RE = re.compile(r"^https://(www\.)?instagram\.com/")
 LOTE_ATIVO = ("criando", "processando")
 #: Columns a PATCH may clear with an explicit null.
@@ -123,10 +127,13 @@ def _paged_pairs(db: Any, table: str, org_id: str, in_col: str, ids: list[str], 
 
 
 class EsteiraService:
-    def __init__(self, db: Any, org_id: str, user_id: Optional[str]):
+    def __init__(self, db: Any, org_id: str, user_id: Optional[str], *, bus: Any = None):
         self.db = db
         self.org_id = str(org_id)
         self.user_id = str(user_id) if user_id else None
+        #: the live-stream bus (``None`` = no stream, e.g. a caller that never publishes); a move publishes
+        #: ``pipeline.card_moved`` AFTER the seed ``move_card`` commits (contract 3).
+        self.bus = bus
 
     # ── guards / lookups ────────────────────────────────────────────────────
 
@@ -191,8 +198,9 @@ class EsteiraService:
         headlines = {h["id"]: h for h in in_batched_rows(self.db, HEADLINES, org, "id", hl_ids, select="id,texto,favorita")}
         rt_ids = [str(r["roteiro_id"]) for r in rows if r.get("roteiro_id")]
         roteiros = {
-            r["id"]: r for r in in_batched_rows(self.db, ROTEIROS, org, "id", rt_ids, select="id,nome,status,headline_id")
+            r["id"]: r for r in in_batched_rows(self.db, ROTEIROS, org, "id", rt_ids, select="id,nome,status,headline_id,versao")
         }
+        aprovados = self._aprovados(hl_ids, roteiros)
         links = _paged_pairs(self.db, "cs_post_membros", org, "post_id", ids, ("post_id", "equipe_id"))
         equipe = {
             m["id"]: m
@@ -265,8 +273,25 @@ class EsteiraService:
                     "arquivado": bool(r.get("arquivado")),
                     "checklist": checklist.get(pid, {"feitos": 0, "total": 0}),
                     "comentarios": comentarios.get(pid, 0),
+                    # criação pipeline (contract 1): what the board / card reads to show the approvals and the sub-state
+                    "headline_aprovada": ("headline", str(r.get("headline_id")), 1) in aprovados,
+                    "roteiro_aprovado": bool(ro) and ro["status"] == "completo"
+                    and ("roteiro", str(ro["id"]), int(ro.get("versao") or 1)) in aprovados,
+                    "midia_aprovada": r.get("criacao_estado") == "midia_aprovada",
+                    "criacao_estado": r.get("criacao_estado"),
+                    "falha_codigo": r.get("falha_codigo"),
                 }
             )
+        return out
+
+    def _aprovados(self, headline_ids: list[str], roteiros: dict) -> set[tuple[str, str, int]]:
+        """``{(kind, subject_id, versao)}`` with an ``approved`` event -- one batched read per subject kind (the
+        approvals organ's ledger; a decision is unique per versao, so ``approved`` present = approved)."""
+        out: set[tuple[str, str, int]] = set()
+        for kind, ids in (("headline", headline_ids), ("roteiro", [str(i) for i in roteiros])):
+            for e in in_batched_rows(self.db, "apr_events", self.org_id, "subject_id", ids, select="subject_kind,subject_id,versao,event"):
+                if e.get("subject_kind") == kind and e.get("event") == "approved":
+                    out.add((kind, str(e["subject_id"]), int(e["versao"])))
         return out
 
     def _detalhe(self, row: dict) -> dict:
@@ -355,6 +380,9 @@ class EsteiraService:
         faltando: list[str] = []
         if not row.get("headline_id"):
             faltando.append("headline")
+        elif not headline_aprovada(self.db, self.org_id, str(row["headline_id"])):
+            # criacao-pipeline-contract 1: no card enters Criação unless headline AND roteiro are approved.
+            faltando.append(CODIGO_HEADLINE_NAO_APROVADA)
         if not row.get("roteiro_id"):
             faltando.append("roteiro")
         else:
@@ -369,10 +397,14 @@ class EsteiraService:
 
     @staticmethod
     def _gated(stages: list[dict], target: dict) -> bool:
-        """True when ``target`` is at or after the ``criacao`` role stage -- ``gravacao`` is its one-release alias (except the cancel stage)."""
+        """True when ``target`` is at or after the ``criacao`` role stage (except the cancel stage).
+
+        ``gravacao`` is the one-release alias of the role (a board not yet migrated by 362 still carries it)."""
         if target.get("papel") == ROLE_CANCELADO:
             return False
-        grav = next((s for s in stages if s.get("papel") in (ROLE_CRIACAO, ROLE_GRAVACAO)), None)
+        grav = next((s for s in stages if s.get("papel") == ROLE_CRIACAO), None) or next(
+            (s for s in stages if s.get("papel") == ROLE_GRAVACAO), None
+        )
         if grav is None:
             return False
         order = [s["id"] for s in stages]
@@ -536,6 +568,7 @@ class EsteiraService:
                 motivo=motivo,
                 extra_updates=extra or None,
                 org_id=self.org_id,
+                publish=make_pipeline_publisher(self.bus, self.org_id, CFG.pipeline) if self.bus is not None else None,
             )
         except NotFoundError as exc:
             raise EsteiraError(404, "Post não encontrado") from exc

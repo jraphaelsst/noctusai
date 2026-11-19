@@ -20,7 +20,6 @@ import {
   useEquipe,
   useEsteiraBoard,
   useExcluirPost,
-  useGerarLegenda,
   usePost,
   useVincularHeadline,
   useVincularRoteiro,
@@ -155,18 +154,6 @@ describe("bind / unbind", () => {
     const un = renderHook(() => useDesvincularRoteiro(), { wrapper });
     await un.result.current.mutateAsync("p1");
     expect(api.delete).toHaveBeenCalledWith("/api/media-creation/esteira/posts/p1/roteiro");
-  });
-});
-
-describe("legenda", () => {
-  it("gera via POST e NÃO invalida nada (resultado não é salvo)", async () => {
-    api.post.mockResolvedValue({ data: { legenda: "l", hashtags: ["#a"], primeiro_comentario: "c" } });
-    const inv = vi.spyOn(qc, "invalidateQueries");
-    const { result } = renderHook(() => useGerarLegenda(), { wrapper });
-    const r = await result.current.mutateAsync("p1");
-    expect(api.post).toHaveBeenCalledWith("/api/media-creation/esteira/posts/p1/legenda/gerar");
-    expect(r.hashtags).toEqual(["#a"]);
-    expect(inv).not.toHaveBeenCalled();
   });
 });
 

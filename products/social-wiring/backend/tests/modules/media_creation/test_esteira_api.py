@@ -53,6 +53,13 @@ def _aprovar(ec, roteiro_id, versao=1, decisao="approved"):
              created_at=f"2026-11-14T10:00:0{n}+00:00")
 
 
+def _aprovar_headline(ec, headline_id, decisao="approved"):
+    """Seed the approvals organ's rows for the HEADLINE (criacao-pipeline-contract 1): submitted and decided at versao 1."""
+    for n, ev in enumerate(("submitted", decisao)):
+        _ins(ec, "apr_events", org_id=ORG, subject_kind="headline", subject_id=headline_id, versao=1, event=ev,
+             created_at=f"2026-11-14T10:00:0{n}+00:00")
+
+
 def _stages(ec) -> dict:
     r = ec.get(f"{BASE}/etapas")
     assert r.status_code == 200, r.text
@@ -365,6 +372,7 @@ class TestReadUpdateDelete:
 class TestMove:
     def _ready(self, ec):
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         _aprovar(ec, ro["id"])
         p = _post(ec, headline_id=h["id"])
@@ -382,6 +390,7 @@ class TestMove:
     def test_roteiro_incompleto(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, status="processando")
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
@@ -391,6 +400,7 @@ class TestMove:
     def test_roteiro_completo_sem_aprovacao_nao_passa_o_gate(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
@@ -400,6 +410,7 @@ class TestMove:
     def test_roteiro_reprovado_ou_editado_depois_de_aprovar_nao_passa(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         _aprovar(ec, ro["id"], decisao="rejected")
         p = _post(ec, headline_id=h["id"])
@@ -472,10 +483,9 @@ class TestMove:
     def test_inactive_stage_is_409_and_foreign_stage_404(self, ec):
         st = _stages(ec)
         p = _post(ec)
-        # a stage that carries a role (edicao now has one) cannot be deactivated (400); `ideacao` carries none
-        assert _mover(ec, p["id"], st["headline_roteiro"]["id"]).status_code == 200
-        assert ec.patch(f"{BASE}/etapas/{st['ideacao']['id']}", json={"ativo": False}).status_code == 200
-        r = _mover(ec, p["id"], st["ideacao"]["id"])
+        extra = ec.post(f"{BASE}/etapas", json={"slug": "extra", "label": "Extra"}).json()["data"]
+        assert ec.patch(f"{BASE}/etapas/{extra['id']}", json={"ativo": False}).status_code == 200
+        r = _mover(ec, p["id"], extra["id"])
         assert r.status_code == 409 and _detail(r)["code"] == "etapa_invalida"
         assert _mover(ec, p["id"], _id()).status_code == 404
 

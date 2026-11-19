@@ -23,6 +23,12 @@ const m = vi.hoisted(() => ({
 vi.mock("@noctusai/seed/infra", () => ({ api: m.seedApi }));
 vi.mock("@/lib/api", () => ({ api: m.libApi }));
 vi.mock("sonner", () => ({ toast: m.toast }));
+vi.mock("@/hooks/geracao/useCriacao", () => ({
+  useEsteiraStream: () => ({ status: "closed", lastEventId: null }),
+  useCriacaoProgresso: () => ({ progresso: null, mode: "idle", ativo: false }),
+  ESTADO_ROTULO: {},
+  emAndamentoCriacao: () => false,
+}));
 vi.mock("@noctusai/lib/design-system", async (orig) => ({
   ...(await orig<object>()),
   useIsOrgAdmin: () => true,
@@ -149,7 +155,12 @@ describe("EsteiraBoard", () => {
     await screen.findByText("Reel do café");
     expect(m.props.current.showValue).toBe(false);
     expect(m.props.current.roleLabels).toEqual({
-      gravacao: "Início da produção",
+      roteiro: "Roteiro",
+      criacao: "Criação",
+      gravacao: "Criação",
+      edicao: "Edição",
+      aprovacao_midia: "Aprovação final",
+      pronto: "Pronto",
       postado: "Publicado",
       cancelado: "Encerrado",
     });
@@ -262,7 +273,7 @@ describe("EsteiraBoard", () => {
     fireEvent.click(await screen.findByText("soltar"));
     await waitFor(() => expect(m.toast.error).toHaveBeenCalled());
     const [msg, opts] = m.toast.error.mock.calls[0];
-    expect(msg).toMatch(/headline e roteiro concluído/);
+    expect(msg).toMatch(/headline e roteiro aprovados/);
     opts.action.onClick();
     expect(onOpen).toHaveBeenCalledWith("p1");
   });

@@ -11,7 +11,9 @@ message -- never silent. ``rerun_step`` re-executes ONE step as rodada+1.
 from __future__ import annotations
 
 import logging
+import resource
 import time
+from decimal import Decimal
 
 from noctusai_lib.domain.jobs import Job, JobRepository
 from noctusai_lib.domain.media_production.ports import (
@@ -47,6 +49,30 @@ EVENTO_PASSO_FALHOU = "passo_falhou"
 
 def _key(org: str, post: str, rodada: int, passo: str) -> str:
     return f"media:{org}:{post}:{rodada}:{passo}"
+
+
+def _cpu_s() -> float:
+    """CPU seconds of this process AND its reaped children (ffmpeg / ImageMagick run as subprocesses --
+    ``process_time`` alone would report ~0 for a render). One render slot per worker process (contract 5)
+    keeps the delta attributable to the step."""
+    ch = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return time.process_time() + ch.ru_utime + ch.ru_stime
+
+
+def _spec_to_json(p: StepSpec) -> dict:
+    return {
+        "passo": p.passo, "rotulo": p.rotulo, "depende_de": list(p.depende_de), "peso": p.peso,
+        "estimativa_usd": None if p.estimativa_usd is None else str(p.estimativa_usd),
+        "entradas": p.entradas,
+    }
+
+
+def _spec_from_json(d: dict) -> StepSpec:
+    est = d.get("estimativa_usd")
+    return StepSpec(
+        d["passo"], d.get("rotulo", d["passo"]), tuple(d.get("depende_de", ())), d.get("peso", 1.0),
+        None if est is None else Decimal(str(est)), dict(d.get("entradas") or {}),
+    )
 
 
 class MediaGraphRunner:
@@ -85,15 +111,21 @@ class MediaGraphRunner:
             if not p.depende_de:
                 await self._enqueue(graph.org_id, graph.post_id, graph.rodada, p)
 
-    async def rerun_step(self, org_id: str, post_id: str, rodada: int, passo: str) -> int:
+    async def rerun_step(
+        self, org_id: str, post_id: str, rodada: int, passo: str, *, spec: StepSpec | None = None
+    ) -> int:
         """Re-run ONE step as rodada+1 (its dependencies' latest outputs are the
-        inputs; nothing downstream is touched). Returns the new rodada."""
+        inputs; nothing downstream is touched). Returns the new rodada.
+
+        ``spec``: the step's spec (inputs + estimate). A process that did not enqueue the graph
+        (the API node serving a re-run, a restarted worker) has no in-memory spec, so the caller
+        passes it; without one the step re-runs with no inputs of its own."""
         rows = await self._ledger.carregar(org_id, post_id)
         atual = [r for r in rows if r.passo == passo and r.rodada == rodada]
         if not atual:
             raise LookupError(f"step {passo!r} rodada {rodada} not found")
         nova = max(r.rodada for r in rows if r.passo == passo) + 1
-        spec = self._specs.get((org_id, post_id, rodada), {}).get(passo) or StepSpec(
+        spec = spec or self._specs.get((org_id, post_id, rodada), {}).get(passo) or StepSpec(
             passo, passo, atual[0].depende_de
         )
         self._tokens[(org_id, post_id)] = CancelToken()
@@ -111,7 +143,12 @@ class MediaGraphRunner:
     async def handle(self, job: Job) -> None:
         p = job.payload
         org, post, rodada, passo = p["org_id"], p["post_id"], p["rodada"], p["passo"]
-        spec = self._specs.get((org, post, rodada), {}).get(passo) or StepSpec(
+        # The graph rides in the job payload: a restarted worker (empty memory) rebuilds every spec
+        # -- inputs and quota estimate included -- from the job it claims.
+        mem = self._specs.setdefault((org, post, rodada), {})
+        for d in p.get("grafo", ()):
+            mem.setdefault(d["passo"], _spec_from_json(d))
+        spec = mem.get(passo) or StepSpec(
             passo, p.get("rotulo", passo), tuple(p.get("depende_de", ())), p.get("peso", 1.0)
         )
         rows = await self._ledger.carregar(org, post)
@@ -130,7 +167,7 @@ class MediaGraphRunner:
         row = row.with_(status=EXECUTANDO, job_id=job.id, iniciado_em=time.time())
         await self._ledger.registrar(row)
 
-        t0, c0 = time.monotonic(), time.process_time()
+        t0, c0 = time.monotonic(), _cpu_s()
         try:
             handler = self._registry.get(passo)
             if handler is None:
@@ -160,7 +197,7 @@ class MediaGraphRunner:
             status=CONCLUIDO,
             terminado_em=time.time(),
             duracao_s=time.monotonic() - t0,
-            cpu_s=time.process_time() - c0,
+            cpu_s=_cpu_s() - c0,
             vendor=res.vendor,
             modelo=res.modelo,
             request_id=res.request_id,
@@ -179,6 +216,8 @@ class MediaGraphRunner:
             payload={
                 "org_id": org, "post_id": post, "rodada": rodada, "passo": spec.passo,
                 "rotulo": spec.rotulo, "depende_de": list(spec.depende_de), "peso": spec.peso,
+                "grafo": [_spec_to_json(x) for x in self._specs.get((org, post, rodada), {}).values()]
+                or [_spec_to_json(spec)],
             },
             max_retries=self._max_retries,
             dedupe_key=_key(org, post, rodada, spec.passo),
@@ -200,7 +239,7 @@ class MediaGraphRunner:
     async def _fail(self, row: PassoRow, codigo: str, t0: float, c0: float, rows, spec: StepSpec) -> None:
         await self._ledger.registrar(row.with_(
             status=FALHOU, erro_codigo=codigo, terminado_em=time.time(),
-            duracao_s=time.monotonic() - t0, cpu_s=time.process_time() - c0,
+            duracao_s=time.monotonic() - t0, cpu_s=_cpu_s() - c0,
         ))
         for r in await self._ledger.carregar(row.org_id, row.post_id):
             if r.rodada == row.rodada and r.status == PENDENTE:

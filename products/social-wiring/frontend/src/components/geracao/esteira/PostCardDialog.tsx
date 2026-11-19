@@ -36,6 +36,7 @@ import { HeadlineSecao } from "./secoes/HeadlineSecao";
 import { ProducaoSecao } from "./secoes/ProducaoSecao";
 import { PublicacaoSecao } from "./secoes/PublicacaoSecao";
 import { RoteiroSecao } from "./secoes/RoteiroSecao";
+import { CriacaoStatusLine } from "./CriacaoStatusLine";
 
 export type PostSubpageKey = "geral" | "headline" | "roteiro" | "origem" | "producao" | "publicacao" | "lembretes";
 
@@ -195,6 +196,7 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
 
   return (
     <div className="space-y-4" data-testid="secao-geral">
+      <CriacaoStatusLine postId={post.id} estado={post.criacao_estado} falhaCodigo={post.falha_codigo} />
       {post.motivo_bloqueio && (
         <p className="rounded border border-destructive/40 p-2 text-sm text-destructive" data-testid="motivo-bloqueio">
           Motivo do bloqueio: {post.motivo_bloqueio}

@@ -5,6 +5,9 @@ Extends the framework's `ProductSettings` with the fields the YouTube /
 SMTP / WAHA / Redis integrations need. Every value reads from `.env` so
 keys never enter the repository.
 """
+import os
+import tempfile
+
 from pydantic import AliasChoices, Field
 
 from noctusai_seed import ProductSettings
@@ -448,6 +451,16 @@ class SocialWiringSettings(ProductSettings):
     julia_reengajamento_worker_enabled: bool = Field(True, validation_alias=_com_legado('julia_reengajamento_worker_enabled'))
     julia_reengajamento_poll_seconds: float = Field(5.0, validation_alias=_com_legado('julia_reengajamento_poll_seconds'))
     julia_reengajamento_lease_seconds: float = Field(600.0, validation_alias=_com_legado('julia_reengajamento_lease_seconds'))
+    # CoreStudio criação (criacao-pipeline-contract.md 5): the media worker is a SEPARATE process (`worker criacao`,
+    # same image) -- never started inside the API. One render slot per process; the lease covers the slowest step
+    # (a motion render), the seed Worker heartbeat keeps it alive while the loop is free.
+    criacao_worker_poll_seconds: float = 5.0
+    criacao_worker_lease_seconds: float = 1800.0
+    # Scratch dir for TTS/render files; the OS temp dir by default (CRIACAO_WORKDIR overrides, e.g. a mounted volume).
+    criacao_workdir: str = Field(default_factory=lambda: os.path.join(tempfile.gettempdir(), "sw-criacao"))
+    # USD per ElevenLabs credit of the org's plan. Unset => the step's cost is `nao_medido` (never an estimate); the
+    # quota pre-flight then uses the conservative ceiling `CRIACAO_USD_POR_CREDITO_TETO`.
+    criacao_usd_por_credito_elevenlabs: float | None = None
     biblioteca_poll_seconds: float = 5.0
     biblioteca_lease_seconds: float = 600.0
     # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.

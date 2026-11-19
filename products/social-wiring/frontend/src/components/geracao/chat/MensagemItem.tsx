@@ -33,6 +33,9 @@ interface Props {
   /** The proposta whose `escolher` is in flight, if any. */
   escolhendoId?: string | null;
   onEscolher?: (propostaId: string) => void;
+  /** Multi-select of propostas (ids picked in the conversation) + toggle. */
+  selecionadas?: ReadonlySet<string>;
+  onAlternar?: (propostaId: string) => void;
 }
 
 async function copiar(texto: string) {
@@ -56,6 +59,8 @@ export function MensagemItem({
   streaming,
   escolhendoId = null,
   onEscolher,
+  selecionadas,
+  onAlternar,
 }: Props) {
   const navigate = useNavigate();
   const assistente = role === "assistant";
@@ -145,6 +150,8 @@ export function MensagemItem({
               escolhendo={escolhendoId === p.id}
               bloqueada={!!escolhendoId && escolhendoId !== p.id}
               onEscolher={(id) => onEscolher?.(id)}
+              selecionada={selecionadas?.has(p.id) ?? false}
+              onAlternar={onAlternar}
             />
           ))}
         </ul>
