@@ -25,8 +25,9 @@ ACTION = ROOT / ".github/actions/apt-install/action.yml"
 
 def _script() -> str:
     steps = yaml.safe_load(ACTION.read_text())["runs"]["steps"]
-    assert len(steps) == 1 and steps[0]["shell"] == "bash"
-    return steps[0]["run"]
+    main = [st for st in steps if st.get("name", "").startswith("Prepare apt sources")]
+    assert len(main) == 1 and main[0]["shell"] == "bash"
+    return main[0]["run"]
 
 
 def _stub(bin_dir: Path, name: str, body: str) -> None:
@@ -36,7 +37,7 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
 
 
 def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = False,
-         failing_host: str = "") -> subprocess.CompletedProcess:
+         failing_host: str = "", cache_hit: str = "false", install_fails: bool = False) -> subprocess.CompletedProcess:
     etc = tmp_path / "etc/apt"
     (etc / "sources.list.d").mkdir(parents=True)
     (etc / "apt.conf.d").mkdir()
@@ -44,6 +45,7 @@ def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = Fals
         "Types: deb\nURIs: http://azure.archive.ubuntu.com/ubuntu/\nSuites: noble\n")
     if google:
         (etc / "sources.list.d/google-chrome.list").write_text("deb http://dl.google.com/linux/chrome/deb/ stable main\n")
+    (tmp_path / "debs/partial").mkdir(parents=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub(bin_dir, "sudo", 'exec "$@"')
@@ -52,9 +54,12 @@ def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = Fals
     # exactly like a real outage of one mirror (the stub used to answer Ign: for every mirror, so the walk never stopped).
     failing = (f'if grep -rqF "{failing_host}" "{etc}/sources.list.d"; then printf "%s\\n" "{update_out}"; '
                f'else printf "%s\\n" "{HEALTHY}"; fi' if failing_host else f'printf "%s\\n" "{update_out}"')
-    _stub(bin_dir, "apt-get", f'if [ "$1" = update ]; then {failing}; fi; exit 0')
+    install_rc = 100 if install_fails else 0
+    _stub(bin_dir, "apt-get", f'if [ "$1" = update ]; then {failing}; exit 0; fi; '
+                              f'for a in "$@"; do [ "$a" = --print-uris ] && exit 0; done; exit {install_rc}')
     script = _script().replace("/etc/apt", str(etc))
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PKGS": pkgs, "CAP": "5"}
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PKGS": pkgs, "CAP": "5", "ICAP": "5",
+           "DEBS": str(tmp_path / "debs"), "CACHE_HIT": cache_hit}
     # Exactly GitHub's composite invocation: bash --noprofile --norc -eo pipefail {0}
     return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
                           env=env, capture_output=True, text=True, timeout=60)
@@ -105,3 +110,18 @@ def test_the_script_owns_its_error_handling(line):
     # The script checks every rc itself; -e from the composite shell must be OFF before the first probe.
     commands = [l.strip() for l in _script().splitlines() if l.strip() and not l.strip().startswith("#")]
     assert line in commands[:2]
+
+
+def test_cache_state_and_mirror_are_reported_as_notices(tmp_path):
+    # Telemetry leg of the build triad: flake rate must be measurable from the job log alone.
+    r = _run(tmp_path, update_out=HEALTHY, pkgs="jq", cache_hit="true")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "::notice::apt .deb cache hit: true" in r.stdout
+    assert "::notice::apt install OK on" in r.stdout and "cache hit: true" in r.stdout
+
+
+def test_a_failed_install_is_still_loud_and_names_the_mirror(tmp_path):
+    # Backstop leg: the CI-infra classification must survive the cache/prefetch construction.
+    r = _run(tmp_path, update_out=HEALTHY, pkgs="jq", install_fails=True)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "::error::apt install of [jq] FAILED on every mirror" in r.stdout
