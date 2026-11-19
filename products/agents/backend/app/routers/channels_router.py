@@ -52,6 +52,7 @@ from app.channels.bubbles import split_into_bubbles
 from app.channels.controles import MAX_RETOMADAS_PADRAO, ControleIndisponivel, LeadIdentidade, aplicar_controles
 from app.channels.retention import ChannelRetention
 from app.config import settings
+from app.criacao.canais import CANAL_APP, agente_aceita_canal_app
 from app.dependencies import (
     get_channel_inbound_store_dep,
     get_channel_llm_runtime_dep,
@@ -289,6 +290,21 @@ async def run_channel_turn(
 ) -> ChannelTurnResponse:
     org_id = ctx.org_id
     agent = _resolve_channel_agent(studio_store, ctx, payload.agent_key)
+    # The app channel is a declared capability (``app.criacao.canais``), never a blanket one: an agent that does not declare
+    # it cannot be reached on it, and a declaring agent is not reachable through Julia's lead pipeline.
+    if (payload.channel == CANAL_APP) != agente_aceita_canal_app(agent.key):
+        raise _err(403, "canal_nao_permitido", "Este agente não atende neste canal.")
+    if payload.channel == CANAL_APP:
+        from app.criacao.canal_app import executar_turno_app  # lazy: canal_app reads this module's helpers
+
+        return await executar_turno_app(
+            payload=payload, org_id=org_id, agent=agent,
+            svc=turno_mod.ServicosCanal(
+                studio_store=studio_store, catalog=catalog, conversations=conv_store, messages=msg_store,
+                threads=threads, controles=controles, conformidade=conformidade, qual=qual, padroes=padroes,
+                ident=ident, sw=sw, skills_factory=skills_factory, notificacoes=notificacoes, alertas=alertas,
+                resumo_factory=resumo_factory, metricas=metricas),
+            runtime=runtime, inbound=inbound, controles=controles, plataforma=plataforma)
     channel_ref = payload.channel_ref.canonical()
     connection_id = payload.channel_ref.connection_id
     batch = list(payload.messages)
