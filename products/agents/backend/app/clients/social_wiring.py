@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 #: The STORED name stays ``social_wiring_lais_tools_token``: it is the key of rows already written to the credential
 #: store; renaming the value would orphan every org's token. Only the Python symbol was renamed.
 JULIA_TOOLS_TOKEN_KEY = "social_wiring_lais_tools_token"
+#: The per-org callback token for the Diretor de Criacao's tools (scope ``social-wiring:criacao-tools``, issuer
+#: ``agents``), stored through the same per-org writer under its OWN key: a Julia token never opens these tools.
+CRIACAO_TOOLS_TOKEN_KEY = "social_wiring_criacao_tools_token"
+#: The SW routes: ``POST {prefix}/{nome}``.
+JULIA_TOOLS_PATH = "/api/julia/ferramentas"
+CRIACAO_TOOLS_PATH = "/api/criacao/ferramentas"
 #: A read tool must answer inside this; past it the model is told to carry on.
 JULIA_TOOL_TIMEOUT_SECONDS = 8.0
 #: What a tool call returns when SW cannot answer (never an exception text).
@@ -38,6 +44,7 @@ FERRAMENTA_SOLICITACAO_TITULAR = "solicitacao-titular"
 def resolve_julia_tools_token(
     org_id: UUID | str,
     *,
+    key: str = JULIA_TOOLS_TOKEN_KEY,
     store_factory: Callable[[], Any] | None = None,
     org_settings_reader: Callable[[str, str], str | None] | None = None,
 ) -> str | None:
@@ -59,11 +66,16 @@ def resolve_julia_tools_token(
         logger.warning("agents.julia_tools_token.store_unavailable: %s", exc)
         store = None
     if store is not None:
-        stored = read_local_api_key(store, org, JULIA_TOOLS_TOKEN_KEY)
+        stored = read_local_api_key(store, org, key)
         value = (stored.tokens or {}).get("value") if stored else None
         if value:
             return value
-    return reader(JULIA_TOOLS_TOKEN_KEY, org) or None
+    return reader(key, org) or None
+
+
+def resolve_criacao_tools_token(org_id: UUID | str, **kw: Any) -> str | None:
+    """THIS org's Diretor de Criacao tools token, or ``None`` (same resolution as Julia's, its own key)."""
+    return resolve_julia_tools_token(org_id, key=CRIACAO_TOOLS_TOKEN_KEY, **kw)
 
 
 class SocialWiringError(Exception):
@@ -94,6 +106,15 @@ class SocialWiringClient(Protocol):
     async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
         """``POST /api/julia/ferramentas/{nome}`` with the org's token. Never
         raises: any failure / timeout (8 s) returns ``{"erro": "indisponivel"}``."""
+        ...
+
+    def criacao_tools_available(self, org_id: UUID) -> bool:
+        """``True`` when THIS org has a Diretor de Criacao tools token."""
+        ...
+
+    async def criacao_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        """``POST /api/criacao/ferramentas/{nome}`` with the org's criacao token (READ tools). Same never-raises
+        contract as :meth:`julia_ferramenta`."""
         ...
 
 
@@ -128,6 +149,11 @@ class FakeSocialWiringClient:
         self.julia_responses: dict[str, Any] = {}
         self.julia_calls: list[tuple[UUID, str, dict[str, Any]]] = []
         self.julia_fail = False
+        #: Diretor de Criacao tools: same shape as the ``julia_*`` attributes above.
+        self.criacao_token_orgs: set[UUID] = set()
+        self.criacao_responses: dict[str, Any] = {}
+        self.criacao_calls: list[tuple[UUID, str, dict[str, Any]]] = []
+        self.criacao_fail = False
 
     def julia_tools_available(self, org_id: UUID) -> bool:
         return org_id in self.julia_token_orgs
@@ -137,6 +163,16 @@ class FakeSocialWiringClient:
         if self.julia_fail or org_id not in self.julia_token_orgs:
             return dict(JULIA_TOOL_UNAVAILABLE)
         answer = self.julia_responses.get(nome, _fake_default(nome))
+        return dict(answer(args) if callable(answer) else answer)
+
+    def criacao_tools_available(self, org_id: UUID) -> bool:
+        return org_id in self.criacao_token_orgs
+
+    async def criacao_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.criacao_calls.append((org_id, nome, dict(args)))
+        if self.criacao_fail or org_id not in self.criacao_token_orgs:
+            return dict(JULIA_TOOL_UNAVAILABLE)
+        answer = self.criacao_responses.get(nome, {})
         return dict(answer(args) if callable(answer) else answer)
 
 
@@ -155,34 +191,48 @@ class HttpSocialWiringClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         julia_token_resolver: Callable[[UUID], str | None] | None = None,
+        criacao_token_resolver: Callable[[UUID], str | None] | None = None,
         julia_timeout: float = JULIA_TOOL_TIMEOUT_SECONDS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._transport = transport
         self._julia_token_resolver = julia_token_resolver or resolve_julia_tools_token
+        self._criacao_token_resolver = criacao_token_resolver or resolve_criacao_tools_token
         self._julia_timeout = julia_timeout
 
     def julia_tools_available(self, org_id: UUID) -> bool:
         return bool(self._julia_token_resolver(org_id))
 
+    def criacao_tools_available(self, org_id: UUID) -> bool:
+        return bool(self._criacao_token_resolver(org_id))
+
     async def julia_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_ferramenta(JULIA_TOOLS_PATH, self._julia_token_resolver, "julia_tool", org_id, nome, args)
+
+    async def criacao_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        return await self._post_ferramenta(
+            CRIACAO_TOOLS_PATH, self._criacao_token_resolver, "criacao_tool", org_id, nome, args)
+
+    async def _post_ferramenta(
+        self, path: str, resolver: Callable[[UUID], str | None], etiqueta: str, org_id: UUID, nome: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The one tool call: the org's own token, an 8 s budget, every failure a coded ``indisponivel``."""
         try:
-            token = self._julia_token_resolver(org_id)
+            token = resolver(org_id)
         except Exception:
-            logger.exception("agents.julia_tool.token_lookup_failed org_id=%s tool=%s", org_id, nome)
+            logger.exception("agents.%s.token_lookup_failed org_id=%s tool=%s", etiqueta, org_id, nome)
             return dict(JULIA_TOOL_UNAVAILABLE)
         if not token:
             return dict(JULIA_TOOL_UNAVAILABLE)
-        url = f"{self._base_url}/api/julia/ferramentas/{nome}"
+        url = f"{self._base_url}{path}/{nome}"
         try:
             async with httpx.AsyncClient(timeout=self._julia_timeout, transport=self._transport) as client:
                 resp = await client.post(url, json=args, headers={"Authorization": f"Bearer {token}"})
             resp.raise_for_status()
             body = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            logger.warning(
-                "agents.julia_tool.unavailable org_id=%s tool=%s error=%s", org_id, nome, type(exc).__name__
-            )
+            logger.warning("agents.%s.unavailable org_id=%s tool=%s error=%s", etiqueta, org_id, nome, type(exc).__name__)
             return dict(JULIA_TOOL_UNAVAILABLE)
         return body if isinstance(body, dict) else {"data": body}
 
@@ -198,6 +248,9 @@ __all__ = [
     "FERRAMENTA_SOLICITACAO_TITULAR",
     "registrar_solicitacao_titular",
     "JULIA_TOOLS_TOKEN_KEY",
+    "CRIACAO_TOOLS_TOKEN_KEY",
+    "CRIACAO_TOOLS_PATH",
+    "resolve_criacao_tools_token",
     "SocialWiringNotConfigured",
     "JULIA_TOOL_TIMEOUT_SECONDS",
     "JULIA_TOOL_UNAVAILABLE",

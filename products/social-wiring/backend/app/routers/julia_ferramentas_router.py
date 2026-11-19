@@ -21,12 +21,13 @@ another org's catalogue. The response never contains owner/proprietario personal
 import logging
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
-from pydantic import Field, ValidationError
+from fastapi import APIRouter, Depends
+from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import AuthContext, require_scopes
-from noctusai_lib.primitives.exceptions import AppException
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.api.agent_tools import AgentTool, make_agent_tools_router
+from noctusai_lib.api.auth.session import AuthContext
 
 from app.dependencies import coerce_org_uuid, get_auth_context, get_core_client, get_scoped_admin_client
 from app.services import julia_ferramentas_service as svc
@@ -34,21 +35,6 @@ from app.services import julia_solicitacoes_titular_service as solicitacoes
 from app.services.julia_contexto_service import TOOLS_TOKEN_ISSUER, TOOLS_TOKEN_SCOPE
 
 logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/julia/ferramentas", tags=["julia-ferramentas"])
-
-
-def _require_tools(
-    ctx: AuthContext = Depends(
-        require_scopes(TOOLS_TOKEN_SCOPE, get_auth_context=get_auth_context, restrict="product_only")
-    ),
-) -> AuthContext:
-    if ctx.issuer != TOOLS_TOKEN_ISSUER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"detail": "Token issuer not allowed for this route", "code": "issuer_not_allowed"},
-        )
-    return ctx
 
 
 def get_ferramentas_client() -> Any:
@@ -66,44 +52,41 @@ class SolicitacaoTitularIn(StrictHttpModel):
     trecho: str = Field(min_length=1, max_length=2000)
 
 
-@router.post("/solicitacao-titular")
-def post_solicitacao_titular(
-    corpo: SolicitacaoTitularIn,
-    ctx: AuthContext = Depends(_require_tools),
-    client: Any = Depends(get_ferramentas_client),
-) -> dict[str, Any]:
-    """Julia (the model) registers a lead's data-subject request (LGPD art. 18). It only RECORDS it and tells the org's
-    admins; nothing is deleted or changed here -- an admin decides, and an erasure is the admin's act. Declared BEFORE
-    `/{nome}`. Same auth as every tool: product token, scope `lais-tools`, issuer `agents`; the org is the token's."""
-    org_id = coerce_org_uuid(ctx.org_id)
-    linha = solicitacoes.registrar(
-        client, get_core_client(), org_id=org_id, lead_ref=corpo.lead_ref, tipo=corpo.tipo, trecho=corpo.trecho,
-        chat_id=corpo.chat_id,
-    )
-    return {"data": {"id": str(linha["id"]), "prazo_em": linha["prazo_em"]}}
+def _extra_routes(router: APIRouter, require_tools: Any) -> None:
+    @router.post("/solicitacao-titular")
+    @access_tier("service")  # machine-to-machine: product token + scope + issuer via `require_tools`
+    def post_solicitacao_titular(
+        corpo: SolicitacaoTitularIn,
+        ctx: AuthContext = Depends(require_tools),
+        client: Any = Depends(get_ferramentas_client),
+    ) -> dict[str, Any]:
+        """Julia (the model) registers a lead's data-subject request (LGPD art. 18). It only RECORDS it and tells the
+        org's admins; nothing is deleted or changed here -- an admin decides, and an erasure is the admin's act.
+        Declared BEFORE `/{nome}`. Same auth as every tool: product token, scope `lais-tools`, issuer `agents`; the
+        org is the token's."""
+        org_id = coerce_org_uuid(ctx.org_id)
+        linha = solicitacoes.registrar(
+            client, get_core_client(), org_id=org_id, lead_ref=corpo.lead_ref, tipo=corpo.tipo, trecho=corpo.trecho,
+            chat_id=corpo.chat_id,
+        )
+        return {"data": {"id": str(linha["id"]), "prazo_em": linha["prazo_em"]}}
 
 
-@router.post("/{nome}")
-def post_ferramenta(
-    nome: str,
-    corpo: dict[str, Any] = Body(default_factory=dict),
-    ctx: AuthContext = Depends(_require_tools),
-    client: Any = Depends(get_ferramentas_client),
-) -> dict[str, Any]:
-    if nome not in svc.FERRAMENTAS:
-        raise AppException("ferramenta_desconhecida", "Ferramenta desconhecida.", status_code=404)
-    try:
-        args = svc.ARGS[nome](**corpo).model_dump()
-    except ValidationError as exc:
-        campos = sorted({".".join(str(p) for p in e["loc"]) for e in exc.errors()})
-        raise AppException(
-            "invalid_field", "Argumentos inválidos.", status_code=422, details={"campos": campos},
-        ) from exc
-    org_id = coerce_org_uuid(ctx.org_id)
-    resultado = svc.FERRAMENTAS[nome](client, org_id, args)
-    data, meta = (resultado.data, resultado.meta) if isinstance(resultado, svc.ComMeta) else (resultado, {})
+def _registrar_consulta(client: Any, org_id: Any, nome: str, args: dict[str, Any], data: Any) -> None:
     svc.registrar_consulta(client, org_id, nome, args, data)  # feeds Relatorios "top imoveis"; never raises
-    return {"data": data, **meta}
 
+
+router = make_agent_tools_router(
+    "/api/julia/ferramentas",
+    TOOLS_TOKEN_SCOPE,
+    {nome: AgentTool(svc.ARGS[nome], fn) for nome, fn in svc.FERRAMENTAS.items()},
+    get_auth_context=get_auth_context,
+    get_client=get_ferramentas_client,
+    coerce_org=coerce_org_uuid,
+    issuer=TOOLS_TOKEN_ISSUER,
+    tags=["julia-ferramentas"],
+    extra_routes=_extra_routes,
+    after_call=_registrar_consulta,
+)
 
 __all__ = ["router"]

@@ -11,6 +11,16 @@ description: >
   mirrors.txt list, when it hangs, errors or answers "Ign:"/"Err:"; (4) install
   `packages` with a capped attempt per mirror, failing LOUDLY with the mirror
   name. With `packages` empty it only prepares the sources (for playwright).
+  2026-11-19 root cause of the NEXT flake class (11+ reds/24h, same step): the
+  mirror was UP but SLOW - ~100 kB/s with 5-12s stalls per small .deb, so the
+  68-package cairo/pango tree (11.7 MB) took >90s and the 90s per-attempt cap
+  killed a healthy download (switching mirrors changed nothing: mirror+file:
+  resolves to the same host). Fix by construction: (5) the .debs are cached
+  (actions/cache, keyed on image + package list) so a hit downloads nothing;
+  (6) on a miss the .debs are prefetched 4-wide (per-file latency, not
+  bandwidth, was the bottleneck); (7) the install cap is its own, larger
+  input. Telemetry: ::notice:: lines carry cache hit/miss, prefetch counts and
+  the mirror that served the install.
   KB § PATTERNS/devops/merge-queue.md § 6a.
 
 inputs:
@@ -19,18 +29,46 @@ inputs:
     required: false
     default: ""
   attempt-seconds:
-    description: Hard cap per apt attempt (update or install), in seconds.
+    description: Hard cap per apt-get UPDATE attempt, in seconds.
     required: false
-    default: "90"  # probe + 2 fallback updates + 3 installs = 540s < the 10-min step timeout
+    default: "90"
+  install-seconds:
+    description: Hard cap per apt-get INSTALL attempt (and prefetch), in seconds; a slow mirror needs minutes, not 90s.
+    required: false
+    default: "420"
 
 runs:
   using: composite
   steps:
+    - name: Compute .deb cache key
+      id: key
+      if: inputs.packages != ''
+      shell: bash
+      env:
+        PKGS: ${{ inputs.packages }}
+      run: |
+        echo "debs=${RUNNER_TEMP}/apt-debs" >> "$GITHUB_OUTPUT"
+        mkdir -p "${RUNNER_TEMP}/apt-debs/partial"
+        h="$(printf '%s' "$PKGS" | sha256sum | cut -c1-16)"
+        # image version pins the distro + index generation; a new image = a cold cache, by design
+        echo "key=apt-debs-v1-${ImageOS:-os}-${ImageVersion:-img}-${h}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore .deb cache
+      id: debs
+      if: inputs.packages != ''
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.debs }}
+        key: ${{ steps.key.outputs.key }}
+
     - name: Prepare apt sources (fallback mirror) and install
       shell: bash
       env:
         PKGS: ${{ inputs.packages }}
         CAP: ${{ inputs.attempt-seconds }}
+        ICAP: ${{ inputs.install-seconds }}
+        DEBS: ${{ steps.key.outputs.debs }}
+        CACHE_HIT: ${{ steps.debs.outputs.cache-hit }}
       run: |
         set -uo pipefail
         # Composite `shell: bash` runs `bash -e -o pipefail`; this script checks every rc itself, so -e must be
@@ -73,13 +111,52 @@ runs:
         fi
         # (4) install with a capped attempt; one more mirror switch on failure; loud failure naming the mirror
         if [ -z "$PKGS" ]; then echo "apt sources ready on $MIRROR"; exit 0; fi
-        install() { sudo timeout "$CAP" apt-get install -y --no-install-recommends $PKGS; }
-        if install; then echo "apt install OK on $MIRROR"; exit 0; fi
+        APT_OPTS="-o Dir::Cache::Archives=$DEBS"
+        echo "::notice::apt .deb cache hit: ${CACHE_HIT:-false} (a hit means no package downloads)"
+        # (6) prefetch the .debs 4-wide (8-wide drew 503/504s from the mirror): the observed stall is per-file latency on the mirror, not bandwidth.
+        # Best-effort - anything missed is fetched by apt itself; apt re-verifies every file by hash.
+        prefetch() {
+          local first uris n
+          first="$(head -1 /etc/apt/apt-mirrors.txt 2>/dev/null | awk '{print $1}' | sed -E 's#/*$#/#')"
+          uris="$(sudo apt-get install -y --no-install-recommends --print-uris $APT_OPTS $PKGS 2>/dev/null \
+            | sed -nE 's/^\x27([^\x27]*)\x27 ([^ ]+) .*/\1 \2/p' \
+            | sed -E "s#^mirror\+file:/etc/apt/apt-mirrors.txt/#${first}#")"
+          n="$(printf '%s\n' "$uris" | grep -c . || true)"
+          echo "::notice::apt prefetch: $n package file(s) not in cache"
+          [ "$n" -gt 0 ] || return 0
+          printf '%s\n' "$uris" | sudo timeout "$ICAP" xargs -P 4 -n 2 sh -c \
+            'curl -fsSL --retry 2 --connect-timeout 10 --max-time 120 -o "$0/$2.part" "$1" && mv "$0/$2.part" "$0/$2"' "$DEBS" \
+            || echo "::warning::apt prefetch incomplete; apt will fetch the rest itself"
+        }
+        install() { sudo timeout "$ICAP" apt-get install -y --no-install-recommends $APT_OPTS $PKGS; }
+        prefetch
+        if install; then echo "::notice::apt install OK on $MIRROR (cache hit: ${CACHE_HIT:-false})"; exit 0; fi
         for m in $FALLBACKS; do
           case "$m" in "$MIRROR"*) continue;; esac  # already on it
           switch_mirror "$m"
           sudo timeout "$CAP" apt-get update >/dev/null 2>&1 || true
-          if install; then echo "apt install OK on $MIRROR"; exit 0; fi
+          prefetch
+          if install; then echo "::notice::apt install OK on $MIRROR (cache hit: ${CACHE_HIT:-false})"; exit 0; fi
         done
         echo "::error::apt install of [$PKGS] FAILED on every mirror (last: $MIRROR) - CI infra, not the code under test"
         exit 1
+
+    - name: Hand the .deb cache back to the runner user (tar must read root-written files)
+      id: handback
+      if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        DEBS: ${{ steps.key.outputs.debs }}
+      run: |
+        sudo rm -rf "$DEBS/lock" "$DEBS/partial"
+        sudo chown -R "$(id -u):$(id -g)" "$DEBS"
+        n="$(find "$DEBS" -name '*.deb' | wc -l | tr -d ' ')"
+        echo "count=$n" >> "$GITHUB_OUTPUT"
+        echo "::notice::apt .deb cache to save: $n file(s), $(du -sh "$DEBS" | cut -f1) (0 = everything was preinstalled; nothing worth saving)"
+
+    - name: Save .deb cache
+      if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true' && steps.handback.outputs.count != '0'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.debs }}
+        key: ${{ steps.key.outputs.key }}

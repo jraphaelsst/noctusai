@@ -33,6 +33,7 @@ from app.modules.media_creation.schemas.esteira import PostCreate
 from app.modules.media_creation.schemas.roteiros import RoteiroCreate
 from app.modules.media_creation.services.esteira_service import EsteiraError, EsteiraService
 from app.modules.media_creation.services.post_ref import post_refs
+from app.modules.media_creation.services.publicacao_service import PublicacaoService
 from app.modules.media_creation.services.roteiro_service import RoteiroError, RoteiroService
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,8 @@ class SagaFluxo:
                     post_id = str(exc.detail["post_id"])
                 else:
                     return self._card_falhou(pid, exc)
+        # S9: the Diretor's Publicação block (caption, 5 hashtags, first comment) lands on the card while its caption is empty
+        PublicacaoService(self.db, self.org_id, self.user_id).aplicar_no_card(proposta, post_id)
         self.registrar(pid, "card_criado", etapa="card_criado", roteiro=rid, post=post_id)
         return post_id
 

@@ -72,6 +72,26 @@ class EscolherIn(StrictHttpModel):
         return self
 
 
+#: One batch pick: the parser caps a reply at 10 headlines + 5 roteiros, the saga runs one claim per id.
+MAX_SELECIONADAS = 10
+
+
+class SelecionarIn(StrictHttpModel):
+    """``POST /chat/propostas/selecionar`` -- the batch pick (``criacao-pipeline-contract.md`` 4): N proposals of the caller's
+    conversations, each claimed and run through the same saga as ``escolher``. Unique ids; nothing else is accepted."""
+
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_SELECIONADAS)
+    #: Optional scope (the screen sends the open conversation): when given, every id must belong to it, else 404.
+    conversa_id: Optional[uuid.UUID] = None
+
+    @field_validator("ids")
+    @classmethod
+    def _unicos(cls, v: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(v)) != len(v):
+            raise ValueError("Os ids devem ser únicos")
+        return v
+
+
 class MemoriaCreate(StrictHttpModel):
     marca_id: uuid.UUID
     texto: str = Field(min_length=1, max_length=MAX_MEMORIA_CHARS)

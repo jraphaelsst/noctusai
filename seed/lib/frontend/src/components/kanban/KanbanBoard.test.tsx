@@ -82,6 +82,23 @@ function orbityColumns(): KanbanColumnData<Lead, StageId>[] {
   ];
 }
 
+describe('<KanbanBoard/> — statusSlot', () => {
+  it('renders the product slot inside every card', () => {
+    render(
+      <KanbanBoard<Cliente, Etapa>
+        columns={erpColumns()}
+        getCardId={(c) => c.id}
+        getCardStage={(c) => c.etapa_atual}
+        renderCard={(c) => <span>{c.nome}</span>}
+        statusSlot={(c) => <i data-testid={`slot-${c.id}`}>status {c.nome}</i>}
+        onMove={() => {}}
+      />,
+    );
+    expect(screen.getByText('status Ana')).toBeInTheDocument();
+    expect(screen.getByText('status Bruno')).toBeInTheDocument();
+  });
+});
+
 describe('<KanbanBoard/> — generality across differently-shaped cards', () => {
   it('mounts with erp-shaped data (etapa_atual) and renders every card + column', () => {
     render(

@@ -142,3 +142,29 @@ describe('opt-in', () => {
     expect(el).toHaveAttribute('role', 'button');
   });
 });
+
+describe('KanbanCard statusSlot', () => {
+  it('renders the declared slot after the content, in draggable and non-draggable cards', () => {
+    for (const draggable of [true, false]) {
+      render(
+        <DndContext>
+          <SortableContext items={['c1']}>
+            <KanbanCard id="c1" draggable={draggable} statusSlot={<div data-testid="slot">Gerando 40%</div>}>
+              <div>Ana</div>
+            </KanbanCard>
+          </SortableContext>
+        </DndContext>,
+      );
+      const slot = screen.getByTestId('slot');
+      const content = screen.getByText('Ana');
+      expect(slot.parentElement).toBe(content.parentElement);
+      expect(content.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it('renders nothing extra when no slot is given', () => {
+    const card = renderCard();
+    expect(card.children).toHaveLength(1);
+  });
+});
