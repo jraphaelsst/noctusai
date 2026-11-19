@@ -139,7 +139,7 @@ SCENARIOS: dict[str, str] = {
   {sqlstate("UPDATE cs_posts SET cta_objetivo = 'vendas' WHERE id = p", "check_violation")}
   {sqlstate("UPDATE cs_posts SET falha_codigo = 'cota' WHERE id = p", "check_violation")}
   UPDATE cs_posts SET criacao_estado = 'falhou', falha_codigo = 'cota', cta_objetivo = 'nenhum', criacao_rota = 'reel_narrado' WHERE id = p;
-  {sqlstate("UPDATE cs_posts SET fontes = '{{}}'::jsonb WHERE id = p", "check_violation")}
+  {sqlstate("UPDATE cs_posts SET fontes = '{}'::jsonb WHERE id = p", "check_violation")}
   {expect("jsonb_typeof(fontes) FROM cs_posts WHERE id = p", "array", "fontes default")}
 """,
     "M-A: the papel CHECK admits the new roles and still the alias": """
