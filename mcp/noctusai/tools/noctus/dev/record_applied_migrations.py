@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from . import applied_md as _applied_md
 from . import release_steward as _steward
 from .task_branch import task_branch as _task_branch
 
@@ -77,13 +78,14 @@ def record_applied_migrations(
     tb = task_branch_fn or _task_branch
     git = git_fn or _default_git
     rel = f"products/{product}/backend/migrations-applied.json"
+    rel_md = f"products/{product}/backend/migrations/{_applied_md.APPLIED_MD}"
     slug = f"applied-record-{_SAFE.sub('-', product.lower()).strip('-')}-" \
            f"{slug_suffix or time.strftime('%Y%m%d-%H%M%S')}"
     result["slug"] = slug
     root_kw = {"primary_root": primary_root} if primary_root else {}
     started = False
     try:
-        start = tb(action="start", slug=slug, confirm=True, wire_env=False, paths=[rel],
+        start = tb(action="start", slug=slug, confirm=True, wire_env=False, paths=[rel, rel_md],
                    brief=f"record applied migrations for {product}", **root_kw)
         if start.get("status") != "started":
             return {**result, "status": "error", "error": f"task_branch start: {start.get('status')} "
@@ -110,7 +112,10 @@ def record_applied_migrations(
                                          f" -- branch feat/{slug} kept"}
             path = record_applied(Path(wt) / "products" / product / "backend", files)
             result["path"] = str(path)
-            for args in (("add", "--", rel), ("commit", "-q", "-m", msg)):
+            # Same commit: derive APPLIED.md's headings from the ledger just written (one fact, one source).
+            md_changed = _applied_md.sync_backend(Path(wt) / "products" / product / "backend")
+            result["applied_md_synced"] = md_changed
+            for args in (("add", "--", rel, *((rel_md,) if md_changed else ())), ("commit", "-q", "-m", msg)):
                 rc, _o, err = git(wt, *args)
                 if rc != 0:
                     _cleanup_failed(tb, slug, root_kw)

@@ -1035,6 +1035,15 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-applied. APPLIED.md <-> ledger parity (WARN-first SHADOW; the test is the blocking backstop) ─────────────
+# Keeper `check_applied_md_ledger_parity`: APPLIED.md headings are derived from migrations-applied.json
+# (the recorder rewrites them); a hand edit or a bypassing ledger change is caught here.
+STAGED_APPLIED_MD=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/[^/]+/backend/(migrations/APPLIED\.md|migrations-applied\.json)$' || true)
+if [[ -n "$STAGED_APPLIED_MD" ]] && have_py; then
+    echo "[pre-commit] APPLIED.md / migrations-applied.json staged — checking they agree..."
+    "$PY" "$CLI" --check-applied-md-ledger-parity --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): applied_md_ledger_parity — the ledger (migrations-applied.json) is the source of truth; record via noctus.dev.record_applied_migrations or fix the APPLIED.md heading. Promote to blocking after >=7 shadow days (gate_alignment walls)." >&2
+fi
+
 # ─── 6e-bis-pin. Supply-chain pin gate (WARN-first SHADOW; CI test is the blocking backstop) ─────────
 # Keeper `check_supply_chain_pin` + `KB § PATTERNS/devops/ci-security-gates.md § 9`. A workflow `uses:` not
 # pinned to a 40-hex SHA, or a prod-surface compose image on :latest / a bare major, is a re-pointable supply
