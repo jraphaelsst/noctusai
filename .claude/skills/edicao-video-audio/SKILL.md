@@ -9,12 +9,12 @@ version: 0.1.0
 ## Workflow
 1. **Measure first:** `ffmpeg -i in -af ebur128=peak=true -f null -` (or `loudnorm=print_format=json`). Store integrated LUFS, LRA, true peak per job. Per-section readings when music is added.
 2. **Default = voice only.** Music and SFX require `restricoes.musica_sfx_autorizados: true` and a source with rights `proprio|licenciado` (the user's or a licensed library). No music "found" on the internet.
-3. **Normalize (two-pass `loudnorm`)** to the preset target (default −14 LUFS integrated, −1.5 dBTP): pass 1 measure, pass 2 with `measured_I/LRA/TP/thresh` and `linear=true`. Apply it LAST, after music/SFX mix.
+3. **Normalize (two-pass `loudnorm`)** to the preset target (default −14 LUFS integrated, −1.5 dBTP): pass 1 measure, pass 2 with `measured_I/LRA/TP/thresh` and `linear=true`. Apply it LAST, after music/SFX mix. ⚠️ **Mono voice (TTS, phone mic) → stereo: upmix BEFORE both passes** (`pan=stereo|c0=c0|c1=c0`, then measure/normalize). Normalizing mono and duplicating it afterwards reads +3 LU on the stereo master (observed −11.3 instead of −14 LUFS, 2026-11-18). → `KB § PATTERNS/media/script-to-media-production.md` §4
 4. **Music bed with ducking:** bed ~10 dB below speech as starting point; `sidechaincompress` keyed by the voice (starting values: threshold ~0.03, ratio ~5, attack ~30 ms, release ~400–500 ms), tune by measurement. The bed starts/ends with a short fade; no bed under a silence beat.
 5. **SFX:** one sound per meaningful event (an insert entering, a number landing), aligned by peak to the visual event, not by file start; level relative to speech; no risers before reveals. SFX from a library with rights recorded; never synthesized silently as a fallback.
 6. **Forced silence:** `audio.silencio[]` spans turn music/SFX off (emphasis pauses).
 7. **Voice cleanup** (noise/click) only as a loudness-matched A/B for the user to choose; never promise studio quality.
-8. **Verify:** re-measure the output; report LUFS/peak before→after as `observado`; "não ouvi o mix, ouça uma vez".
+8. **Verify on the ENCODED file, not the WAV:** AAC raised true peak by up to 0.7 dB after `loudnorm` (measured −1.5 → −0.8 dBTP, 2026-11-18), so normalize with 1.0 dB of headroom below the TP target and fail the job if the final mp4 is still over. Re-measure the output; report LUFS/peak before→after as `observado`; "não ouvi o mix, ouça uma vez".
 
 ## Guardrails
 Voice is never re-encoded through the graphics path: mux the processed voice track onto the visual render once. Cough/noise removal feeds the cut plan rather than being hidden in the mix.
