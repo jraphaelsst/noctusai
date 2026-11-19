@@ -61,7 +61,9 @@ RETRY_POLICY = RetryPolicy(max_retries=2, backoff_seconds=5.0)
 #: registered by its own slice): the library load (EST-3), the chat saga's finalizer (UNI-1b) and the auto-draft of a
 #: newly analysed video (EST-5). They ride the `geracao` worker (the hard switch `geracao_worker_enabled`); the
 #: auto-draft stays dark until `biblioteca_ingestao_habilitada` produces an analysed video, by construction.
-ESTRUTURAS_JOB_TYPES: tuple[str, ...] = ("estruturas.importar", "fluxo.finalizar_card", "estruturas.rascunho_do_viral")
+ESTRUTURAS_JOB_TYPES: tuple[str, ...] = (
+    "estruturas.importar", "fluxo.finalizar_card", "estruturas.rascunho_do_viral", "fluxo.headline_do_roteiro",
+)
 GERACAO_JOB_TYPES: tuple[str, ...] = ("headline.gerar", "roteiro.perguntas", "roteiro.gerar", *ESTRUTURAS_JOB_TYPES)
 BIBLIOTECA_JOB_TYPES: tuple[str, ...] = (
     "biblioteca.sync_perfil",

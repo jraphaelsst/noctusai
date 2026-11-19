@@ -7897,6 +7897,31 @@ _SW_TRANSCRICAO_FORMATO_PROBE = GuardProbe(
     ),
 )
 
+_SW_ROTEIRO_ESTRUTURA_IDS_MAX_PROBE = GuardProbe(
+    id="social_wiring.cs_roteiros.estrutura_ids_max",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="cs_roteiros_estrutura_ids_max",
+    kind="write_refusal",
+    migrations=("360_cs_fluxo_saga.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.cs_roteiros")
+        + _probe_own_org_sql("v_org", marca_var="v_prod", marca_slug="noc-probe-roteiro-estruturas"),
+        op_sql="""
+    INSERT INTO social_wiring.cs_roteiros (org_id, marca_id, nome, headline_texto, estrutura_ids)
+    VALUES (v_org, v_prod, 'noc probe', 'noc probe',
+            ARRAY[gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid()]::uuid[]);
+""",
+        sqlstate_condition="check_violation",
+        constraint_names=("cs_roteiros_estrutura_ids_max",),
+        what="a roteiro citing four Estruturas",
+    ),
+    rationale=(
+        "A roteiro mixes at most 3 Estruturas (estruturas-contract 6.7); the generation prompt, the usos "
+        "attribution and the chat saga all assume that bound, so a 4th would be silently dropped downstream."
+    ),
+)
+
 _INVITATION_TOKEN_PROBE = GuardProbe(
     id="invitations.token_not_api_readable",
     product="<platform>",
@@ -13958,6 +13983,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_API_TOKEN_HASH_PROBE,
     _SW_RECIPIENT_CHANNEL_PROBE,
     _SW_TRANSCRICAO_FORMATO_PROBE,
+    _SW_ROTEIRO_ESTRUTURA_IDS_MAX_PROBE,
     *_COMMUNITY_PROBES,
     *_SW_179_183_PROBES,
     *_SW_190_PROBES,

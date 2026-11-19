@@ -52,6 +52,8 @@ class PostCreate(StrictHttpModel):
     conta_id: Optional[uuid.UUID] = None
     gravacao_em: Optional[date] = None
     data_entrega: Optional[AwareDatetime] = None
+    #: ``cs_posts.formato`` (S1 vocabulary); the chat saga maps it from the roteiro's formato (estruturas-contract 9.2.5).
+    formato: Literal["reel", "carrossel", "story", "feed"] = "reel"
 
     @field_validator("titulo")
     @classmethod
