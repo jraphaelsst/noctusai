@@ -105,6 +105,13 @@
     "359_julia_horario_atendimento.sql": "59f52fcfaac60efdaafd8520acdb0417b7265fcb6a98577af070d20bf085d083",
     "360_cs_fluxo_saga.sql": "058412ebb1fddf4ecd9ebbdeaac1ad155cbd9d0c29c917dbbeffaa93b791e42b",
     "361_cs_limites_geracao.sql": "bfd5655e5e494a7c78196794d38d2e4144bf7c510503c52d39e15b2898cb5142",
-    "367_cs_chat_proposta_publicacoes.sql": "9c27b96b2de5a79fb40b758f722258e5413fce8dcfe67dbaea6f0ca82209640e"
+    "362_cs_criacao_posts.sql": "70d939030f64bcbc84600b329c86c9a309220b09e405c867d9901b5347018d0b",
+    "363_cs_criacao_jobs.sql": "48e86b139f585cd5735a067b38bba6d2526c604c97b1c26c7ca4611d4656b106",
+    "364_cs_post_eventos_criacao.sql": "fecfb806dc0fd2908dd260fe35a57bd4ee5a134c918591d24e36bc201652f956",
+    "365_cs_consentimentos_voz.sql": "04c7c5145b2b3edf09f3559049c914a801a117a1a185026ce5a2fdf91cb39214",
+    "366_cs_criacao_cotas.sql": "ed08912aca3a34e9173a0531d180d0982e52d14e2f6cf79f9a1d73635b3fdf7d",
+    "367_cs_chat_proposta_publicacoes.sql": "9c27b96b2de5a79fb40b758f722258e5413fce8dcfe67dbaea6f0ca82209640e",
+    "369_cs_post_criacao_transicionar.sql": "c6a82d35b8124195dbf6c7f6ef868f06f9fa6d685b0a7ad15d044e76995767aa",
+    "370_cs_chat_hardening.sql": "a4d137b262c34e9bd40eb3e681ce82dd30cc18d85614e6d0793988aa25832fc1"
   }
 }
