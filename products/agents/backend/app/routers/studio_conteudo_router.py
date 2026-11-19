@@ -715,11 +715,8 @@ async def create_platform_definition(
             return existing
         if not payload.nome:
             raise _flat(422, "nome_obrigatorio", "Informe o nome do agente para criar uma nova definição.")
-        if payload.kind == "runtime" and not payload.modelo and payload.pai_agent_id is None:
-            modelos = sorted(d.key for d in store.list_platform_definitions() if d.modelo)
-            raise _flat(422, "pai_obrigatorio",
-                        "Escolha um modelo (agente-base ou outro template) como pai do novo agente. "
-                        f"Modelos disponíveis: {', '.join(modelos) if modelos else 'nenhum'}.")
+        # NOC-REMEDIATE[agent-chain-gates]: the create-time parent requirement (pai_obrigatorio) was removed 2026-11-18;
+        # re-enable after agente-base/sdr-base are validated (owner, later) -- 2026-11-18
         try:
             return ensure_definicao(
                 ctx.org_id, payload.key, studio_store=store, created_by=ator, nome=payload.nome,

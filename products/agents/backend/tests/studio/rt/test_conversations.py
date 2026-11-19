@@ -147,7 +147,7 @@ class TestStudioTurn:
 
     def test_prompt_of_72k_chars_is_accepted(self, rt):
         from app.studio.spec import MAX_COMPILED_PROMPT_CHARS
-        assert MAX_COMPILED_PROMPT_CHARS == 80_000
+        assert MAX_COMPILED_PROMPT_CHARS == 100_000
         install_runtime(rt.client, [])
         rt.make_agent(secoes=[("parte-a", "A", "x" * 36_000), ("parte-b", "B", "y" * 35_500)])  # ~72k compiled
         conv = _studio_conv(rt)
@@ -156,7 +156,7 @@ class TestStudioTurn:
 
     def test_prompt_too_large_is_refused_never_truncated(self, rt):
         runtime, _ = install_runtime(rt.client, [])
-        rt.make_agent(secoes=[("parte-a", "A", "x" * 31_000), ("parte-b", "B", "y" * 31_000), ("parte-c", "C", "z" * 20_000)])  # each under the 40k section cap; total above the 80k prompt cap
+        rt.make_agent(secoes=[("parte-a", "A", "x" * 31_000), ("parte-b", "B", "y" * 31_000), ("parte-c", "C", "z" * 40_000)])  # each under the 40k section cap; total above the 100k prompt cap
         conv = _studio_conv(rt)
         resp = self._post(rt, conv["id"])
         assert resp.status_code == 409

@@ -101,7 +101,6 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.camada_validada import base_nao_validada, coletar_camadas_base
 from app.studio.prontidao import avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
@@ -1169,21 +1168,8 @@ def publish_draft(
             "A ferramenta 'oferecer_opcoes' está ativa e o padrão de qualificação não indica o catálogo de opções.",
             prontidao=itens_prontidao,
         )
-    if itens_prontidao and any(i["codigo"] == "sem_modelo_pai" for i in itens_prontidao):
-        raise http_error(
-            409, "sem_modelo_pai", "O agente não tem um modelo (template) pai: escolha um antes de publicar.",
-            prontidao=itens_prontidao,
-        )
-    # 073 chain gate, direct (like the fallback number): a failed readiness read must not let a child past an unvalidated base
-    if agent.pai_agent_id is not None:
-        nao_validadas = base_nao_validada(coletar_camadas_base(
-            store=store, catalog=catalog, consolidacao=consolidacao, org_id=ctx.org_id, agent=agent, draft=draft))
-        if nao_validadas:
-            raise http_error(
-                409, "base_nao_validada",
-                "A base deste agente não está validada: consolide os casos críticos da base antes de publicar.",
-                bases=[c.to_dict() for c in nao_validadas], prontidao=itens_prontidao,
-            )
+    # NOC-REMEDIATE[agent-chain-gates]: the sem_modelo_pai / base_nao_validada publish refusals were removed 2026-11-18
+    # (Julia goes live alone); re-enable after agente-base/sdr-base are validated (owner, later) -- 2026-11-18
     if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):
         raise http_error(
             409, "compile_blocked", "As regras de segurança desta instância estão sem parâmetros (migração 063).",
