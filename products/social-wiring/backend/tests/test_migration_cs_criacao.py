@@ -139,7 +139,7 @@ SCENARIOS: dict[str, str] = {
   {sqlstate("UPDATE cs_posts SET cta_objetivo = 'vendas' WHERE id = p", "check_violation")}
   {sqlstate("UPDATE cs_posts SET falha_codigo = 'cota' WHERE id = p", "check_violation")}
   UPDATE cs_posts SET criacao_estado = 'falhou', falha_codigo = 'cota', cta_objetivo = 'nenhum', criacao_rota = 'reel_narrado' WHERE id = p;
-  {sqlstate("UPDATE cs_posts SET fontes = '{{}}'::jsonb WHERE id = p", "check_violation")}
+  {sqlstate("UPDATE cs_posts SET fontes = '{}'::jsonb WHERE id = p", "check_violation")}
   {expect("jsonb_typeof(fontes) FROM cs_posts WHERE id = p", "array", "fontes default")}
 """,
     "M-A: the papel CHECK admits the new roles and still the alias": """
@@ -234,18 +234,27 @@ SCENARIOS: dict[str, str] = {
     VALUES (o, m, 'P', 'elevenlabs', 'v9', 'p', repeat('c', 64), 'clone_voz', now() - interval '1 day');
   IF cs_consentimento_voz_vigente(o, m, 'elevenlabs', 'v9') IS NOT NULL THEN RAISE EXCEPTION 'expired still valid'; END IF;
 """,
-    "M-E: the quota defaults to US$15 in the state read; every change is an event with who/from/to; events are append-only": """
+    "M-E: the quota defaults to US$15 in the state read; create + every edit go through the transition-log RPCs, with who/from/to": """
   r := cs_criacao_cota_estado(o);
   IF (r->>'limite_usd_mes')::numeric <> 15 OR (r->>'gasto_usd_mes')::numeric <> 0 THEN RAISE EXCEPTION 'default state: %', r; END IF;
-  INSERT INTO cs_criacao_cotas (org_id, updated_by) VALUES (o, '00000000-0000-0000-0000-0000000000c1');
-  UPDATE cs_criacao_cotas SET limite_usd_mes = 40, updated_by = '00000000-0000-0000-0000-0000000000c2' WHERE org_id = o;
-  UPDATE cs_criacao_cotas SET updated_by = '00000000-0000-0000-0000-0000000000c3' WHERE org_id = o;
-  """ + expect("count(*) FROM cs_criacao_cotas_eventos WHERE org_id = o", "2", "insert + one real change (a no-change update is no event)")
-          + expect("(limite_de::text, limite_para::text, ator_id::text)::text FROM cs_criacao_cotas_eventos WHERE org_id = o AND limite_de IS NOT NULL",
-                   "(15.00,40.00,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
-          + sqlstate("UPDATE cs_criacao_cotas_eventos SET limite_para = 1 WHERE org_id = o", "insufficient_privilege")
-          + sqlstate("DELETE FROM cs_criacao_cotas_eventos WHERE org_id = o", "insufficient_privilege")
-          + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_mes = -1 WHERE org_id = o", "check_violation"),
+  r := cs_criacao_cota_create(o, jsonb_build_object('updated_by', '00000000-0000-0000-0000-0000000000c1'),
+                              NULL, '00000000-0000-0000-0000-0000000000c1', 'user');
+  IF r->>'status' <> 'ok' THEN RAISE EXCEPTION 'create: %', r; END IF;
+  SELECT id INTO x FROM cs_criacao_cotas WHERE org_id = o;
+  r := cs_criacao_cota_transition(o, jsonb_build_object('entity_id', x), 1500, 4000, 'cota_alterada', '{}'::jsonb,
+                                  '00000000-0000-0000-0000-0000000000c2', 'user');
+  IF r->>'status' <> 'ok' THEN RAISE EXCEPTION 'transition: %', r; END IF;
+  r := cs_criacao_cota_transition(o, jsonb_build_object('entity_id', x), 1500, 5000, 'cota_alterada', '{}'::jsonb,
+                                  '00000000-0000-0000-0000-0000000000c2', 'user');
+  IF r->>'status' <> 'refused' OR r->>'code' <> 'stale_state' THEN RAISE EXCEPTION 'stale not refused: %', r; END IF;
+  """ + expect("limite_usd_cents FROM cs_criacao_cotas WHERE org_id = o", "4000", "state moved")
+          + expect("count(*) FROM cs_criacao_cota_events WHERE org_id = o", "2", "created + one change")
+          + expect("(from_state, to_state, actor_id::text)::text FROM cs_criacao_cota_events WHERE org_id = o AND seq = 2",
+                   "(1500,4000,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
+          + expect("round(((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric, 2)", "40.00", "state read in dollars")
+          + sqlstate("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o", "raise_exception")
+          + sqlstate("DELETE FROM cs_criacao_cota_events WHERE org_id = o", "raise_exception")
+          + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_cents = -1 WHERE org_id = o", "check_violation"),
     "M-E: month-to-date spend sums the ledger (failed steps spent too) and counts the steps with no measured cost": (
         passo("tts", "em_andamento")
         + passo("tts", "concluido", '{"custo_usd":2.5,"nao_medido":["cpu_s"]}')
@@ -256,7 +265,7 @@ SCENARIOS: dict[str, str] = {
         + "r := cs_criacao_cota_estado(o);"
         + "IF (r->>'gasto_usd_mes')::numeric <> 3.75 OR (r->>'passos_sem_custo')::int <> 1 OR (r->>'restante_usd')::numeric <> 11.25 "
           "THEN RAISE EXCEPTION 'state: %', r; END IF;"
-        + "INSERT INTO cs_criacao_cotas (org_id, limite_usd_mes) VALUES (o, 3);"
+        + "INSERT INTO cs_criacao_cotas (org_id, limite_usd_cents) VALUES (o, 300);"
         + "r := cs_criacao_cota_estado(o);"
         + "IF (r->>'restante_usd')::numeric <> -0.75 THEN RAISE EXCEPTION 'over quota: %', r; END IF;"
     ),
@@ -267,11 +276,12 @@ SCENARIOS: dict[str, str] = {
      OR has_table_privilege('service_role', 'social_wiring.cs_criacao_jobs', 'DELETE') THEN RAISE EXCEPTION 'service writes the ledger directly'; END IF;
   IF has_table_privilege('service_role', 'social_wiring.cs_consentimentos_voz', 'UPDATE')
      OR has_table_privilege('service_role', 'social_wiring.cs_consentimentos_voz', 'DELETE') THEN RAISE EXCEPTION 'consent mutable'; END IF;
-  IF has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas_eventos', 'INSERT') THEN RAISE EXCEPTION 'quota events writable'; END IF;
+  IF has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas', 'UPDATE')
+     OR has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas', 'INSERT') THEN RAISE EXCEPTION 'quota writable outside the RPCs'; END IF;
   IF NOT has_function_privilege('service_role', 'social_wiring.cs_criacao_passo_registrar(uuid,uuid,integer,text,text,jsonb)', 'EXECUTE') THEN
     RAISE EXCEPTION 'service cannot execute the RPC'; END IF;
   FOREACH s IN ARRAY ARRAY['social_wiring.cs_criacao_jobs', 'social_wiring.cs_consentimentos_voz', 'social_wiring.cs_criacao_cotas',
-                           'social_wiring.cs_criacao_cotas_eventos', 'social_wiring.cs_criacao_gasto_mes'] LOOP
+                           'social_wiring.cs_criacao_cota_events', 'social_wiring.cs_criacao_gasto_mes'] LOOP
     IF has_table_privilege('authenticated', s, 'SELECT') OR has_table_privilege('anon', s, 'SELECT') THEN
       RAISE EXCEPTION 'browser role reads %', s; END IF;
   END LOOP;
@@ -284,7 +294,7 @@ SCENARIOS: dict[str, str] = {
      AND (p.proname LIKE 'cs\\_criacao\\_%' OR p.proname LIKE 'cs\\_consentimento%' OR p.proname LIKE 'guard\\_cs\\_c%');
   IF n <> 0 THEN RAISE EXCEPTION 'unpinned definers: %', n; END IF;
   IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'social_wiring'
-       AND tablename IN ('cs_criacao_jobs', 'cs_consentimentos_voz', 'cs_criacao_cotas', 'cs_criacao_cotas_eventos')
+       AND tablename IN ('cs_criacao_jobs', 'cs_consentimentos_voz', 'cs_criacao_cotas', 'cs_criacao_cota_events')
        AND roles <> '{service_role}') <> 0 THEN RAISE EXCEPTION 'a non-service policy exists'; END IF;
 """,
 }
@@ -334,5 +344,5 @@ def test_backward_compatible_with_the_previous_image(name):
 
 def test_every_new_table_declares_its_tier():
     code = _code("cs_criacao_jobs") + _code("cs_consentimentos_voz") + _code("cs_criacao_cotas")
-    for table in ("cs_criacao_jobs", "cs_consentimentos_voz", "cs_criacao_cotas", "cs_criacao_cotas_eventos", "cs_criacao_gasto_mes"):
+    for table in ("cs_criacao_jobs", "cs_consentimentos_voz", "cs_criacao_cotas", "cs_criacao_cota_events", "cs_criacao_gasto_mes"):
         assert f"social_wiring.{table} IS 'tier:org'" in code, table

@@ -14094,22 +14094,9 @@ _SW_362_PROBES: tuple[GuardProbe, ...] = (
     ),
     _sw362_probe(
         probe_id="sw366_cota_limite_valido", guard_name="cs_criacao_cotas_limite_check", migration=_SW_366_MIGRATION,
-        statements=f"    INSERT INTO {_SW362}.cs_criacao_cotas (org_id, limite_usd_mes) VALUES (v_org, -1);",
+        statements=f"    INSERT INTO {_SW362}.cs_criacao_cotas (org_id, limite_usd_cents) VALUES (v_org, -1);",
         permitted_msg="a negative vendor quota was stored",
         rationale="A negative limit would make every paid step 'over quota' or, inverted, read as unlimited.",
-    ),
-    _sw362_probe(
-        probe_id="sw366_cota_evento_tipo", guard_name="cs_criacao_cotas_eventos_tipo_check", migration=_SW_366_MIGRATION,
-        statements=f"    INSERT INTO {_SW362}.cs_criacao_cotas_eventos (org_id, tipo, limite_para) VALUES (v_org, 'inventado', 1);",
-        permitted_msg="a quota event of an unknown type was stored",
-        rationale="The quota history counts cota_alterada rows: another type would pollute it.",
-    ),
-    _sw362_probe(
-        probe_id="sw366_cota_evento_imutavel", guard_name="cs_criacao_cotas_eventos_imutavel", migration=_SW_366_MIGRATION,
-        statements=(f"    INSERT INTO {_SW362}.cs_criacao_cotas (org_id, limite_usd_mes) VALUES (v_org, 20);\n"
-                    f"    UPDATE {_SW362}.cs_criacao_cotas_eventos SET limite_para = 1 WHERE org_id = v_org;"),
-        permitted_msg="a quota change event was updated",
-        rationale="Who changed the vendor quota, when and from what is an audit fact: events are append-only.",
     ),
 )
 
