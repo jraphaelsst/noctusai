@@ -15,6 +15,7 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -33,6 +34,7 @@ from app.modules.media_creation.schemas.chat import (
     MemoriaCreate,
     MencaoTipo,
     MensagemCreate,
+    SelecionarIn,
 )
 from app.modules.media_creation.services.chat_service import (
     ChatError,
@@ -42,6 +44,11 @@ from app.modules.media_creation.services.chat_service import (
     get_chat_stream_fn,
     get_extrair_propostas,
     liberar_stream,
+)
+from app.modules.media_creation.services.diretor_criacao import (
+    DiretorFactory,
+    diretor_ativo,
+    get_diretor_factory,
 )
 from app.modules.media_creation.services.fluxo_service import (
     FluxoService,
@@ -53,6 +60,7 @@ from app.modules.media_creation.services.fluxo_continuacao import FluxoContinuac
 from app.modules.media_creation.services.geracao_jobs import make_jobs_repository
 from app.modules.media_creation.services.roteiro_aprovacao import make_approvals
 from app.modules.media_creation.services.roteiro_service import IaCheck, RoteiroService, get_roteiro_ia_check
+from app.config import settings
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -72,6 +80,11 @@ def get_fluxo_jobs() -> JobRepository:
 def get_fluxo_approvals() -> ApprovalService:
     """DI seam for the approvals organ ``RoteiroService`` presents with. Tests override with the Fake ledger."""
     return make_approvals(get_admin_client())
+
+
+def get_chat_settings() -> Any:
+    """DI seam for the chat's per-org engine switch (``chat_diretor_criacao``). Tests override it."""
+    return settings
 
 
 def _fluxo_svc(
@@ -158,10 +171,19 @@ async def enviar_mensagem(
     auth=Depends(get_current_user_org),
     stream_fn: ChatStreamFn = Depends(get_chat_stream_fn),
     extrair: ExtrairFn = Depends(get_extrair_propostas),
+    cfg=Depends(get_chat_settings),
+    diretor_factory: DiretorFactory = Depends(get_diretor_factory),
 ):
     svc = _svc(auth)
+    diretor = None
+    if await run_in_threadpool(diretor_ativo, svc.org_id, cfg):  # may read org_settings: never on the loop
+        # the per-org switch is ON: the Diretor de Criação answers, or the send is refused (coded) -- never the legacy engine
+        diretor = await run_in_threadpool(diretor_factory, svc.org_id)
+        if diretor is None:
+            logger.warning("chat: diretor ligado mas sem cliente org=%s", svc.org_id)
+            _raise(ChatError(503, "O Diretor de Criação não está configurado para esta conta.", code="diretor_indisponivel"))
     try:
-        envio = await svc.preparar_envio(str(conversa_id), body.conteudo, body.referencias, stream_fn, extrair)
+        envio = await svc.preparar_envio(str(conversa_id), body.conteudo, body.referencias, stream_fn, extrair, diretor)
     except ChatError as exc:
         _raise(exc)
     return StreamingResponse(
@@ -200,6 +222,31 @@ async def escolher(
     if resultado.ja_existia:
         response.status_code = 200
     return success_response(resultado.como_dict())
+
+
+@router.post("/propostas/selecionar", status_code=202)
+@limiter.limit(DEFAULT_AI_RL)
+async def selecionar(
+    request: Request,
+    response: Response,
+    body: SelecionarIn,
+    auth=Depends(get_current_user_org),
+    cfg=Depends(get_fluxo_settings),
+    ia_check: IaCheck = Depends(get_roteiro_ia_check),
+    orcamento: Orcamento = Depends(get_fluxo_orcamento),
+    jobs: JobRepository = Depends(get_fluxo_jobs),
+    approvals: ApprovalService = Depends(get_fluxo_approvals),
+):
+    """The batch pick (criacao-pipeline-contract 4): N proposals, one saga claim each. 202 when at least one card was started,
+    200 when every item already existed or was refused; each item carries its own outcome (``ok`` / ``erro.code``)."""
+    svc = _fluxo_svc(auth, cfg, ia_check, orcamento, jobs, approvals)
+    try:
+        resultado = await svc.fluxo.selecionar([str(i) for i in body.ids])
+    except ChatError as exc:
+        _raise(exc)
+    if resultado["criados"] == 0:
+        response.status_code = 200
+    return success_response(resultado)
 
 
 @router.get("/mencoes")

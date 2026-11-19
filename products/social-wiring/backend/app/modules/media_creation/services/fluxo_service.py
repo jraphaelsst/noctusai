@@ -22,6 +22,7 @@ module never writes an event by hand.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional
@@ -496,6 +497,61 @@ class FluxoService:
             # `ja_existia`, not a second flow); it expires on its own and any later click resumes from `fluxo_etapa`.
             await self.continuacao(proposta)
         return await run_in_threadpool(self._resultado, proposta, False, False)
+
+    # ── the batch pick (criacao-pipeline-contract 4) ─────────────────────────────────────────────────
+
+    def _propostas_para_selecao(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """The proposta rows of ``ids`` -- ALL of them the caller's (org + own conversation) or a 404, before any claim: an
+        id that is foreign or unknown is the same answer (ids are not enumerable) and the batch has no side effect yet."""
+        rows = {str(r["id"]): r for r in self._in(PROPOSTAS, PROPOSTA_COLS, "id", ids, org_id=self.org_id)}
+        conversas = {
+            str(c["id"]) for c in self._in(
+                CONVERSAS, "id", "id", (r["conversa_id"] for r in rows.values()), org_id=self.org_id, user_id=self.user_id
+            )
+        }
+        if set(rows) != set(ids) or any(str(r["conversa_id"]) not in conversas for r in rows.values()):
+            raise ChatError(404, MSG_PROPOSTA_NAO_ENCONTRADA, code="proposta_nao_encontrada")
+        return rows
+
+    def _evento_selecao(self, rows: Iterable[dict[str, Any]]) -> None:
+        """``opcoes_selecionadas`` once per conversation of the batch, ``contagem`` = how many options were picked there."""
+        por_conversa: dict[str, list[dict[str, Any]]] = {}
+        for r in rows:
+            por_conversa.setdefault(str(r["conversa_id"]), []).append(r)
+        self.db.table(EVENTOS).insert([
+            {"id": str(uuid.uuid4()), "org_id": self.org_id, "marca_id": itens[0]["marca_id"], "conversa_id": conversa,
+             "ator_id": self.user_id, "tipo": "opcoes_selecionadas", "contagem": len(itens)}
+            for conversa, itens in por_conversa.items()
+        ]).execute()
+
+    async def selecionar(self, ids: list[str]) -> dict[str, Any]:
+        """Pick N proposals at once. One saga per id, in the given order -- each its own claim, so a retried batch (or a
+        double click) is ``ja_existia`` per proposta and never a second card -- and one refused item (a cap, a refusal of the
+        saga) never stops the rest: every item answers with its own outcome."""
+        rows = await run_in_threadpool(self._propostas_para_selecao, ids)
+        await run_in_threadpool(self._evento_selecao, rows.values())
+        itens: list[dict[str, Any]] = []
+        for pid in ids:
+            try:
+                r = await self.escolher(str(rows[pid]["conversa_id"]), proposta_id=pid)
+            except (ChatError, HTTPException) as exc:
+                codigo = self._codigo_da_recusa(exc)
+                itens.append({
+                    "proposta_id": pid, "ok": False,
+                    "erro": {"code": codigo, "detail": exc.detail if isinstance(exc, ChatError) else codigo,
+                             "status": getattr(exc, "status", None) or getattr(exc, "status_code", 500)},
+                })
+            except Exception:  # noqa: BLE001 - one item's crash must not take the batch down: logged, and reported as its own item
+                logger.exception("fluxo: selecionar proposta=%s falhou", pid)
+                itens.append({"proposta_id": pid, "ok": False, "erro": {"code": "falha_inesperada", "detail": "Falha inesperada.", "status": 500}})
+            else:
+                itens.append({"proposta_id": pid, "ok": True, **r.como_dict()})
+        criados = sum(1 for i in itens if i["ok"] and not i["ja_existia"])
+        return {
+            "itens": itens, "total": len(itens), "criados": criados,
+            "ja_existiam": sum(1 for i in itens if i["ok"] and i["ja_existia"]),
+            "falhas": sum(1 for i in itens if not i["ok"]),
+        }
 
     def _resultado(self, proposta: dict[str, Any], ja_existia: bool, em_andamento: bool) -> ResultadoEscolher:
         atual = self.get_proposta(str(proposta["id"])) or proposta

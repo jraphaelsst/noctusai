@@ -13807,6 +13807,78 @@ _SW_358_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring chat proposta publicacoes (migration 367, criacao-pipeline-contract.md 2.3, slice S9).
+# Same self-provisioned fixture as the 352 probes (one headline proposta `v_prop`); gated on 367 being applied.
+# ---------------------------------------------------------------------------
+
+_SW_367_MIGRATION = "367_cs_chat_proposta_publicacoes.sql"
+_SW367_TABLE = f"{_SW352}.cs_chat_proposta_publicacoes"
+_SW367_TAGS = "ARRAY['#a', '#b', '#c', '#d', '#e']"
+
+
+def _sw367_insert(**override: str) -> str:
+    """One publicacao INSERT for the fixture proposta; ``override`` replaces a column's value (the rest is valid)."""
+    cols = {
+        "legenda": "'noc probe'", "hashtags": _SW367_TAGS, "cta_objetivo": "'alcance'",
+        **override,
+    }
+    return (f"    INSERT INTO {_SW367_TABLE} (proposta_id, org_id, marca_id, numero, {', '.join(cols)}) "
+            f"VALUES (v_prop, v_org, v_marca, 1, {', '.join(cols.values())});")
+
+
+def _sw367_probe(**kw: Any) -> GuardProbe:
+    return _sw352_probe(migrations=(_SW_367_MIGRATION,), **kw)
+
+
+_SW_367_PROBES: tuple[GuardProbe, ...] = (
+    _sw367_probe(
+        probe_id="sw367_publicacao_legenda_valida", guard_name="cs_chat_proposta_publicacoes_legenda_check",
+        statements=_sw367_insert(legenda="''"),
+        permitted_msg="a publicacao with an empty legenda was stored",
+        rationale="The card's caption comes from this row: an empty one would put an empty caption on the card.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_publicacao_hashtags_exatas", guard_name="cs_chat_proposta_publicacoes_hashtags_check",
+        statements=_sw367_insert(hashtags="ARRAY['#a']"),
+        permitted_msg="a publicacao without exactly five hashtags was stored",
+        rationale="The contract writes exactly five hashtags per post (the card column allows up to five): the measure of the generator.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_publicacao_comentario_max", guard_name="cs_chat_proposta_publicacoes_comentario_check",
+        statements=_sw367_insert(primeiro_comentario="repeat('c', 2201)"),
+        permitted_msg="a first comment over 2200 chars was stored",
+        rationale="The text is copied onto cs_posts.primeiro_comentario, whose own CHECK is 2200: refuse it here, not at the card.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_publicacao_cta_objetivo_valido", guard_name="cs_chat_proposta_publicacoes_cta_objetivo_check",
+        statements=_sw367_insert(cta_objetivo="'inventado'"),
+        permitted_msg="a publicacao got an unknown CTA objective",
+        rationale="The CTA objective mix is a metric: an unknown value is uncountable.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_publicacao_fontes_array", guard_name="cs_chat_proposta_publicacoes_fontes_check",
+        statements=_sw367_insert(fontes="'{}'::jsonb"),
+        permitted_msg="a publicacao got a non-array fontes",
+        rationale="fontes is a list of {url|afirmacao, verificada}: an object would break every reader.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_publicacao_valida_allowed", guard_name="cs_chat_proposta_publicacoes_hashtags_check", kind="write_allowed",
+        statements=_sw367_insert(),
+        permitted_msg="a valid publicacao (five hashtags, known objective) was stored, as it must",
+        rationale="The Diretor's reply is stored per option through exactly this shape.",
+    ),
+    _sw367_probe(
+        probe_id="sw367_fluxo_eventos_publicacao_allowed", guard_name="cs_fluxo_eventos_tipo_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, tipo) VALUES "
+                    "(v_org, v_marca, v_conv, 'opcoes_selecionadas'), (v_org, v_marca, v_conv, 'publicacao_gerada'), "
+                    "(v_org, v_marca, v_conv, 'publicacao_invalida'), (v_org, v_marca, v_conv, 'publicacao_falhou');"),
+        permitted_msg="the multi-select / publicacao event vocabulary was recorded, as it must",
+        rationale="Batch size, publicacao coverage and apply-failure rate are counted from these four tipos.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — social_wiring per-org daily generation limits (migration 361, geracao-contract.md §9.4.1). The
 # append-only change log `cs_limite_geracao_eventos` (who / old / new per limit change). Self-provisioning: each probe
 # builds its OWN org and one `limite_definido` row inside the rolled-back transaction.
@@ -14054,6 +14126,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_352_PROBES,
     *_SW_358_PROBES,
     *_SW_361_PROBES,
+    *_SW_367_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

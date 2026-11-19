@@ -56,7 +56,18 @@ from app.modules.media_creation.services.chat_contexto import (
     ReferenciaResolvida,
     eh_uuid,
 )
+from app.modules.media_creation.services.diretor_criacao import (
+    AGENT_KEY,
+    VIA_DIRETOR,
+    VIA_LEGADO,
+    DiretorCriacao,
+    DiretorIndisponivel,
+    TurnoDiretor,
+)
 from app.modules.media_creation.services.fluxo_service import FluxoService
+from app.modules.media_creation.services.propostas import EstruturaCitavel, codigos_citados
+from app.modules.media_creation.services.publicacao_service import PublicacaoService
+from app.modules.media_creation.services.publicacoes import extrair_publicacoes, vincular_publicacoes
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +95,9 @@ ERRO_ORCAMENTO = "orcamento_ia_excedido"
 ERRO_IA_INDISPONIVEL = "ia_indisponivel"
 ERRO_STREAM_EM_ANDAMENTO = "stream_em_andamento"
 ERRO_LIMITE = "limite_de_mensagens"
+ERRO_DIRETOR = "diretor_indisponivel"
+ESTRUTURAS = "cs_estruturas"
+MAX_CODIGOS_DO_DIRETOR = 40
 
 #: ``(messages, *, model, provider, org_id, outcome) -> AsyncIterator[str]`` -- DI seam; tests inject
 #: a fake that fills ``outcome`` (a ``StreamOutcome``) once drained.
@@ -232,6 +246,17 @@ class Envio:
     extrair: ExtrairFn = extrair_propostas_padrao
     modo_estrutura: str = "auto"
     resolucao_perfis: Optional[dict[str, Any]] = None
+    #: Which engine answers this turn: ``legado`` (the direct-model stream) or ``diretor`` (the agents product's Diretor de
+    #: Criação, per-org switch ``chat_diretor_criacao``). Exactly one per turn; a failing Diretor never falls back.
+    via: str = VIA_LEGADO
+
+
+async def _rodada_diretor(diretor: DiretorCriacao, turno: TurnoDiretor, outcome: StreamOutcome) -> AsyncIterator[str]:
+    """The Diretor's turn as the one-round stream ``ChatService.eventos`` already consumes: the (non-streaming) agents turn
+    runs when iteration starts -- AFTER the ``meta`` and ``status`` frames -- and its whole text is the single delta."""
+    resposta = await diretor.responder(turno)
+    outcome.truncated = False
+    yield resposta.texto
 
 
 class ChatService:
@@ -511,10 +536,25 @@ class ChatService:
 
     async def preparar_envio(
         self, conversa_id: str, conteudo: str, referencias: list[Any], stream_fn: ChatStreamFn,
-        extrair: ExtrairFn = extrair_propostas_padrao,
+        extrair: ExtrairFn = extrair_propostas_padrao, diretor: Optional[DiretorCriacao] = None,
     ) -> Envio:
+        """``diretor`` given = this org's turn is answered by the Diretor de Criação (the router decides, from the per-org
+        switch, and refuses a missing Diretor BEFORE this runs); ``stream_fn`` is then unused."""
         prep = await run_in_threadpool(self._preparar_sync, conversa_id, conteudo, referencias)
         conversa = prep["conversa"]
+        if diretor is not None:
+            outcome = StreamOutcome()
+            turno = TurnoDiretor(
+                org_id=self.org_id, marca_id=str(conversa["marca_id"]), conversa_id=str(conversa["id"]),
+                mensagem_id=prep["msg_id"], texto=conteudo,
+            )
+            return Envio(
+                conversa=conversa, mensagens=prep["historico"], sistema="", contexto=prep["montado"],
+                mensagem_usuario_id=prep["msg_id"], referencias=prep["refs"], stream_fn=stream_fn, primeira=None,
+                rodada=_rodada_diretor(diretor, turno, outcome), outcome=outcome, modelo=AGENT_KEY, extrair=extrair,
+                modo_estrutura=prep["montado"].modo_estrutura, via=VIA_DIRETOR,
+                resolucao_perfis=prep["montado"].resolucao.como_dict() if prep["montado"].resolucao is not None else None,
+            )
         modelo = settings.geracao_llm_model
         sistema = _sistema(prep["montado"])
         mensagens = build_conversation_messages(
@@ -573,6 +613,9 @@ class ChatService:
         message + propostas + Estrutura links + events in ONE transaction (``cs_chat_resposta_gravar``). Returns
         ``(mensagem_id, Proposta[])``. A text with no parsable headline is saved the plain way, ``propostas: []``."""
         mapa = mapa_citavel(envio.contexto)
+        if envio.via == VIA_DIRETOR:
+            # the Director's codes come from its tools (the platform-wide library), not from this context's pool
+            mapa = {**self._citaveis_por_codigo(texto), **mapa}
         try:
             resultado = envio.extrair(texto, mapa)
         except Exception:
@@ -603,12 +646,40 @@ class ChatService:
             mensagem_id = str(data["mensagem_id"])
             self._tocar_conversa(envio.conversa["id"])
             ids = [str(p["id"]) for p in sorted(data.get("propostas") or [], key=lambda x: x["ordem"])]
+            if envio.via == VIA_DIRETOR:
+                self._gravar_publicacoes(envio.conversa, mensagem_id, texto, propostas, data.get("propostas") or [])
             rows = [self.fluxo.get_proposta(i) for i in ids]
             return mensagem_id, self.fluxo.apresentar_propostas([r for r in rows if r])
         except Exception:
             # the user keeps the answer: save the text the plain way and say loudly that its propostas were lost
             logger.exception("chat: falha ao gravar a resposta com propostas conversa=%s", envio.conversa["id"])
             return self._salvar_resposta(envio, texto, "completa", truncada), []
+
+    def _citaveis_por_codigo(self, texto: str) -> dict[str, EstruturaCitavel]:
+        """``{codigo: EstruturaCitavel}`` for every ACTIVE library Estrutura the reply cites (at most
+        ``MAX_CODIGOS_DO_DIRETOR`` distinct codes; the rest stay unknown, so the parser rejects them, counted)."""
+        codigos = [int(c) for c in codigos_citados(texto) if c.isdigit()][:MAX_CODIGOS_DO_DIRETOR]
+        out: dict[str, EstruturaCitavel] = {}
+        for lote in batched(codigos):
+            rows = (
+                self.db.table(ESTRUTURAS).select("id,codigo,formato").in_("codigo", lote).eq("status", "ativa").execute().data or []
+            )
+            for r in rows:
+                out[str(r["codigo"])] = EstruturaCitavel(uuid.UUID(str(r["id"])), str(r["codigo"]), r.get("formato") or "")
+        return out
+
+    def _gravar_publicacoes(
+        self, conversa: dict[str, Any], mensagem_id: str, texto: str, propostas: list[Any], salvas: list[dict[str, Any]],
+    ) -> None:
+        """The Publicação blocks of a Director reply, bound to the saved options. The answer is already saved: a failure here is
+        logged loudly and costs the blocks (the card's caption then comes from the finalizer), never the answer."""
+        try:
+            lidas = extrair_publicacoes(texto)
+            PublicacaoService(self.db, self.org_id, self.user_id).gravar(
+                conversa, mensagem_id, salvas, vincular_publicacoes(propostas, lidas), lidas.invalidas,
+            )
+        except Exception:
+            logger.exception("chat: falha ao gravar as publicações conversa=%s", conversa["id"])
 
     @staticmethod
     def _eventos_do_parser(eventos: Any) -> list[dict[str, Any]]:
@@ -643,8 +714,12 @@ class ChatService:
                 "contexto_chars": envio.contexto.chars,
                 "codigos_permitidos": codigos_para_meta(envio.contexto),
                 "modo_estrutura": envio.modo_estrutura,
+                "via": envio.via,
                 "resolucao_perfis": envio.resolucao_perfis or RESOLUCAO_VAZIA,
             }})
+            if envio.via == VIA_DIRETOR:
+                # the agents turn does not stream yet (contract 4): tell the screen the Director is working
+                yield sse_event({"status": {"codigo": "diretor_trabalhando", "mensagem": "O Diretor de Criação está preparando as opções..."}})
             if envio.primeira is not None:
                 partes.append(envio.primeira)
                 yield sse_event({"delta": envio.primeira})
@@ -681,6 +756,9 @@ class ChatService:
                 org_id, conversa["id"], len("".join(partes)), continuacoes, truncada,
                 int((time.monotonic() - inicio) * 1000),
             )
+        except DiretorIndisponivel as exc:
+            logger.warning("chat: diretor indisponível org=%s codigo=%s", org_id, exc.codigo)
+            yield await falha(ERRO_DIRETOR, "O Diretor de Criação não respondeu. Tente novamente em instantes.")
         except LLMNotConfigured:
             logger.warning("chat: IA não configurada mid-stream org=%s", org_id)
             yield await falha(ERRO_IA_NAO_CONFIGURADA, "A IA não está configurada (chave da Anthropic ausente).")
