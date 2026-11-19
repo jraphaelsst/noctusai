@@ -103,6 +103,8 @@
     "357_cs_post_publicacoes_alvo_nulls_not_distinct.sql": "fb29c0b48360e5d4306f401de35844ba26969cd7042818bd387f2b716e176b47",
     "358_cs_roteiro_primeiro.sql": "cda94459ece88f991561128c12f7cf4bfdfc4e09e584f8034c6b433bf58215bf",
     "359_julia_horario_atendimento.sql": "59f52fcfaac60efdaafd8520acdb0417b7265fcb6a98577af070d20bf085d083",
-    "360_cs_fluxo_saga.sql": "058412ebb1fddf4ecd9ebbdeaac1ad155cbd9d0c29c917dbbeffaa93b791e42b"
+    "360_cs_fluxo_saga.sql": "058412ebb1fddf4ecd9ebbdeaac1ad155cbd9d0c29c917dbbeffaa93b791e42b",
+    "361_cs_limites_geracao.sql": "bfd5655e5e494a7c78196794d38d2e4144bf7c510503c52d39e15b2898cb5142",
+    "367_cs_chat_proposta_publicacoes.sql": "9c27b96b2de5a79fb40b758f722258e5413fce8dcfe67dbaea6f0ca82209640e"
   }
 }

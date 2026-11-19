@@ -1020,7 +1020,18 @@ class TestEvalsRunToken:
         ov[get_eval_store_dep] = lambda: store
         ov[get_eval_scheduler_dep] = lambda: scheduled.append
         ov[get_current_hash_dep] = lambda: (lambda org, agent, version: "h" * 64)
-        return plat, store, scheduled
+        # The turn preflight reads the PROCESS-GLOBAL eval driver, which app.main installs as the LIVE one at import (its store is the
+        # production factory: an empty Fake here, so julia is "not found"). These tests judge run BOOKING (scope, caps, ceiling), so
+        # they own the driver: a scripted one (no preflight -> checar_turno is a documented no-op) instead of whatever the import
+        # order left. The live preflight's refusal is covered in tests/studio/ke/test_studio_eval_loops_driver_router.py.
+        from app.studio import eval_driver
+
+        saved = eval_driver._driver_factory
+        eval_driver.configure_eval_turn_driver(lambda: eval_driver.FakeEvalTurnDriver([]))
+        try:
+            yield plat, store, scheduled
+        finally:
+            eval_driver.configure_eval_turn_driver(saved)
 
     def test_unauthenticated_is_strict_401(self, plat):
         assert plat.raw.get(self.RUNS).status_code == 401
