@@ -14,7 +14,7 @@ from app.modules.media_creation import esteira_config as cfg
 
 _BACKEND = Path(__file__).resolve().parents[3]
 SQL = migration_path(_BACKEND, "cs_esteira").read_text(encoding="utf-8")
-SQL_PAPEL_AGENDADO = migration_path(_BACKEND, "cs_esteira_papel_agendado").read_text(encoding="utf-8")
+SQL_PAPEL = migration_path(_BACKEND, "cs_criacao_posts").read_text(encoding="utf-8")  # the latest widening of the CHECK
 _BEGIN = "-- BEGIN GENERATED card_hub(post)\n"
 _END = "\n-- END GENERATED"
 
@@ -39,16 +39,19 @@ class TestGeneratedCardHub:
 
 
 class TestPipeline:
-    def test_seven_default_stages_with_unique_roles(self):
+    def test_eight_default_stages_with_unique_roles(self):
         slugs = [s.slug for s in cfg.ESTEIRA_PADRAO]
-        assert slugs == ["ideacao", "headline_roteiro", "gravacao", "edicao", "pronto", "postado", "bloqueado_cancelado"]
+        assert slugs == ["ideacao", "headline_roteiro", "criacao", "edicao", "aprovacao_final", "pronto", "postado",
+                         "bloqueado_cancelado"]
         roles = [s.papel for s in cfg.ESTEIRA_PADRAO if s.papel]
-        # `agendado` is a declared role with no default stage yet (S4 owns the stage and the move into it)
-        assert sorted(roles) == sorted(set(cfg.PIPELINE_ESTEIRA.stage_roles) - {"agendado"}) and len(set(roles)) == 3
+        # `agendado` has no default stage yet; `gravacao` is the one-release alias of `criacao` (no default stage)
+        assert sorted(roles) == sorted(set(cfg.PIPELINE_ESTEIRA.stage_roles) - {"agendado", "gravacao"})
+        assert len(set(roles)) == len(roles) == 7
+        assert cfg.ROLE_GRAVACAO == "gravacao" and cfg.ROLE_CRIACAO == "criacao"
 
     def test_api_roles_match_the_widened_papel_check(self):
-        # the CHECK as the LATEST migration leaves it (348 widened 241's for `agendado`)
-        check = re.search(r"pipeline_stages_papel_check\s+CHECK \(papel IN \(([^)]*)\)\)", SQL_PAPEL_AGENDADO)
+        # the CHECK as the LATEST migration leaves it (362 widened 348's for the criação roles)
+        check = re.search(r"pipeline_stages_papel_check\s+CHECK \(papel IN \(([^)]*)\)\)", SQL_PAPEL)
         assert check is not None
         assert set(re.findall(r"'([a-z_]+)'", check.group(1))) >= set(cfg.PIPELINE_ESTEIRA.stage_roles)
 
