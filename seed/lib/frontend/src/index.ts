@@ -256,6 +256,20 @@ export type {
   RealtimeEventName,
   UseRealtimeStreamOptions,
 } from './realtime';
+export {
+  usePipelineStream,
+  applyPipelineEvent,
+  PIPELINE_CARD_MOVED_EVENT,
+  PIPELINE_CARD_STATE_EVENT,
+  PIPELINE_STREAM_FALLBACK_MS,
+  PIPELINE_STREAM_POLL_MS,
+} from './pipeline-stream';
+export type {
+  PipelineCardMoved,
+  PipelineCardState,
+  PipelineStreamAccessors,
+  UsePipelineStreamOptions,
+} from './pipeline-stream';
 export { readSseStream } from './realtime/readSseStream';
 export type { ReadSseStreamOptions } from './realtime/readSseStream';
 export { lazyWithReload } from "./lazyWithReload";

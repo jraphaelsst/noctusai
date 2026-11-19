@@ -40,6 +40,16 @@ from .config import (
 )
 from .defaults import StageDefault, ensure_default_stages
 from .moves import move_card, resolve_initial_stage
+from .stream import (
+    CARD_MOVED_EVENT,
+    CARD_STATE_EVENT,
+    PipelinePublisher,
+    create_pipeline_stream_router,
+    make_pipeline_publisher,
+    pipeline_scope,
+    publish_card_moved,
+    publish_card_state,
+)
 from .ordering import (
     POSITION_FIELD,
     position_for_drop,
@@ -74,6 +84,14 @@ from .stages import (
 )
 
 __all__ = [
+    "CARD_MOVED_EVENT",
+    "CARD_STATE_EVENT",
+    "PipelinePublisher",
+    "create_pipeline_stream_router",
+    "make_pipeline_publisher",
+    "pipeline_scope",
+    "publish_card_moved",
+    "publish_card_state",
     "CANONICAL_CRM_ROLES",
     "KNOWN_CRM_ROLES",
     "MARKET_PRESETS",
