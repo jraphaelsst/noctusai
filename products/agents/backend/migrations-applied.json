@@ -65,6 +65,7 @@
     "085_contatos_permitidos.sql": "6dafb45980fa4746b0eaa5335d2c0403245306b2a20bca60bbd28450d2e29700",
     "086_eval_loop_config.sql": "c5f8b6c4db3bc83e8b9146b7f3444bd03800023549133745bbb10d61158f6faf",
     "087_eval_um_por_usuario.sql": "bf3e98728d6b3d5159db04fc550a48954a8d1f40abe6038da55e33ea5c1c72c3",
-    "088_eval_erro_e_loop_driver.sql": "526c3caf32f38a142bfc196e9fe8f9747d4169ffc9ca509efb8bdc4df75a5b4c"
+    "088_eval_erro_e_loop_driver.sql": "526c3caf32f38a142bfc196e9fe8f9747d4169ffc9ca509efb8bdc4df75a5b4c",
+    "089_onboarding_sessoes.sql": "63d1527f34ba7f61d72b06404fbbe3e6f7875d96386fbdbceda52f11dcd999e0"
   }
 }
