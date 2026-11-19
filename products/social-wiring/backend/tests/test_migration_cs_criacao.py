@@ -102,6 +102,14 @@ BEGIN
 END $$;
 """
 
+def tl001(call: str) -> str:
+    """``call`` must be refused by the transition-log guard (custom SQLSTATE TL001, not a named condition)."""
+    return (
+        f"BEGIN {call}; RAISE EXCEPTION 'no refusal (expected TL001)'; "
+        "EXCEPTION WHEN OTHERS THEN IF SQLSTATE <> 'TL001' THEN RAISE; END IF; END;"
+    )
+
+
 PASSO = "cs_criacao_passo_registrar(o, p, 1, '{passo}', '{status}', '{dados}'::jsonb)"
 
 
@@ -252,8 +260,8 @@ SCENARIOS: dict[str, str] = {
           + expect("(from_state, to_state, actor_id::text)::text FROM cs_criacao_cota_events WHERE org_id = o AND seq = 2",
                    "(1500,4000,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
           + expect("round(((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric, 2)", "40.00", "state read in dollars")
-          + sqlstate("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o", "SQLSTATE 'TL001'")
-          + sqlstate("DELETE FROM cs_criacao_cota_events WHERE org_id = o", "SQLSTATE 'TL001'")
+          + tl001("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o")
+          + tl001("DELETE FROM cs_criacao_cota_events WHERE org_id = o")
           + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_cents = -1 WHERE org_id = o", "check_violation"),
     "M-E: month-to-date spend sums the ledger (failed steps spent too) and counts the steps with no measured cost": (
         passo("tts", "em_andamento")
