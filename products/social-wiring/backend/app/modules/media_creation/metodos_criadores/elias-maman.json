@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "slug": "elias-maman",
+  "criador": {
+    "handle": "@elias.maman",
+    "nome": "Elias Maman",
+    "area": "Comportamento, educação e atualidades",
+    "seguidores": null,
+    "publico": "Pais e público geral; tom de alerta, ritmo acelerado."
+  },
+  "fonte": {
+    "data_leitura": "2026-11-18",
+    "amostra": "105 estruturas de reels catalogadas no CoreStudio (perfil elias.maman) e 100 reels com plays, likes e comentários.",
+    "limites": "Estruturas lidas pelo classificador do CoreStudio; posições de CTA são medianas, não regra.",
+    "copia": "Copiar a FORMA (ordem dos blocos, tipo de abertura, posição dos CTAs), nunca as palavras. Esqueletos de headline são lacunas, não frases dele. Descartar famílias de política, religião, futebol e alarmismo."
+  },
+  "resumo": "Espinha fixa de 9 blocos: headline sozinha + intensificador do mistério, fato com fonte, opinião polêmica, identificação, apresentação magnética e CTAs em posições medidas.",
+  "stats": [
+    {"valor": "105", "rotulo": "estruturas catalogadas"},
+    {"valor": "100", "rotulo": "reels com métricas"},
+    {"valor": "88/105", "rotulo": "abrem com headline + intensificador"},
+    {"valor": "~470", "rotulo": "palavras por reel (mediana)"}
+  ],
+  "curva": {
+    "nome": "Tensão → fonte → posição",
+    "descricao": "Abre uma tensão, segura a resposta, entrega um fato verificável e toma posição contra o senso comum.",
+    "etapas": [
+      {"nome": "Tensão", "texto": "Headline que nega o óbvio ou promete um nome ou motivo escondido."},
+      {"nome": "Mistério", "texto": "Aumenta a tensão sem dar a resposta."},
+      {"nome": "Fonte", "texto": "Fato, conceito ou história verificável."},
+      {"nome": "Posição", "texto": "Opinião polêmica marcada como do criador, depois identificação e CTA."}
+    ]
+  },
+  "ritmo": {"duracao_s": [50, 180], "palavras_por_segundo": 2.7, "pessoa": "você", "historia_propria": true, "apresentacao": "fixa perto do fim (mediana 0,90)"},
+  "moldes": [
+    {"n": 1, "slug": "espinha-9-blocos", "titulo": "A espinha de 9 blocos",
+     "frequencia": "estrutura dominante nas 105",
+     "duracao_s": [50, 85], "palavras": [140, 230],
+     "etapas": [
+       {"tempo": "0–3 s", "bloco": "Headline", "texto": "12 a 40 palavras; abre uma tensão; muitas vezes termina numa âncora de autoridade (autor + ano)."},
+       {"tempo": "3–8 s", "bloco": "Intensificador do Mistério", "texto": "Aumenta a tensão sem entregar a resposta."},
+       {"tempo": "~0,10", "bloco": "CTA", "texto": "CTA cedo, tipo escolhido pelo objetivo do post (mediana medida do CTA Salvar: 0,10)."},
+       {"tempo": "8–15 s", "bloco": "Fatos Curiosos", "texto": "O conceito com fonte, em linguagem de todo dia (variação: Histórias Magnéticas)."},
+       {"tempo": "8–12 s", "bloco": "Opinião Polêmica", "texto": "A leitura do criador, marcada como dele, contra o senso comum."},
+       {"tempo": "~0,67", "bloco": "CTA", "texto": "CTA do meio, tipo escolhido pelo objetivo do post (mediana medida do CTA Compartilhar: 0,67)."},
+       {"tempo": "10–15 s", "bloco": "Pontos de Identificação", "texto": "Cenas concretas em que o espectador se reconhece (variação: Provas e Argumentações ou Valor Prático)."},
+       {"tempo": "~0,90", "bloco": "Apresentação Magnética", "texto": "Quem é + para quem trabalha + autoridade."},
+       {"tempo": "Fim", "bloco": "CTA", "texto": "CTA final, tipo escolhido pelo objetivo do post (Comentar e Seguir medidos em 1,0)."}
+     ],
+     "por_que_funciona": ["Headline sozinha seguida do intensificador em 88 das 105 estruturas.", "Trincas mais comuns: Fatos Curiosos → Provas → Opinião Polêmica; Provas → Opinião Polêmica → CTA Compartilhar."]}
+  ],
+  "familias_headline": [
+    {"nome": "Não é pelo motivo óbvio", "esqueleto": "[X] não fez [Y] por [razão óbvia], e sim por um motivo que poucos perceberam."},
+    {"nome": "Faz algo pior", "esqueleto": "[Fenômeno] não está [efeito óbvio]; está fazendo algo pior."},
+    {"nome": "Tem um nome para isso", "esqueleto": "[Área] tem um nome para [experiência que o público vive]."},
+    {"nome": "Mentiram pra você", "esqueleto": "Uma das maiores mentiras que te contaram sobre [X]."},
+    {"nome": "Toda pessoa que… deveria saber N coisas", "esqueleto": "Todo [perfil] deveria saber [N] coisas sobre [tema]."},
+    {"nome": "Se você já…", "esqueleto": "Se você já [situação], [virada]."},
+    {"nome": "Ninguém pergunta X, só Y", "esqueleto": "Ninguém [reage] quando [A]; só quando [B]."},
+    {"nome": "Um estudo / uma pesquisadora…", "esqueleto": "Em [ano], [pesquisa real] mediu [X]; o resultado surpreende."},
+    {"nome": "Não é por acaso que…", "esqueleto": "Não é por acaso que [comportamento]. E não tem a ver com [razão óbvia]."},
+    {"nome": "Aos [idade], você deveria…", "esqueleto": "Depois dos [idade], tem [N] coisas que [área] costuma mostrar."}
+  ],
+  "regras": {
+    "pode": ["A ordem dos blocos e o tipo de abertura.", "As posições medidas dos CTAs, como referência.", "Os esqueletos de headline, com conteúdo inteiramente próprio."],
+    "nao": ["Qualquer frase dele.", "Famílias de política, religião, futebol, celebridade e alarmismo.", "CTA comercial com palavra-chave de venda, quando o cliente não vende no reel.", "Fonte genérica (\"os cientistas descobriram\")."]
+  },
+  "checklist": [
+    "Os blocos estão na ordem da espinha, cada um rotulado?",
+    "Headline com 12 a 40 palavras, sem saudação antes, com tensão que o bloco de fato ou opinião resolve?",
+    "O intensificador não entrega a resposta?",
+    "Objetivo do post declarado e CTAs que servem a ele, cada um com motivo ou destinatário?",
+    "Fonte real, nomeada e verificável; opinião marcada como do criador?"
+  ]
+}

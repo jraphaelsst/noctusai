@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "slug": "alba-valeria",
+  "criador": {
+    "handle": "@alba_valeria_mentorias",
+    "nome": "Alba Valéria",
+    "area": "Psicanálise",
+    "seguidores": "333 mil",
+    "publico": "Adultos que vivem relações de casal, família e filhos crescidos."
+  },
+  "fonte": {
+    "data_leitura": "2026-11-19",
+    "amostra": "224 reels lidos na grade; os 30 com mais views transcritos só para análise de estrutura (áudios apagados em seguida).",
+    "limites": "Views não dizem quantos seguidores cada reel trouxe. Tema, molde e ideia de cada reel são leitura nossa; um reel pode ter traços de mais de um molde, vale o principal.",
+    "copia": "Copiar a FORMA (etapas, curva, ritmo, fechamento). Nunca frases, listas, exemplos ou fechamentos dela, nem a ordem de exemplos de um reel específico. Transcrições não entram neste arquivo."
+  },
+  "resumo": "Psicanalista que fala sempre com 'você', sem contar história própria, e termina dando permissão a quem assiste. Acerta cerca de 1 em cada 8 reels; o que sustenta o perfil é o volume (quase um reel por dia).",
+  "stats": [
+    {"valor": "224", "rotulo": "reels lidos na grade"},
+    {"valor": "22,5 mil", "rotulo": "mediana de views"},
+    {"valor": "28", "rotulo": "acima de 100 mil (13%)"},
+    {"valor": "73 s", "rotulo": "duração mediana dos 30 maiores"}
+  ],
+  "curva": {
+    "nome": "Culpa → alívio",
+    "descricao": "Quase todos os 30 maiores seguem a mesma sequência emocional. Emoção final: alívio.",
+    "etapas": [
+      {"nome": "Peso", "texto": "Nomeia uma culpa ou dúvida que a pessoa carrega sem dizer."},
+      {"nome": "Cena", "texto": "Dá 2 a 5 exemplos do dia a dia, bem concretos (objeto, horário, frase que se ouve)."},
+      {"nome": "Distinção", "texto": "Separa duas coisas que parecem iguais (amar e pagar a conta)."},
+      {"nome": "Permissão", "texto": "Fecha com uma frase curta que libera a pessoa."}
+    ]
+  },
+  "ritmo": {"duracao_s": [50, 100], "palavras_por_segundo": 3.0, "pessoa": "você", "historia_propria": false, "apresentacao": "opcional"},
+  "moldes": [
+    {"n": 1, "slug": "distincao-que-alivia", "titulo": "A distinção que alivia",
+     "frequencia": "10 dos 30 · até 694 mil · 5 deles sobre filho adulto",
+     "duracao_s": [60, 100], "palavras": [150, 230],
+     "etapas": [
+       {"tempo": "0–5 s", "bloco": "Headline", "texto": "Abre separando duas coisas: \"Existe uma diferença entre [X] e [Y]\" ou \"[X] não significa [Y]\"."},
+       {"tempo": "5–25 s", "bloco": "Pontos de Identificação", "texto": "Mostra o lado legítimo: o que é natural sentir ou fazer."},
+       {"tempo": "25–60 s", "bloco": "Provas e Argumentações", "texto": "Mostra o lado que passa do ponto, com 3 a 5 exemplos concretos."},
+       {"tempo": "60–80 s", "bloco": "Contraste", "texto": "Diz a distinção de novo, agora como regra simples."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "Frase-síntese que dá permissão."}
+     ],
+     "por_que_funciona": ["Tira a culpa sem tirar o amor: não precisa escolher entre amar e pôr limite.", "É o molde com mais reels acima de 400 mil no tema pais e filhos adultos."]},
+    {"n": 2, "slug": "nao-e-o-que-voce-teme", "titulo": "Não é o que você teme, é outra coisa",
+     "frequencia": "5 dos 30 · até 1,4 mi",
+     "duracao_s": [50, 100], "palavras": [140, 220],
+     "etapas": [
+       {"tempo": "0–5 s", "bloco": "Headline", "texto": "Nega o medo da pessoa: \"Nem sempre é [o que você teme]\" ou \"Sabe por que [isso acontece]?\"."},
+       {"tempo": "5–40 s", "bloco": "Pontos de Identificação", "texto": "Descreve a situação com detalhes que a pessoa reconhece da própria casa."},
+       {"tempo": "40–70 s", "bloco": "Revelação", "texto": "Dá a explicação verdadeira, que alivia."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "Uma frase que reorganiza a cena: \"ainda assim é amor\"."}
+     ],
+     "por_que_funciona": ["A pessoa entra com medo de ser a culpada e sai com outra leitura da própria vida.", "É o tipo de vídeo que se manda para o marido, o filho ou a amiga."]},
+    {"n": 3, "slug": "mesma-cena-duas-leituras", "titulo": "A mesma cena, duas leituras",
+     "frequencia": "2 dos 30 · até 745 mil",
+     "duracao_s": [45, 60], "palavras": [120, 170],
+     "etapas": [
+       {"tempo": "0–30 s", "bloco": "Pontos de Identificação", "texto": "Descreve uma rotina em detalhes de objeto e horário (a xícara na pia, a casa quieta)."},
+       {"tempo": "30–45 s", "bloco": "Contraste", "texto": "Vira a chave: essa mesma cena pode ser triste ou maravilhosa."},
+       {"tempo": "45–55 s", "bloco": "Revelação", "texto": "Lista o que a cena pode ser: silêncio, autonomia, descanso."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "O que importa não é a cena, é como você se sente nela."}
+     ],
+     "por_que_funciona": ["Começa com imagens que todo mundo tem em casa; a pessoa se vê antes de saber o tema.", "A virada na metade segura quem estava achando que era um vídeo triste."]},
+    {"n": 4, "slug": "contra-a-frase-que-todo-mundo-repete", "titulo": "Contra a frase que todo mundo repete",
+     "frequencia": "3 dos 30 · até 936 mil",
+     "duracao_s": [60, 90], "palavras": [140, 210],
+     "etapas": [
+       {"tempo": "0–5 s", "bloco": "Headline", "texto": "Vira um ditado conhecido do avesso logo na primeira frase."},
+       {"tempo": "5–20 s", "bloco": "Pontos de Identificação", "texto": "Cita o ditado como as pessoas falam."},
+       {"tempo": "20–60 s", "bloco": "Provas e Argumentações", "texto": "Mostra o que o ditado esconde, com exemplos práticos."},
+       {"tempo": "Fim", "bloco": "Pergunta Reflexiva", "texto": "Devolve uma pergunta: \"antes de dizer [ditado], pergunte-se...\"."}
+     ],
+     "por_que_funciona": ["A primeira frase estranha o que todo mundo acha óbvio; isso segura os primeiros segundos.", "Funciona melhor quando o ditado é de mãe."]},
+    {"n": 5, "slug": "tres-coisas-ou-sinais", "titulo": "Três coisas / sinais",
+     "frequencia": "3 dos 30 · até 1,2 mi",
+     "duracao_s": [15, 60], "palavras": [50, 160],
+     "etapas": [
+       {"tempo": "0–3 s", "bloco": "Headline", "texto": "Promete uma lista curta: \"Três coisas que, quando você entende...\"."},
+       {"tempo": "3–50 s", "bloco": "Valor Prático", "texto": "Um item por frase, numerado, cada um com no máximo um exemplo."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "Uma frase que junta tudo, ou uma pergunta direta."}
+     ],
+     "por_que_funciona": ["Cabe em 15 a 60 segundos; o de 16 segundos dela passou de 1 milhão.", "A pessoa salva para rever, e salvar ajuda o alcance."]},
+    {"n": 6, "slug": "pergunta-espelho-curta", "titulo": "Pergunta-espelho curta",
+     "frequencia": "3 dos 30 · até 168 mil",
+     "duracao_s": [8, 20], "palavras": [15, 55],
+     "etapas": [
+       {"tempo": "0–15 s", "bloco": "Pergunta Reflexiva", "texto": "Uma pergunta só, ou uma série curta de perguntas, que a pessoa responde para si."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "Silêncio ou uma frase de 3 palavras."}
+     ],
+     "por_que_funciona": ["Barato de gravar: mantém a frequência entre vídeos maiores.", "Gera comentário, porque a pessoa quer responder."]},
+    {"n": 7, "slug": "frase-de-autor-e-leitura", "titulo": "Frase de autor + leitura",
+     "frequencia": "2 dos 30 · até 129 mil",
+     "duracao_s": [60, 100], "palavras": [160, 230],
+     "etapas": [
+       {"tempo": "0–8 s", "bloco": "Headline", "texto": "Lê a frase do autor."},
+       {"tempo": "8–20 s", "bloco": "Fatos Curiosos", "texto": "Diz quem é e de que fala a frase."},
+       {"tempo": "20–80 s", "bloco": "Pontos de Identificação", "texto": "Traduz a frase em imagem do dia a dia."},
+       {"tempo": "Fim", "bloco": "Encerramento", "texto": "O que a frase muda na vida de quem assiste."}
+     ],
+     "por_que_funciona": ["Dá autoridade sem precisar falar de si.", "Rendeu menos que os outros moldes nos 30 dela: usar como variação, não como base."]}
+  ],
+  "familias_headline": [],
+  "regras": {
+    "pode": ["A estrutura em etapas de cada molde.", "A curva culpa → alívio e o fechamento com frase-síntese.", "O ritmo: 50 a 100 segundos, cerca de 3 palavras por segundo.", "Os temas, contados do jeito e com os casos de quem usa o método."],
+    "nao": ["Frases, listas, exemplos e fechamentos dela.", "A mesma ordem de exemplos de um reel específico.", "Trends musicais (o reel em inglês com música): é trend, não molde.", "O ângulo do filho contra os pais sem cuidado, quando o público são as mães."]
+  },
+  "checklist": [
+    "A primeira frase nomeia um peso que o público reconhece em 2 segundos?",
+    "Tem pelo menos 2 exemplos concretos do dia a dia (objeto, horário, frase que se ouve)?",
+    "A distinção cabe numa frase só?",
+    "A última frase funciona sozinha, como print?",
+    "No fim, quem assiste se sente mais leve ou mais pesada?"
+  ]
+}
