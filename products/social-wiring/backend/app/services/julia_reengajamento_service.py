@@ -5,9 +5,9 @@ queue cancel, so every job re-reads the contato at fire time and completes as `o
 moved (an inbound, `encerrar`, a pause or a handoff all bump it):
 
   julia_reengajar_minutos   any hour; only for a lead who interacted and then stopped
-  julia_reengajar_horas     only 08:00-19:59 Sao Paulo (outside: RescheduleLater to 08:00); ALSO covers a
+  julia_reengajar_horas     only inside the org's business hours (default 08:00-19:59 Sao Paulo; outside: RescheduleLater to the next opening); ALSO covers a
                            lead who never replied
-  julia_regua_tentativa     one attempt of a regua, only 08:00-19:59 Sao Paulo like the hours tier (Lais' regua
+  julia_regua_tentativa     one attempt of a regua, only inside the org's business hours like the hours tier (Lais' regua
                            card: "Das 8h as 20h"); the regua starts after the LAST enabled default tier
                            (no default tier => straight after the outbound); the next attempt is enqueued
                            when this one fires; after the last attempt the cold-lead hook runs
@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import inspect
 import logging
-from datetime import datetime, timedelta, timezone
+import re
+from dataclasses import dataclass
+from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -69,26 +71,121 @@ CONFIG_PADRAO: dict[str, Any] = {
     "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4,
     #: Lais study S1: Julia opens the conversation with a new portal (OLX / ImovelWeb) lead. Off until the owner enables it.
     "portal_primeiro_contato_ativo": False,
+    #: Per-org business hours (migration 359; the defaults are the former fixed 08-20 h, every day) and the portal opener's own
+    #: text (None = the org's `mensagem_inicial`).
+    "horario_abertura": "08:00", "horario_fechamento": "20:00", "dias_atendimento": [1, 2, 3, 4, 5, 6, 7],
+    "portal_primeiro_contato_texto": None,
 }
+CHAVES_HORARIO = ("horario_abertura", "horario_fechamento", "dias_atendimento")
+PORTAL_TEXTO_MAX = 1024
+#: Placeholders the opener understands (filled by `julia_agente_service.mensagem_inicial_pronta`); anything else would go out literally.
+PORTAL_TEXTO_TOKENS = ("{link}", "{agente}", "{empresa}")
 
 
 def _now(agora: Optional[datetime] = None) -> datetime:
     return agora or datetime.now(timezone.utc)
 
 
-# ── business hours (hours tier) ─────────────────────────────────────────────
-def dentro_do_horario(agora: datetime) -> bool:
-    """True inside 08:00-19:59 America/Sao_Paulo."""
-    return HORA_ABERTURA <= agora.astimezone(FUSO).hour < HORA_FECHAMENTO
+# ── business hours (per org) ────────────────────────────────────────────────
+@dataclass(frozen=True)
+class Horario:
+    """An org's business window in America/Sao_Paulo: `abertura <= local time < fechamento` on the ISO weekdays in `dias`."""
+    abertura: dtime = dtime(HORA_ABERTURA, 0)
+    fechamento: dtime = dtime(HORA_FECHAMENTO, 0)
+    dias: frozenset[int] = frozenset(range(1, 8))
 
 
-def segundos_ate_abertura(agora: datetime) -> float:
-    """Seconds until the next 08:00 Sao Paulo (today when it is still before 08:00, else tomorrow)."""
+HORARIO_PADRAO = Horario()
+
+
+def _hhmm(valor: Any) -> dtime:
+    """`'08:00'` / `'08:00:00'` / `time` -> `time`. Anything else raises `ValueError` (never a silent default)."""
+    if isinstance(valor, dtime):
+        return valor.replace(second=0, microsecond=0, tzinfo=None)
+    texto = str(valor or "").strip()
+    try:
+        t = dtime.fromisoformat(texto)
+    except ValueError as exc:
+        raise ValueError(f"horário inválido: {valor!r}") from exc
+    return t.replace(second=0, microsecond=0, tzinfo=None)
+
+
+def _fmt(t: dtime) -> str:
+    return t.strftime("%H:%M")
+
+
+def horario_da_config(cfg: dict[str, Any]) -> Horario:
+    """The `Horario` of a config dict (`obter_config` output / a row). Raises when the stored values are unreadable."""
+    return Horario(_hhmm(cfg["horario_abertura"]), _hhmm(cfg["horario_fechamento"]), frozenset(int(d) for d in cfg["dias_atendimento"]))
+
+
+def horario_da_org(db: Any, org_id: UUID | str) -> Horario:
+    return horario_da_config(obter_config(db, org_id))
+
+
+def dentro_do_horario(agora: datetime, horario: Horario = HORARIO_PADRAO) -> bool:
+    """True inside the org's window (default 08:00-19:59, every day) in America/Sao_Paulo."""
     local = agora.astimezone(FUSO)
-    abre = local.replace(hour=HORA_ABERTURA, minute=0, second=0, microsecond=0)
-    if local >= abre:
-        abre += timedelta(days=1)
-    return max(1.0, (abre - local).total_seconds())
+    return local.isoweekday() in horario.dias and horario.abertura <= local.time().replace(tzinfo=None) < horario.fechamento
+
+
+def proxima_abertura(agora: datetime, horario: Horario = HORARIO_PADRAO) -> datetime:
+    """The first opening strictly after `agora` on a served weekday (closed weekdays skipped)."""
+    local = agora.astimezone(FUSO)
+    for adiante in range(0, 9):
+        dia = local.date() + timedelta(days=adiante)
+        if dia.isoweekday() not in horario.dias:
+            continue
+        abre = datetime.combine(dia, horario.abertura, tzinfo=FUSO)
+        if abre > local:
+            return abre
+    raise ValueError("horário sem nenhum dia de atendimento")
+
+
+def segundos_ate_abertura(agora: datetime, horario: Horario = HORARIO_PADRAO) -> float:
+    """Seconds until the next opening (today when still before it on a served day, else the next served day)."""
+    return max(1.0, (proxima_abertura(agora, horario) - agora.astimezone(FUSO)).total_seconds())
+
+
+def validar_horario(abertura: Any, fechamento: Any, dias: Any) -> Horario:
+    """pt-BR 422 on a bad window: unreadable time, opening not before closing (no window across midnight), bad weekdays."""
+    try:
+        a, f = _hhmm(abertura), _hhmm(fechamento)
+    except ValueError as exc:
+        raise AppException("horario_invalido", "Informe os horários no formato HH:MM.", status_code=422) from exc
+    if a >= f:
+        raise AppException(
+            "horario_invalido",
+            "A abertura precisa ser antes do fechamento no mesmo dia (horário que passa da meia-noite não é suportado).",
+            status_code=422,
+        )
+    if not isinstance(dias, (list, tuple, set, frozenset)) or not dias or not all(
+        isinstance(d, int) and not isinstance(d, bool) and 1 <= d <= 7 for d in dias
+    ):
+        raise AppException("dias_invalidos", "Escolha ao menos um dia da semana (1 = segunda a 7 = domingo).", status_code=422)
+    return Horario(a, f, frozenset(dias))
+
+
+def validar_portal_texto(texto: Any) -> Optional[str]:
+    """The portal opener text: blank = None (fall back to the org's `mensagem_inicial`). Else it must carry `{link}` (the LGPD
+    disclosure is not optional), fit `PORTAL_TEXTO_MAX` and use only the known placeholders."""
+    if texto is None or not str(texto).strip():
+        return None
+    t = str(texto).strip()
+    if "{link}" not in t:
+        raise AppException(
+            "portal_texto_sem_link",
+            "A mensagem do primeiro contato precisa conter {link}: é o link do aviso de privacidade (LGPD).", status_code=422,
+        )
+    if len(t) > PORTAL_TEXTO_MAX:
+        raise AppException("portal_texto_longo", f"A mensagem pode ter no máximo {PORTAL_TEXTO_MAX} caracteres.", status_code=422)
+    desconhecidos = sorted({m for m in re.findall(r"\{[^{}]*\}", t) if m not in PORTAL_TEXTO_TOKENS})
+    if desconhecidos:
+        raise AppException(
+            "portal_texto_marcador_invalido",
+            f"Marcador não reconhecido: {', '.join(desconhecidos)}. Use apenas {', '.join(PORTAL_TEXTO_TOKENS)}.", status_code=422,
+        )
+    return t
 
 
 _UNIDADE_TIMEDELTA = {"minutos": "minutes", "horas": "hours", "dias": "days"}
@@ -99,18 +196,45 @@ def _delta(valor: int, unidade: str) -> timedelta:
 
 
 # ── config ──────────────────────────────────────────────────────────────────
+def _normalizar(row: dict[str, Any]) -> dict[str, Any]:
+    out = {k: row.get(k, v) for k, v in CONFIG_PADRAO.items()}
+    for k in ("horario_abertura", "horario_fechamento"):
+        out[k] = _fmt(_hhmm(out[k]))
+    out["dias_atendimento"] = sorted(int(d) for d in out["dias_atendimento"])
+    return out
+
+
 def obter_config(db: Any, org_id: UUID | str) -> dict[str, Any]:
     rows = db.table(T_CONFIG).select("*").eq("org_id", str(org_id)).limit(1).execute().data or []
-    row = rows[0] if rows else {}
-    return {k: row.get(k, v) for k, v in CONFIG_PADRAO.items()}
+    return _normalizar(rows[0] if rows else {})
 
 
-def salvar_config(db: Any, org_id: UUID | str, valores: dict[str, Any]) -> dict[str, Any]:
+def salvar_config(
+    db: Any, org_id: UUID | str, valores: dict[str, Any], *, ator: Optional[str] = None, registrar_evento: bool = True,
+) -> dict[str, Any]:
+    """Merge `valores` over the org's config and save. Validates the window / opener text (pt-BR 422) and records ONE
+    `configuracao_alterada` event naming the changed keys (never a value) -- EOA / measurement-by-design.
+
+    ``registrar_evento=False`` is for a caller that records the SAME change itself (the onboarding interview writes its
+    own event with ``via=onboarding`` and the actor): one change, one event, never two."""
     atual = obter_config(db, org_id)
-    novo = {**atual, **{k: v for k, v in valores.items() if k in CONFIG_PADRAO}}
+    recebidos = {k: v for k, v in valores.items() if k in CONFIG_PADRAO}
+    if "portal_primeiro_contato_texto" in recebidos:
+        recebidos["portal_primeiro_contato_texto"] = validar_portal_texto(recebidos["portal_primeiro_contato_texto"])
+    novo = {**atual, **recebidos}
+    if any(k in recebidos for k in CHAVES_HORARIO):
+        h = validar_horario(novo["horario_abertura"], novo["horario_fechamento"], novo["dias_atendimento"])
+        novo["horario_abertura"], novo["horario_fechamento"], novo["dias_atendimento"] = _fmt(h.abertura), _fmt(h.fechamento), sorted(h.dias)
+    novo = _normalizar(novo)
     db.table(T_CONFIG).upsert(
         {"org_id": str(org_id), **novo, "updated_at": _now().isoformat()}, on_conflict="org_id",
     ).execute()
+    mudou = sorted(k for k in recebidos if novo[k] != atual[k])
+    if mudou and registrar_evento:
+        julia_eventos_service.emitir(db, org_id, "configuracao_alterada", None, {
+            "area": "reengajamento", "chaves": mudou, "ator": ator,
+            "portal_texto_proprio": novo["portal_primeiro_contato_texto"] is not None,
+        })
     return novo
 
 
@@ -466,8 +590,9 @@ async def executar_default(
     if estado != "ok":
         return estado
     assert contato is not None and connection is not None
-    if tier == "horas" and not dentro_do_horario(agora):
-        raise RescheduleLater(segundos_ate_abertura(agora), "fora do horário comercial (08-20, São Paulo)")
+    horario = horario_da_org(deps.scoped, job.payload["org_id"])
+    if tier == "horas" and not dentro_do_horario(agora, horario):
+        raise RescheduleLater(segundos_ate_abertura(agora, horario), "fora do horário de atendimento da organização (São Paulo)")
     if tier == "minutos" and not contato.get("ultimo_inbound_at"):
         return "sem_interacao"  # the hours tier owns the lead who never replied
     org_id = job.payload["org_id"]
@@ -510,9 +635,10 @@ async def executar_tentativa(
         return "regua_inativa"
     if not contato.get("ultimo_inbound_at"):
         return "sem_interacao"  # a regua only follows a lead who interacted and then stopped
-    if not dentro_do_horario(agora):
-        # Lais' regua card: "Periodo de execucao: Das 8h as 20h" (page-map-v2 59.0b) -- same window as the hours tier.
-        raise RescheduleLater(segundos_ate_abertura(agora), "regua fora do horario (08-20, Sao Paulo)")
+    horario = horario_da_org(db, org_id)
+    if not dentro_do_horario(agora, horario):
+        # Lais' regua card ("Periodo de execucao: Das 8h as 20h") is the DEFAULT window; the org may change it -- same window as the hours tier.
+        raise RescheduleLater(segundos_ate_abertura(agora, horario), "regua fora do horario de atendimento (Sao Paulo)")
     try:  # the outbound gate (Julia on + this regua active), before any send or agents call
         liberacao = julia_envio_gate.exigir(db, org_id, connection.id, julia_envio_gate.Fluxo.REGUA,
                                            contato_id=contato["id"], regua_id=regua["id"])
@@ -618,9 +744,9 @@ def handlers(*, deps_factory: Callable[[], Any], repo: Any, run_turn: TurnRunner
 
 
 __all__ = [
-    "CONFIG_PADRAO", "JOB_HORAS", "JOB_MINUTOS", "JOB_REGUA", "JOB_TYPES", "MAX_TENTATIVAS", "MSG_TIMELINE",
+    "CONFIG_PADRAO", "HORARIO_PADRAO", "Horario", "PORTAL_TEXTO_MAX", "JOB_HORAS", "JOB_MINUTOS", "JOB_REGUA", "JOB_TYPES", "MAX_TENTATIVAS", "MSG_TIMELINE",
     "agendar_apos_outbound", "apagar_regua", "apagar_tentativa", "ativar_regua", "atualizar_regua",
-    "atualizar_tentativa", "criar_regua", "criar_tentativa", "dentro_do_horario", "desativar_regua",
+    "atualizar_tentativa", "criar_regua", "criar_tentativa", "dentro_do_horario", "horario_da_config", "horario_da_org", "proxima_abertura", "validar_horario", "validar_portal_texto", "desativar_regua",
     "escolher_regua", "executar_default", "executar_tentativa", "handlers", "lead_frio_padrao", "listar_reguas",
     "obter_config", "obter_regua", "registrar_lead_frio", "salvar_config", "segundos_ate_abertura",
 ]

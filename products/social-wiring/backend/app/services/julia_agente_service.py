@@ -354,12 +354,18 @@ def public_privacy_link(aviso_row: dict[str, Any]) -> str:
     return f"{base.rstrip('/')}/privacidade/{aviso_row['slug']}"
 
 
-def mensagem_inicial_pronta(aviso_row: dict[str, Any], agente_nome: Optional[str] = None) -> str:
+def mensagem_inicial_pronta(aviso_row: dict[str, Any], agente_nome: Optional[str] = None, *, texto: Optional[str] = None) -> str:
     """11.3: the deterministic disclosure bubble, placeholders filled by SW. `{agente}` is the agent's own status name
-    (the per-org swappable persona); a text that names `{agente}` while the name is unknown is NOT sent (raises) -- the
+    (the per-org swappable persona); `texto` overrides the org's `mensagem_inicial` (portal first contact); a text that names `{agente}` while the name is unknown is NOT sent (raises) -- the
     disclosure must never go out with a hole in it. The text itself is the org's `mensagem_inicial` row (seeded from
     `julia_textos_padrao`); there is no default text in code."""
-    texto = aviso_row.get("mensagem_inicial") or ""
+    if texto is not None and texto.strip():
+        # An org-specific opener (the portal first contact): it replaces the standard text but never the disclosure --
+        # without `{link}` the privacy notice would not go out, so it is refused rather than sent.
+        if not julia_aviso_service.contem_link(texto):
+            raise AppException("aviso_incompleto", "A mensagem do primeiro contato precisa conter {link} (aviso de privacidade).", status_code=409)
+    else:
+        texto = aviso_row.get("mensagem_inicial") or ""
     if not texto.strip():
         raise AppException("aviso_incompleto", "A mensagem inicial do aviso de privacidade está vazia. Fale com o suporte NoctusAI para completá-la.", status_code=409)
     if julia_aviso_service.AGENTE_TOKEN in texto:

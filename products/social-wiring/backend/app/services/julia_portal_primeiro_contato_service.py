@@ -96,7 +96,8 @@ async def _adiar(client: Any, org_id: UUID | str, contato_id: Any, lead: dict[st
     """Outside business hours: queue the whole intake for the next opening. None when no job repository is registered."""
     if _repo is None:
         return None
-    enviar_apos = agora + timedelta(seconds=julia_reengajamento_service.segundos_ate_abertura(agora))
+    horario = julia_reengajamento_service.horario_da_org(client, org_id)
+    enviar_apos = agora + timedelta(seconds=julia_reengajamento_service.segundos_ate_abertura(agora, horario))
     await _repo.enqueue(
         type=JOB_ADIADO, payload={"org_id": str(org_id), "lead": lead, "enviar_apos": enviar_apos.isoformat()},
         max_retries=JOB_MAX_RETRIES, scheduled_for=enviar_apos,
@@ -143,7 +144,8 @@ async def iniciar(
         if conexao is None:
             _registrar(client, org_id, None, lead, "sem_linha_waha")
             return {"status": "sem_linha_waha"}
-        if julia_reengajamento_service.obter_config(client, org_id).get("portal_primeiro_contato_ativo") is not True:
+        config = julia_reengajamento_service.obter_config(client, org_id)
+        if config.get("portal_primeiro_contato_ativo") is not True:
             _registrar(client, org_id, None, lead, "desativado")
             return {"status": "desativado"}
         telefone = normalize_phone(lead.get("phone"))
@@ -172,7 +174,7 @@ async def iniciar(
         ):
             _registrar(client, org_id, existente["id"], lead, "reentrada")
             return {"status": "reentrada", "contato_id": existente["id"]}
-        if not julia_reengajamento_service.dentro_do_horario(agora):
+        if not julia_reengajamento_service.dentro_do_horario(agora, julia_reengajamento_service.horario_da_config(config)):
             contato_ref = existente["id"] if existente else None
             if not adiado:
                 resultado = await _adiar(client, org_id, contato_ref, lead, agora)
@@ -272,8 +274,9 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any], *, adiad
 
         async def mensagem() -> str:
             nome_agente = await julia_agente_service.nome_do_agente(agents) if agents is not None else None
-            return julia_agente_service.mensagem_inicial_pronta(
-                julia_aviso_service.obter_ou_criar(scoped, core, org), nome_agente)
+            aviso = julia_aviso_service.obter_ou_criar(scoped, core, org)
+            proprio = julia_reengajamento_service.obter_config(scoped, org).get("portal_primeiro_contato_texto")
+            return julia_agente_service.mensagem_inicial_pronta(aviso, nome_agente, texto=proprio)
 
         return await iniciar(
             scoped, org, lead, store=build_whatsapp_connection_store(get_admin_client(), encryption_key=settings.encryption_key),

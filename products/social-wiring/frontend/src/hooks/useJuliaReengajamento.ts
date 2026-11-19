@@ -4,7 +4,7 @@
  * SW envelope `{data}`; errors `{error:{code,message}}`. Loading is two signals
  * off `data` in the consumers (never `isLoading`); lists keep previous data.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
@@ -19,6 +19,41 @@ export interface ReengajamentoConfig {
   horas_intervalo: number; // 1..11
   /** Lais study S1: Julia speaks first to a new portal (OLX / ImovelWeb) lead. Off until the owner turns it on. */
   portal_primeiro_contato_ativo: boolean;
+  /** Business hours (America/Sao_Paulo): messages outside them wait for the next opening. "HH:MM"; opening < closing. */
+  horario_abertura: string;
+  horario_fechamento: string;
+  /** ISO weekdays served: 1 = segunda .. 7 = domingo. At least one. */
+  dias_atendimento: number[];
+  /** Optional opener for a portal lead; must carry {link}. null/"" = the org's mensagem inicial. Send "" to clear. */
+  portal_primeiro_contato_texto: string | null;
+}
+
+export const DIAS_SEMANA = [
+  { dia: 1, sigla: "Seg", nome: "segunda-feira" },
+  { dia: 2, sigla: "Ter", nome: "terça-feira" },
+  { dia: 3, sigla: "Qua", nome: "quarta-feira" },
+  { dia: 4, sigla: "Qui", nome: "quinta-feira" },
+  { dia: 5, sigla: "Sex", nome: "sexta-feira" },
+  { dia: 6, sigla: "Sáb", nome: "sábado" },
+  { dia: 7, sigla: "Dom", nome: "domingo" },
+] as const;
+export const FUSO_ATENDIMENTO = "America/Sao_Paulo";
+
+/** Client-side mirror of the server rule, so the refusal shows before the round trip (the server stays the authority). */
+export function validarHorario(abertura: string, fechamento: string, dias: number[]): string | null {
+  if (!/^\d{2}:\d{2}$/.test(abertura) || !/^\d{2}:\d{2}$/.test(fechamento)) return "Informe os horários de abertura e fechamento.";
+  if (abertura >= fechamento) return "A abertura precisa ser antes do fechamento no mesmo dia (horário que passa da meia-noite não é suportado).";
+  if (dias.length === 0) return "Escolha ao menos um dia da semana.";
+  return null;
+}
+
+/** The portal opener must carry the privacy-notice link (LGPD); blank is fine (= the default message). */
+export function validarTextoPortal(texto: string): string | null {
+  const t = texto.trim();
+  if (!t) return null;
+  if (!t.includes("{link}")) return "A mensagem precisa conter {link}: é o link do aviso de privacidade (LGPD).";
+  if (t.length > TEXTO_MAX) return `A mensagem pode ter no máximo ${TEXTO_MAX} caracteres.`;
+  return null;
 }
 
 export interface ReguaTentativa {
@@ -93,10 +128,11 @@ export function useReengajamentoConfig() {
 }
 
 export function useSalvarReengajamentoConfig() {
-  const qc = useQueryClient();
-  return useMutation<ReengajamentoConfig, unknown, ReengajamentoConfig>({
+  // One row, replaced by the server's answer (it carries the normalised hours). Nothing is applied optimistically, so a
+  // refusal (422) leaves the cache untouched and reaches the caller's onError.
+  return useCacheWriteMutation<ReengajamentoConfig, ReengajamentoConfig>({
     mutationFn: async (body) => (await api.put<{ data: ReengajamentoConfig }>(`${BASE}/config`, body)).data,
-    onSuccess: (row) => qc.setQueryData(CONFIG_KEY, row),
+    targets: [{ queryKey: CONFIG_KEY, commit: (_old: ReengajamentoConfig | undefined, saved) => saved }],
   });
 }
 

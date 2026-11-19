@@ -45,6 +45,11 @@ class ConfigUpdate(StrictHttpModel):
     horas_ativo: Optional[bool] = None
     horas_intervalo: Optional[int] = None
     portal_primeiro_contato_ativo: Optional[bool] = None
+    horario_abertura: Optional[str] = None
+    horario_fechamento: Optional[str] = None
+    dias_atendimento: Optional[list[int]] = None
+    #: "" clears it (the org's `mensagem_inicial` is used again); a text must carry {link}.
+    portal_primeiro_contato_texto: Optional[str] = Field(default=None, max_length=svc.PORTAL_TEXTO_MAX)
 
     @field_validator("minutos_intervalo")
     @classmethod
@@ -126,7 +131,7 @@ def put_config(
 ) -> dict[str, Any]:
     org_id = _admin(auth, request, "julia reengajamento config")
     valores = {k: v for k, v in _dump(body).items() if v is not None}
-    return {"data": svc.salvar_config(db, org_id, valores)}
+    return {"data": svc.salvar_config(db, org_id, valores, ator=str(auth[0].id))}
 
 
 # ── reguas ──────────────────────────────────────────────────────────────────

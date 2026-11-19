@@ -8,13 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { HorarioAtendimentoCard, resumoHorario } from "./HorarioAtendimentoCard";
 import { SideDrawer } from "@noctusai/lib/components";
 import {
   HORAS_OPCOES,
   MINUTOS_OPCOES,
   mensagemErroReengajamento,
   useReengajamentoConfig,
+  TEXTO_MAX,
   useSalvarReengajamentoConfig,
+  validarTextoPortal,
   type ReengajamentoConfig,
 } from "@/hooks/useJuliaReengajamento";
 
@@ -81,7 +85,7 @@ function ConfigDrawer({
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          {min ? "Funciona em qualquer horário" : "Funciona das 8h às 20h"}
+          {min ? "Funciona em qualquer horário" : `Funciona ${resumoHorario(config)}`}
         </p>
       </div>
       <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground space-y-1">
@@ -117,10 +121,20 @@ function ConfigDrawer({
   );
 }
 
-/** Lais study S1: the opener to a new portal lead is one switch, saved on toggle (no interval to edit). */
+const EXEMPLO_LINK = "https://seu-dominio/privacidade/sua-empresa";
+
+/** Preview of the opener with the placeholders filled by sample values (the real ones are filled at send time). */
+export function previaPortal(texto: string): string {
+  return texto.split("{link}").join(EXEMPLO_LINK).split("{agente}").join("Julia").split("{empresa}").join("Sua Empresa");
+}
+
+/** Lais study S1: the opener to a new portal lead -- one switch (saved on toggle) + its own optional text. */
 function PortalPrimeiroContatoCard({ config, isAdmin }: { config: ReengajamentoConfig; isAdmin: boolean }) {
   const salvar = useSalvarReengajamentoConfig();
   const ativo = config.portal_primeiro_contato_ativo;
+  const [texto, setTexto] = useState(config.portal_primeiro_contato_texto ?? "");
+  const [erro, setErro] = useState<string | null>(null);
+  const salvo = config.portal_primeiro_contato_texto ?? "";
   function alternar(valor: boolean) {
     salvar.mutate(
       { ...config, portal_primeiro_contato_ativo: valor },
@@ -130,14 +144,33 @@ function PortalPrimeiroContatoCard({ config, isAdmin }: { config: ReengajamentoC
       },
     );
   }
+  function salvarTexto(novo: string) {
+    const recusa = validarTextoPortal(novo);
+    if (recusa) {
+      setErro(recusa);
+      return;
+    }
+    setErro(null);
+    // "" tells the server to clear it (the org's mensagem inicial is used again).
+    salvar.mutate(
+      { ...config, portal_primeiro_contato_texto: novo.trim() },
+      {
+        onSuccess: (row) => {
+          setTexto(row.portal_primeiro_contato_texto ?? "");
+          toast.success(novo.trim() ? "Mensagem do primeiro contato salva" : "Voltou a usar a mensagem inicial padrão");
+        },
+        onError: (e) => setErro(mensagemErroReengajamento(e, "Não foi possível salvar a mensagem do primeiro contato.")),
+      },
+    );
+  }
   return (
     <Card data-testid="card-portal">
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <div>
           <CardTitle className="text-base">Primeiro contato dos portais</CardTitle>
           <CardDescription>
-            A Julia chama primeiro o lead novo do OLX, ZAP/VivaReal e ImovelWeb, com o aviso de IA e de privacidade · Funciona das 8h às
-            20h · Quem já está em conversa nunca recebe de novo
+            A Julia chama primeiro o lead novo do OLX, ZAP/VivaReal e ImovelWeb, com o aviso de IA e de privacidade · Funciona{" "}
+            {resumoHorario(config)} · Quem já está em conversa nunca recebe de novo
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
@@ -150,7 +183,57 @@ function PortalPrimeiroContatoCard({ config, isAdmin }: { config: ReengajamentoC
           />
         </div>
       </CardHeader>
-      <CardContent className="sr-only" />
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <Label htmlFor="portal-texto">Mensagem do primeiro contato</Label>
+          <Textarea
+            id="portal-texto"
+            rows={4}
+            maxLength={TEXTO_MAX}
+            value={texto}
+            disabled={!isAdmin}
+            placeholder="Vazio: usa a mensagem inicial padrão do aviso de privacidade"
+            onChange={(e) => {
+              setErro(null);
+              setTexto(e.target.value);
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            Obrigatório conter {"{link}"} (aviso de privacidade) e deixar claro que é uma assistente virtual. Marcadores aceitos:{" "}
+            {"{link}"}, {"{agente}"} e {"{empresa}"}.
+          </p>
+        </div>
+        <div className="rounded-md bg-muted p-3 text-sm" data-testid="portal-previa">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">Prévia</p>
+          {texto.trim() ? (
+            <p className="whitespace-pre-wrap">{previaPortal(texto.trim())}</p>
+          ) : (
+            <p className="text-muted-foreground">Usando a mensagem inicial padrão do aviso de privacidade.</p>
+          )}
+        </div>
+        {erro && (
+          <p role="alert" className="text-sm text-destructive" data-testid="portal-erro">
+            {erro}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            disabled={!isAdmin || salvar.isPending || (!texto && !salvo)}
+            onClick={() => {
+              setTexto("");
+              if (salvo) salvarTexto("");
+              else setErro(null);
+            }}
+          >
+            Usar a mensagem inicial padrão
+          </Button>
+          <Button onClick={() => salvarTexto(texto)} disabled={!isAdmin || salvar.isPending || texto.trim() === salvo.trim()}>
+            {salvar.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            Salvar mensagem
+          </Button>
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -194,7 +277,7 @@ export function ReengajamentoPadraoTab({ isAdmin }: { isAdmin: boolean }) {
       titulo: "Reengajamento em horas",
       ativo: c.horas_ativo,
       resumo: `A cada ${rotuloHoras(c.horas_intervalo)} sem resposta`,
-      copy: "Funciona das 8h às 20h",
+      copy: `Funciona ${resumoHorario(c)}`,
     },
   ];
   return (
@@ -218,6 +301,11 @@ export function ReengajamentoPadraoTab({ isAdmin }: { isAdmin: boolean }) {
           <CardContent className="sr-only" />
         </Card>
       ))}
+      <HorarioAtendimentoCard
+        key={`${c.horario_abertura}|${c.horario_fechamento}|${c.dias_atendimento.join()}`}
+        config={c}
+        isAdmin={isAdmin}
+      />
       <PortalPrimeiroContatoCard config={c} isAdmin={isAdmin} />
       {aberto && (
         <SideDrawer

@@ -104,13 +104,29 @@ class TestConfig:
     def test_defaults_then_partial_put(self, admin):
         assert admin.call("get", "/config").json()["data"] == {
             "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4,
-            "portal_primeiro_contato_ativo": False}
+            "portal_primeiro_contato_ativo": False, "horario_abertura": "08:00", "horario_fechamento": "20:00", "dias_atendimento": [1, 2, 3, 4, 5, 6, 7],
+            "portal_primeiro_contato_texto": None}
         r = admin.call("put", "/config", {"minutos_ativo": True, "minutos_intervalo": 25})
         assert r.status_code == 200 and r.json()["data"]["minutos_intervalo"] == 25
         assert admin.call("put", "/config", {"horas_ativo": True, "horas_intervalo": 11}).json()["data"] == {
             "minutos_ativo": True, "minutos_intervalo": 25, "horas_ativo": True, "horas_intervalo": 11,
-            "portal_primeiro_contato_ativo": False}
+            "portal_primeiro_contato_ativo": False, "horario_abertura": "08:00", "horario_fechamento": "20:00", "dias_atendimento": [1, 2, 3, 4, 5, 6, 7],
+            "portal_primeiro_contato_texto": None}
         assert admin.call("put", "/config", {"portal_primeiro_contato_ativo": True}).json()["data"]["portal_primeiro_contato_ativo"] is True
+
+    def test_business_hours_and_portal_text_roundtrip_and_refusals(self, admin):
+        r = admin.call("put", "/config", {"horario_abertura": "09:00", "horario_fechamento": "18:30", "dias_atendimento": [1, 2, 3, 4, 5]})
+        assert r.status_code == 200 and r.json()["data"]["horario_fechamento"] == "18:30"
+        for corpo, codigo in (
+            ({"horario_abertura": "19:00"}, "horario_invalido"),            # opens after the stored 18:30 closing
+            ({"dias_atendimento": []}, "dias_invalidos"),
+            ({"portal_primeiro_contato_texto": "Oi, sou a Julia"}, "portal_texto_sem_link"),
+        ):
+            r = admin.call("put", "/config", corpo)
+            assert r.status_code == 422 and r.json()["error"]["code"] == codigo
+        texto = "Oi, assistente virtual (IA). {link}"
+        assert admin.call("put", "/config", {"portal_primeiro_contato_texto": texto}).json()["data"]["portal_primeiro_contato_texto"] == texto
+        assert admin.call("put", "/config", {"portal_primeiro_contato_texto": ""}).json()["data"]["portal_primeiro_contato_texto"] is None
 
     @pytest.mark.parametrize("body", [
         {"minutos_intervalo": 7}, {"minutos_intervalo": 0}, {"minutos_intervalo": 65}, {"horas_intervalo": 0},

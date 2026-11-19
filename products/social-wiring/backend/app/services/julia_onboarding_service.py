@@ -87,7 +87,7 @@ def _reengajamento(client: Any, org: UUID, c: _Reengajamento, ator: str) -> list
             "config_invalida", "Valores de reengajamento inválidos.", 422,
             {"erros": [".".join(str(p) for p in e["loc"]) for e in exc.errors()]},
         ) from exc
-    reengajamento.salvar_config(client, org, valores)
+    reengajamento.salvar_config(client, org, valores, registrar_evento=False)  # this service records the one event
     return sorted(valores)
 
 

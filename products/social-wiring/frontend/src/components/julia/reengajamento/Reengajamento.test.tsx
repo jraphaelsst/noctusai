@@ -15,7 +15,8 @@ import { ReengajamentoPadraoTab } from "./ReengajamentoPadraoTab";
 import { TentativasCard } from "./TentativasCard";
 import { ReguaRegrasCard } from "./ReguaRegrasCard";
 
-const CFG = { minutos_ativo: true, minutos_intervalo: 15, horas_ativo: false, horas_intervalo: 2, portal_primeiro_contato_ativo: false };
+const CFG = { minutos_ativo: true, minutos_intervalo: 15, horas_ativo: false, horas_intervalo: 2, portal_primeiro_contato_ativo: false,
+  horario_abertura: "08:00", horario_fechamento: "20:00", dias_atendimento: [1, 2, 3, 4, 5, 6, 7], portal_primeiro_contato_texto: null as string | null };
 const T = (n: number) => ({ id: `t${n}`, ordem: n, espera_valor: n, espera_unidade: "dias" as const, texto: `msg ${n}`, template_id: null, ativa: true });
 const REGUA = (n: number) => ({ id: "r1", nome: "Régua 1", ativa: false, compra: true, aluguel: true, tentativas: Array.from({ length: n }, (_, i) => T(i + 1)) });
 
@@ -83,7 +84,7 @@ describe("Reengajamento padrão", () => {
     expect(sel.options.length).toBe(11);
     expect(sel.options[0].text).toBe("1 hora");
     expect(sel.options[10].text).toBe("11 horas");
-    expect(screen.getByText("Funciona das 8h às 20h")).toBeTruthy();
+    expect(screen.getAllByText(/Funciona das 8h às 20h · todos os dias/).length).toBeGreaterThan(0);
   });
 
   it("shows the error state with retry", async () => {
