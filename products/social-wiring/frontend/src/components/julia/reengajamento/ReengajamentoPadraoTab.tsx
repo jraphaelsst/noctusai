@@ -125,7 +125,7 @@ const EXEMPLO_LINK = "https://seu-dominio/privacidade/sua-empresa";
 
 /** Preview of the opener with the placeholders filled by sample values (the real ones are filled at send time). */
 export function previaPortal(texto: string): string {
-  return texto.replaceAll("{link}", EXEMPLO_LINK).replaceAll("{agente}", "Julia").replaceAll("{empresa}", "Sua Empresa");
+  return texto.split("{link}").join(EXEMPLO_LINK).split("{agente}").join("Julia").split("{empresa}").join("Sua Empresa");
 }
 
 /** Lais study S1: the opener to a new portal lead -- one switch (saved on toggle) + its own optional text. */

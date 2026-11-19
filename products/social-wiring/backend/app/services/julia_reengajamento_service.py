@@ -209,9 +209,14 @@ def obter_config(db: Any, org_id: UUID | str) -> dict[str, Any]:
     return _normalizar(rows[0] if rows else {})
 
 
-def salvar_config(db: Any, org_id: UUID | str, valores: dict[str, Any], *, ator: Optional[str] = None) -> dict[str, Any]:
+def salvar_config(
+    db: Any, org_id: UUID | str, valores: dict[str, Any], *, ator: Optional[str] = None, registrar_evento: bool = True,
+) -> dict[str, Any]:
     """Merge `valores` over the org's config and save. Validates the window / opener text (pt-BR 422) and records ONE
-    `configuracao_alterada` event naming the changed keys (never a value) -- EOA / measurement-by-design."""
+    `configuracao_alterada` event naming the changed keys (never a value) -- EOA / measurement-by-design.
+
+    ``registrar_evento=False`` is for a caller that records the SAME change itself (the onboarding interview writes its
+    own event with ``via=onboarding`` and the actor): one change, one event, never two."""
     atual = obter_config(db, org_id)
     recebidos = {k: v for k, v in valores.items() if k in CONFIG_PADRAO}
     if "portal_primeiro_contato_texto" in recebidos:
@@ -225,7 +230,7 @@ def salvar_config(db: Any, org_id: UUID | str, valores: dict[str, Any], *, ator:
         {"org_id": str(org_id), **novo, "updated_at": _now().isoformat()}, on_conflict="org_id",
     ).execute()
     mudou = sorted(k for k in recebidos if novo[k] != atual[k])
-    if mudou:
+    if mudou and registrar_evento:
         julia_eventos_service.emitir(db, org_id, "configuracao_alterada", None, {
             "area": "reengajamento", "chaves": mudou, "ator": ator,
             "portal_texto_proprio": novo["portal_primeiro_contato_texto"] is not None,
