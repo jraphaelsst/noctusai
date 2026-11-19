@@ -98,6 +98,7 @@ const BUDGET_EXCEEDED_NOTA = "limite de custo atingido";
 const MODEL_LABELS: Record<EvalRunModel, string> = {
   "claude-sonnet-5": "Sonnet 5",
   "claude-haiku-4-5": "Haiku 4.5",
+  "claude-haiku-5-5": "Haiku 5.5",
 };
 
 /** A run is eligible for "Repetir só as falhas" once it has settled
@@ -477,6 +478,7 @@ function NewRunForm({
             <option value="">Modelo do agente (padrão da versão)</option>
             <option value="claude-sonnet-5">Sonnet 5 — rascunho, mais barato</option>
             <option value="claude-haiku-4-5">Haiku 4.5 — rascunho, o mais barato</option>
+            <option value="claude-haiku-5-5">Haiku 5.5 — rascunho, rápido e barato</option>
           </Select>
         </Field>
         <Field label="Limite de custo (US$)">

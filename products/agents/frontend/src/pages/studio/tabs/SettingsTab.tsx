@@ -44,6 +44,7 @@ const MODEL_LABELS: Record<StudioModel, string> = {
   "claude-opus-5": "Opus 5",
   "claude-sonnet-5": "Sonnet 5",
   "claude-haiku-4-5": "Haiku 4.5 — mais rápido e barato",
+  "claude-haiku-5-5": "Haiku 5.5 — rápido e barato",
   "gpt-5.6-sol": "GPT-5.6 Sol",
   "gpt-5.6-terra": "GPT-5.6 Terra — padrão",
   "gpt-5.6-luna": "GPT-5.6 Luna — mais rápido e barato",

@@ -30,7 +30,9 @@ def test_model_check_is_provider_keyed_and_matches_python():
     block = block[: block.index(");")]
     for provider, models in MODELS_BY_PROVIDER.items():
         m = re.search(rf"provider = '{provider}'\s+AND model IN \(([^)]*)\)", block)
-        assert m and _in_list(m.group(1)) == set(models), provider
+        # 024 is the provider-keyed SHAPE; later migrations (091 added haiku-5-5) only widen
+        # it, so 024's set must stay a subset. Exact equality: test_haiku_5_5_model.py.
+        assert m and _in_list(m.group(1)) <= set(models), provider
 
 
 def test_runtime_check_admits_llm_and_python_runtimes_agree():

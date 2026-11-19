@@ -90,7 +90,7 @@ describe("SettingsTab — model selector", () => {
 
     const select = screen.getByLabelText("Modelo") as HTMLSelectElement;
     const options = Array.from(select.options);
-    expect(options.map((o) => o.value)).toEqual(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
+    expect(options.map((o) => o.value)).toEqual(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"]);
     const haiku = options.find((o) => o.value === "claude-haiku-4-5")!;
     expect(haiku.textContent).toMatch(/haiku/i);
     expect(haiku.textContent).toMatch(/rápido|barato/i);

@@ -59,6 +59,7 @@ __all__ = [
     "RUN_CASE_IDS_MAX",
     "DOCUMENTS_BATCH_MAX",
     "SKILL_FILES_BATCH_MAX",
+    "ANTHROPIC_MODELS",
     "EVAL_RUN_MODEL_ALLOWLIST",
     "EVAL_RUN_BUDGET_USD_MIN",
     "EVAL_RUN_BUDGET_USD_MAX",
@@ -151,7 +152,11 @@ SKILL_FILES_BATCH_MAX = 50
 #: by the migration 014 CHECK (`eval_runs_modelo_geracao_check`) — this
 #: tuple is the single source the HTTP schema and the store both validate
 #: against.
-EVAL_RUN_MODEL_ALLOWLIST: tuple[str, ...] = ("claude-sonnet-5", "claude-haiku-4-5")
+EVAL_RUN_MODEL_ALLOWLIST: tuple[str, ...] = ("claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5")
+#: `agents.agent_versions.model` / `agent_personas.model` Anthropic allowlist —
+#: the ONE backend source (studio_definitions + personas import it; migrations
+#: 015/091 mirror it in SQL). Adding a model = here + a migration + the FE lists.
+ANTHROPIC_MODELS: tuple[str, ...] = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5")
 #: Migration 014 CHECK floor/ceiling on `eval_runs.limite_usd`.
 EVAL_RUN_BUDGET_USD_MIN = 0.0
 EVAL_RUN_BUDGET_USD_MAX = 50.0

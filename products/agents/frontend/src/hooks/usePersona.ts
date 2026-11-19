@@ -19,7 +19,7 @@ function personaUrl(agentKey: string) {
   return `/api/agents/${encodeURIComponent(agentKey)}/persona`;
 }
 
-export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
+export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"] as const;
 export const PERSONA_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export interface Persona {

@@ -273,6 +273,19 @@ class TestOrgOnlyKeysB1:
         assert (exc.value.http_status, exc.value.code) == (424, "llm_not_configured")
         assert provider.calls == []
 
+    async def test_empty_text_truncated_by_length_is_a_loud_failure_not_a_silent_reply(self):
+        """Thinking models (haiku-5-5) can burn the whole output budget on thinking: empty text +
+        finish_reason=length must raise, never yield an empty reply."""
+        rt = _runtime(FakeProvider(tool_responses=[ChatToolsResponse(text="", finish_reason="length")]), key_resolver=lambda p, o: "k")
+        with pytest.raises(LlmUpstreamError):
+            await _collect(rt, _spec(provider="anthropic", model="claude-haiku-5-5"), _ctx(), "x")
+
+    def test_default_output_ceiling_gives_thinking_headroom(self):
+        from app.runtime.llm_runtime import DEFAULT_MAX_OUTPUT_TOKENS
+
+        assert DEFAULT_MAX_OUTPUT_TOKENS > 4096
+        assert _runtime(FakeProvider(tool_responses=["x"]))._max_tokens == DEFAULT_MAX_OUTPUT_TOKENS
+
     async def test_the_provider_is_asked_for_the_key_of_the_specs_provider(self):
         asked = []
 
