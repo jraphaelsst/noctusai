@@ -206,6 +206,12 @@ def make_budget_guard(
     return _guard
 
 
+#: Output-token ceiling per model call when the caller sets none. The seed Anthropic provider falls back to 4096,
+#: and a thinking model (Haiku 5.5 / Sonnet 5, adaptive thinking) can spend ALL of it on thinking and return
+#: EMPTY text (finish_reason "length") -> a silent empty reply. Generous headroom + the loud check in `_chat`.
+DEFAULT_MAX_OUTPUT_TOKENS = 16000
+
+
 def _map_error(exc: BaseException, provider: str) -> BaseException:
     """Seed/vendor failures → the typed runtime errors. Anything else (a
     programming error) is returned unchanged so it surfaces as the bug it is."""
@@ -253,7 +259,7 @@ class LlmToolRuntime:
         self._history_messages = max(0, int(history_messages))
         self._max_iterations = max(1, int(max_iterations))
         self._temperature = temperature
-        self._max_tokens = max_tokens
+        self._max_tokens = max_tokens if max_tokens is not None else DEFAULT_MAX_OUTPUT_TOKENS
         self._bound_org_id = bound_org_id
 
     # ── AgentRuntime ────────────────────────────────────────────────────
@@ -373,7 +379,17 @@ class LlmToolRuntime:
                 return ChatToolsResponse(text="", tool_calls=(), usage=LLMUsage(), finish_reason="stop")
             t0 = time.perf_counter()
             try:
-                return await chat(msgs, specs_)
+                resp = await chat(msgs, specs_)
+                if (
+                    not (getattr(resp, "text", "") or "").strip()
+                    and not getattr(resp, "tool_calls", ())
+                    and getattr(resp, "finish_reason", None) == "length"
+                ):
+                    # Truncated before any answer (thinking ate the budget): a loud failure, never a silent empty reply.
+                    raise LlmUpstreamError(
+                        f"O modelo {spec.model} esgotou o limite de saída sem produzir texto (finish_reason=length)."
+                    )
+                return resp
             finally:
                 medida["llm_ms"] += int((time.perf_counter() - t0) * 1000)
                 medida["llm_calls"] += 1

@@ -55,7 +55,7 @@ from app.stores._util import utcnow
 from app.stores.errors import NotFound
 from app.stores.studio_definitions_conteudo import ConteudoStore, FakeConteudoMixin, SupabaseConteudoMixin
 from app.studio.regras_secao import validar_regras
-from app.studio.models import LIMITS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
+from app.studio.models import ANTHROPIC_MODELS, LIMITS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 logger = logging.getLogger(__name__)
@@ -96,11 +96,8 @@ __all__ = [
 
 _SCHEMA = "agents"
 
-#: 012 `model` CHECK (§A10 — same allowlist as personas). Widened by
-#: migration 015 to add `claude-haiku-4-5` (cheapest/fastest option); the
-#: DRAFT_DEFAULTS model below stays `claude-opus-5` — this only adds an
-#: option, it does not change anyone's current default.
-ANTHROPIC_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+#: `ANTHROPIC_MODELS` (012 `model` CHECK, widened by 015 + 091) is imported from
+#: `app.studio.models` — the one source. DRAFT_DEFAULTS model stays `claude-opus-5`.
 #: Migration 024 — the OpenAI chat models the seed catalog lists
 #: (`noctusai_lib.integrations.llm.models`; there is no `gpt-5`/`gpt-5-mini`
 #: in it, so these are the names the seed actually prices).

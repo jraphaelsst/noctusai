@@ -258,7 +258,7 @@ export interface RunProgresso {
 /** Contract §L — deliberately NARROWER than `StudioModel` (`../types.ts`):
  * exists to let a cheaper-iteration run cost LESS than the version's own
  * model, never more. */
-export const EVAL_RUN_MODELS = ["claude-sonnet-5", "claude-haiku-4-5"] as const;
+export const EVAL_RUN_MODELS = ["claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"] as const;
 export type EvalRunModel = (typeof EVAL_RUN_MODELS)[number];
 
 export interface EvalRunListResponse {

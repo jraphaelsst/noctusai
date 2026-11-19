@@ -113,7 +113,7 @@ class TestDrafts:
         store's single source of truth for that allowlist. DRAFT_DEFAULTS'
         model stays `claude-opus-5` (see `test_empty_draft_defaults`
         above) — this only adds an option, never changes the default."""
-        assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+        assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5")
 
     def test_update_draft_accepts_haiku_model(self, store, agent):
         d = store.create_draft(ORG, agent.id, None, USER)
