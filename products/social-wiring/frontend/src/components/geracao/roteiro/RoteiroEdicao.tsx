@@ -1,10 +1,11 @@
 /**
  * Shared roteiro editing surface (contract §7.8): tabs Roteiro / Fontes da
  * Pesquisa (the latter hidden while `fontes` is NULL), Nome (optional),
- * markdown textarea, Copiar Roteiro, and the optimistic-lock save (#37, 409).
+ * markdown textarea, Copiar Roteiro, Versão Teleprompter (copies only the
+ * spoken words) and the optimistic-lock save (#37, 409).
  */
 import { useEffect, useRef, useState } from "react";
-import { Copy, Save } from "lucide-react";
+import { Check, Copy, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +17,45 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSalvarRoteiro } from "@/hooks/geracao/useRoteiros";
 import type { Roteiro } from "@/types/geracao";
 import { ESTRUTURA_ROTULO } from "../labels";
+import { roteiroParaTeleprompter } from "./teleprompter";
+
+/** How long the teleprompter button shows "Copiado!" before going back to its label. */
+export const COPIADO_MS = 3000;
+
+/** Copies the teleprompter version (no beat titles) and confirms in place for 3 s. */
+export function CopiarTeleprompterButton({ conteudo }: { conteudo: string }) {
+  const [copiado, setCopiado] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(roteiroParaTeleprompter(conteudo));
+    } catch {
+      toast.error("Não foi possível copiar.");
+      return;
+    }
+    setCopiado(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopiado(false), COPIADO_MS);
+  }
+
+  return (
+    <Button type="button" size="sm" variant="outline" onClick={() => void copiar()} aria-live="polite">
+      {copiado ? (
+        <>
+          <Check className="mr-1 h-4 w-4" /> Copiado!
+        </>
+      ) : (
+        <>
+          <Copy className="mr-1 h-4 w-4" /> Versão Teleprompter
+        </>
+      )}
+    </Button>
+  );
+}
 
 export const NOME_MAX = 160;
 export const CONTEUDO_MAX = 30_000;
@@ -216,9 +256,12 @@ export function RoteiroCorpo({ roteiro, edicao, mostrarNome = true, onRecarregar
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label htmlFor={`roteiro-conteudo-${roteiro.id}`}>Roteiro</Label>
-              <Button type="button" size="sm" variant="outline" onClick={() => copiar(edicao.conteudo)}>
-                <Copy className="mr-1 h-4 w-4" /> Copiar Roteiro
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <CopiarTeleprompterButton conteudo={edicao.conteudo} />
+                <Button type="button" size="sm" variant="outline" onClick={() => copiar(edicao.conteudo)}>
+                  <Copy className="mr-1 h-4 w-4" /> Copiar Roteiro
+                </Button>
+              </div>
             </div>
             <Textarea
               id={`roteiro-conteudo-${roteiro.id}`}

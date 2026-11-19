@@ -93,4 +93,51 @@ describe("FluxoCard", () => {
     expect(rtl.screen.getByTestId("fluxo-etapa").textContent).toMatch(/Headline salva/);
     expect(rtl.screen.queryByRole("link", { name: /Ver card/ })).toBeNull();
   });
+
+  describe("roteiro_primeiro", () => {
+    const rp = (over: Record<string, unknown> = {}) =>
+      fluxo({
+        direcao: "roteiro_primeiro",
+        etapa: "headline_gerando",
+        headline: null,
+        roteiro: { ...(fluxo().roteiro as object), status: "completo", formato: "reels" },
+        post: null,
+        ...over,
+      });
+    const estados = () => rtl.screen.getAllByRole("listitem").filter((li) => li.hasAttribute("data-estado")).map((li) => li.getAttribute("data-estado"));
+
+    it("headline_gerando: passos em ordem, em andamento, sem headline e sem seguir o status do roteiro", () => {
+      rot.q.mockReturnValue(roteiroQ({ id: "r1", status: "completo", conteudo: "Fala do reels" }));
+      const inv = vi.spyOn(qc, "invalidateQueries");
+      renderCard(rp());
+      const passos = rtl.screen.getByTestId("fluxo-passos");
+      expect(passos.textContent).toMatch(/Roteiro salvo.*Gerando headline.*Card na Esteira.*Legenda/);
+      expect(estados()).toEqual(["feito", "andamento", "pendente", "pendente"]);
+      expect(rtl.screen.getByTestId("fluxo-etapa").textContent).toMatch(/Gerando a headline/);
+      expect(rtl.screen.getByText("Fala do reels")).toBeTruthy();
+      expect(inv).not.toHaveBeenCalled();
+    });
+
+    it("headline e card prontos avançam os passos", () => {
+      rot.q.mockReturnValue(roteiroQ({ id: "r1", status: "completo", conteudo: "x" }));
+      renderCard(rp({ etapa: "roteiro_pronto", headline: { id: "h9", texto: "Headline do roteiro" }, post: { id: "post1", titulo: "t", etapa_label: "Roteiro" } }));
+      expect(rtl.screen.getByText("Headline do roteiro")).toBeTruthy();
+      expect(estados()).toEqual(["feito", "feito", "feito", "andamento"]);
+    });
+
+    it("falhou headline_invalida: mensagem + Tentar de novo reenvia a mesma proposta", async () => {
+      const onTentarDeNovo = vi.fn();
+      rot.q.mockReturnValue(roteiroQ({ id: "r1", status: "completo", conteudo: "x" }));
+      renderCard(rp({ etapa: "falhou", erro_codigo: "headline_invalida" }), { onTentarDeNovo });
+      expect(rtl.screen.getByRole("alert").textContent).toMatch(/Não consegui gerar a headline deste roteiro/);
+      expect(estados()).toEqual(["feito", "falhou", "pendente", "pendente"]);
+      await userEvent.click(rtl.screen.getByRole("button", { name: "Tentar de novo" }));
+      expect(onTentarDeNovo).toHaveBeenCalledWith("p1");
+    });
+  });
+
+  it("headline_primeiro explícito: sem passos", () => {
+    renderCard(fluxo({ direcao: "headline_primeiro" }));
+    expect(rtl.screen.queryByTestId("fluxo-passos")).toBeNull();
+  });
 });

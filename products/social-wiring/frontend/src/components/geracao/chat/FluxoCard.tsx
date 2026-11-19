@@ -11,7 +11,7 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ExternalLink, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, Loader2 } from "lucide-react";
 import { MarkdownRenderer } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ import { esteiraPostUrl } from "@/components/geracao/PostEsteira";
 import type { EstruturaFormato, Fluxo, FluxoEtapa } from "@/types/estruturas";
 import { estruturaUrl } from "./PropostaCard";
 import { previewRoteiro } from "./roteiroPreview";
-import { erroDoFluxo, ETAPA_ROTULO, FORMATO_ROTULO, LEGENDA_ROTULO } from "./rotulos";
+import { erroDoFluxo, ETAPA_ROTULO, FORMATO_ROTULO, LEGENDA_ROTULO, PASSOS_ROTEIRO_PRIMEIRO } from "./rotulos";
 
 export const HEADLINES_ROTEIROS_ROUTE = "/media-creation/chat/headlines-e-roteiros";
 
@@ -63,31 +63,55 @@ function Preview({ formato, conteudo }: { formato: EstruturaFormato; conteudo: s
   );
 }
 
+/** Roteiro-first stepper (contract §16.7): Roteiro salvo → Gerando headline → Card na Esteira → Legenda. */
+function Passos({ fluxo, falhou }: { fluxo: Fluxo; falhou: boolean }) {
+  const feitos = [true, !!fluxo.headline, !!fluxo.post, fluxo.legenda === "gerada"];
+  const atual = feitos.findIndex((f) => !f);
+  return (
+    <ol aria-label="Etapas" className="flex flex-wrap gap-x-3 gap-y-1 text-xs" data-testid="fluxo-passos">
+      {PASSOS_ROTEIRO_PRIMEIRO.map((rotulo, i) => {
+        const estado = feitos[i] ? "feito" : i === atual ? (falhou ? "falhou" : "andamento") : "pendente";
+        return (
+          <li key={rotulo} data-estado={estado} className={estado === "pendente" ? "text-muted-foreground" : estado === "falhou" ? "text-destructive" : "font-medium"}>
+            {estado === "feito" && <Check className="mr-0.5 inline h-3 w-3" aria-hidden />}
+            {estado === "andamento" && <Loader2 className="mr-0.5 inline h-3 w-3 animate-spin" aria-hidden />}
+            {rotulo}
+            <span className="sr-only">{estado === "feito" ? " (concluído)" : estado === "andamento" ? " (em andamento)" : estado === "falhou" ? " (falhou)" : " (pendente)"}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function FluxoCard({ fluxo, onTentarDeNovo, tentando }: Props) {
   const qc = useQueryClient();
   const roteiroId = fluxo.roteiro?.id ?? null;
   const roteiroQ = useRoteiro(roteiroId);
   const roteiro = roteiroQ.data;
 
-  const etapa: FluxoEtapa =
-    roteiro?.status === "completo" ? "roteiro_pronto" : roteiro?.status === "falha" ? "falhou" : fluxo.etapa;
+  const roteiroPrimeiro = fluxo.direcao === "roteiro_primeiro";
+  // Roteiro-first: the roteiro is born complete, so its status says nothing about the flow; follow the server's etapa.
+  const etapa: FluxoEtapa = roteiroPrimeiro
+    ? fluxo.etapa
+    : roteiro?.status === "completo" ? "roteiro_pronto" : roteiro?.status === "falha" ? "falhou" : fluxo.etapa;
 
   // The roteiro left "writing" before the server-composed flow said so: refresh the messages once.
   const avisado = useRef<string | null>(null);
   useEffect(() => {
     const terminal = roteiro?.status === "completo" || roteiro?.status === "falha";
-    if (terminal && fluxo.etapa === "roteiro_gerando" && avisado.current !== `${roteiro.id}:${roteiro.status}`) {
+    if (!roteiroPrimeiro && terminal && fluxo.etapa === "roteiro_gerando" && avisado.current !== `${roteiro.id}:${roteiro.status}`) {
       avisado.current = `${roteiro.id}:${roteiro.status}`;
       void qc.invalidateQueries({ queryKey: [...CHAT_KEY, "mensagens"] });
     }
-  }, [roteiro?.id, roteiro?.status, fluxo.etapa, qc]);
+  }, [roteiro?.id, roteiro?.status, fluxo.etapa, roteiroPrimeiro, qc]);
 
   const formato = fluxo.roteiro?.formato ?? null;
-  const gerando = etapa === "roteiro_gerando" || etapa === "headline_salva";
+  const gerando = etapa === "roteiro_gerando" || etapa === "headline_salva" || etapa === "headline_gerando" || etapa === "roteiro_salvo";
 
   return (
     <section
-      aria-label="Roteiro desta headline"
+      aria-label={roteiroPrimeiro ? "Headline deste roteiro" : "Roteiro desta headline"}
       data-etapa={etapa}
       className="w-full max-w-[85%] space-y-3 rounded-md border p-3 text-sm"
     >
@@ -100,19 +124,25 @@ export function FluxoCard({ fluxo, onTentarDeNovo, tentando }: Props) {
         <span className="text-xs text-muted-foreground">{LEGENDA_ROTULO[fluxo.legenda]}</span>
       </div>
 
-      <p className="font-medium">{fluxo.headline.texto}</p>
+      {roteiroPrimeiro && <Passos fluxo={fluxo} falhou={etapa === "falhou"} />}
+
+      {fluxo.headline ? (
+        <p className="font-medium">{fluxo.headline.texto}</p>
+      ) : (
+        etapa !== "falhou" && <p className="text-muted-foreground">Gerando a headline deste roteiro...</p>
+      )}
 
       {etapa === "falhou" && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-destructive">
           <AlertTriangle className="h-4 w-4" aria-hidden />
-          <span>{roteiro?.status === "falha" && roteiro.erro ? roteiro.erro : erroDoFluxo(fluxo.erro_codigo)}</span>
+          <span>{!roteiroPrimeiro && roteiro?.status === "falha" && roteiro.erro ? roteiro.erro : erroDoFluxo(fluxo.erro_codigo)}</span>
           <Button type="button" size="sm" variant="outline" disabled={tentando} onClick={() => onTentarDeNovo(fluxo.proposta_id)}>
             {tentando ? "Tentando..." : "Tentar de novo"}
           </Button>
         </div>
       )}
 
-      {etapa === "roteiro_pronto" &&
+      {(etapa === "roteiro_pronto" || (roteiroPrimeiro && etapa !== "falhou")) &&
         formato &&
         (roteiro?.conteudo ? (
           <Preview formato={formato} conteudo={roteiro.conteudo} />

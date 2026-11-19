@@ -94,7 +94,9 @@ MENSAGEM_COLS = "id,role,conteudo,referencias,status,truncada,created_at,tipo,pr
 #: The ONE agent value every read answers (legacy ``headline`` / ``roteiro`` rows are presented as unified).
 AGENTE_UNIFICADO = "unificado"
 #: The fluxo event kinds the citation parser may report (``cs_fluxo_eventos.tipo``); anything else is a parser bug.
-EVENTOS_DO_PARSER = frozenset({"citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "atribuicao_ausente"})
+EVENTOS_DO_PARSER = frozenset({
+    "citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "atribuicao_ausente", "roteiro_invalido",
+})
 #: ``(texto, codigos_permitidos) -> ResultadoPropostas`` -- DI seam over ``services/propostas.extrair_propostas``.
 ExtrairFn = Callable[[str, Mapping[str, Any]], Any]
 RESOLUCAO_VAZIA = {"resolvidos": [], "ambiguos": [], "nao_encontrados": []}
@@ -583,8 +585,10 @@ class ChatService:
             "truncada": truncada, "modelo": envio.modelo, "contexto_chars": envio.contexto.chars,
             "propostas": [
                 {
-                    "ordem": p.ordem, "texto": p.headline, "gatilho_tag": p.gatilho,
-                    "estrutura_ids": list(dict.fromkeys(str(i) for i in p.estrutura_ids))[:3],
+                    # contract 16.2/16.5: a roteiro proposta carries its title, formato (the principal Estrutura's)
+                    # and the WHOLE script as texto; a headline carries neither (the DB CHECK pins both shapes)
+                    "ordem": p.ordem, "tipo": p.tipo, "texto": p.headline, "titulo": p.titulo, "formato": p.formato,
+                    "gatilho_tag": p.gatilho, "estrutura_ids": list(dict.fromkeys(str(i) for i in p.estrutura_ids))[:3],
                 }
                 for p in propostas
             ],

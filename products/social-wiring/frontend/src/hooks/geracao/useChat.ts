@@ -132,7 +132,13 @@ export const FLUXO_POLL_MS = 3000;
  */
 export function fluxoAguardandoRoteiro(data: { pages: MensagensPage[] } | undefined): boolean {
   return !!data?.pages.some((p) =>
-    p.items.some((m) => m.fluxo && !m.fluxo.roteiro && (m.fluxo.etapa === "headline_salva" || m.fluxo.etapa === "roteiro_gerando")),
+    p.items.some(
+      (m) =>
+        m.fluxo &&
+        // roteiro-first: the roteiro is born complete, so nothing polls it; the headline/card/caption steps only show up here.
+        ((m.fluxo.direcao === "roteiro_primeiro" && (m.fluxo.etapa === "roteiro_salvo" || m.fluxo.etapa === "headline_gerando")) ||
+          (!m.fluxo.roteiro && (m.fluxo.etapa === "headline_salva" || m.fluxo.etapa === "roteiro_gerando"))),
+    ),
   );
 }
 

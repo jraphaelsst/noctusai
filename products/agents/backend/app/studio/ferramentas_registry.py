@@ -15,6 +15,7 @@ __all__ = [
     "FERRAMENTAS_CONHECIDAS",
     "FERRAMENTAS_DE_EXTRACAO",
     "GRUPOS_FERRAMENTAS",
+    "ONBOARDING_FERRAMENTAS",
     "GrupoFerramentas",
     "ferramenta_conhecida",
     "ferramenta_da_conversa",
@@ -57,8 +58,17 @@ class GrupoFerramentas:
 #: The academia toolset (academia-de-reciclagem's HTTP API: KB, decisions, questions, timeline, roadmap, tasks,
 #: training content, research sources) -- the SAME gate table and handlers the code-defined academia agent used
 #: (``app.runtime.gate`` / ``app.runtime.tools``), so argument schemas, approvals and the signed assertion are one.
+#: The onboarding interviewer toolset (``onboarding-imob``): the four tools of ``app.onboarding.ferramentas``. Every one
+#: is a ``leitura`` for the broker: none asks a human per call, because the safety is server-side and stronger than a
+#: card -- an answer is recorded only with the client's own words found in the conversation, and the apply runs only
+#: after a summary the client confirmed in words written AFTER it (``app.onboarding.entrevista``).
+ONBOARDING_FERRAMENTAS: tuple[str, ...] = (
+    "progresso_onboarding", "registrar_resposta", "importar_configuracao", "revisar_e_aplicar",
+)
+
 GRUPOS_FERRAMENTAS: dict[str, GrupoFerramentas] = {
     "academia": GrupoFerramentas("academia", gate.LEITURA, gate.ESCRITA),
+    "onboarding": GrupoFerramentas("onboarding", tuple(f"mcp__onboarding__{n}" for n in ONBOARDING_FERRAMENTAS), ()),
 }
 
 
