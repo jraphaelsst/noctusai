@@ -23,12 +23,13 @@ not filtered after the fact. Without the wave-1 switch the address is neighbourh
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from pydantic import Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.agent_tools import ToolResult
 
 from app.services import julia_busca_imoveis as busca
 from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado, julia_imovel_instagram, julia_imovel_referencia
@@ -148,11 +149,7 @@ def _sobrepor_confirmacao(item: dict[str, Any], confirmacoes: list[dict[str, Any
     item["confirmacao_proprietario"] = conf
 
 
-class ComMeta(NamedTuple):
-    """A tool result with sibling keys next to `data` (`restantes_estimados`, `relaxado`, `itens_nao_verificaveis`)."""
-
-    data: Any
-    meta: dict[str, Any]
+ComMeta = ToolResult  # a tool result with sibling keys next to `data` (`restantes_estimados`, `relaxado`, ...)
 
 
 def regioes_adjacentes(client: Any, org_id: UUID) -> dict[str, tuple[str, ...]]:
