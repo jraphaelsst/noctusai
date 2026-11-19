@@ -66,7 +66,7 @@ ALTER TABLE social_wiring.cs_posts VALIDATE CONSTRAINT cs_posts_criacao_rota_che
 -- a failure code exists only while the post is in the `falhou` sub-state (the mover clears it when leaving)
 ALTER TABLE social_wiring.cs_posts DROP CONSTRAINT IF EXISTS cs_posts_falha_codigo_check;
 ALTER TABLE social_wiring.cs_posts ADD CONSTRAINT cs_posts_falha_codigo_check
-    CHECK (falha_codigo IS NULL OR (criacao_estado = 'falhou' AND falha_codigo ~ '^[a-z0-9_]{1,60}$')) NOT VALID;
+    CHECK (falha_codigo IS NULL OR (criacao_estado IS NOT DISTINCT FROM 'falhou' AND falha_codigo ~ '^[a-z0-9_]{1,60}$')) NOT VALID;
 ALTER TABLE social_wiring.cs_posts VALIDATE CONSTRAINT cs_posts_falha_codigo_check;
 
 ALTER TABLE social_wiring.cs_posts DROP CONSTRAINT IF EXISTS cs_posts_cta_objetivo_check;
