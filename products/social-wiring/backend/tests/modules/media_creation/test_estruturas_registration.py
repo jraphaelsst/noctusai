@@ -20,8 +20,9 @@ class TestSettings:
 
 
 class TestJobTypes:
-    def test_the_three_estruturas_job_types_are_declared_and_registrable(self):
-        assert set(gj.ESTRUTURAS_JOB_TYPES) == {"estruturas.importar", "fluxo.finalizar_card", "estruturas.rascunho_do_viral"}
+    def test_the_estruturas_job_types_are_declared_and_registrable(self):
+        assert set(gj.ESTRUTURAS_JOB_TYPES) == {
+            "estruturas.importar", "fluxo.finalizar_card", "estruturas.rascunho_do_viral", "fluxo.headline_do_roteiro"}
         assert set(gj.ESTRUTURAS_JOB_TYPES) <= set(gj.ALL_JOB_TYPES)
         assert set(gj.ESTRUTURAS_JOB_TYPES) <= set(gj.GERACAO_JOB_TYPES), "they ride the geracao worker"
         assert set(gj.GERACAO_JOB_TYPES).isdisjoint(gj.BIBLIOTECA_JOB_TYPES)

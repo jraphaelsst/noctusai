@@ -51,8 +51,10 @@ from app.modules.media_creation.prompts.roteiro_perguntas import (
     build_perguntas_user_message,
     parse_perguntas,
 )
-from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_roteiro
-from app.modules.media_creation.schemas.roteiros import MAX_CONTEUDO, MAX_INSTRUCOES, MAX_NOME
+from app.modules.media_creation.prompts import roteiro_formatos
+from app.modules.media_creation.prompts.estruturas_contexto import renderizar_estrutura
+from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_roteiro, validar_roteiro_formato
+from app.modules.media_creation.schemas.roteiros import MAX_CONTEUDO, MAX_ESTRUTURAS, MAX_INSTRUCOES, MAX_NOME
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.roteiro_aprovacao import (
     NOTA_EDITADO,
@@ -63,6 +65,7 @@ from app.modules.media_creation.services.roteiro_aprovacao import (
     present_estado,
     solicitar_aprovacao_roteiro,
 )
+from app.modules.media_creation.services.estruturas_retrieval import carregar_estruturas
 from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
 
@@ -75,6 +78,11 @@ VIRAIS = "cs_virais"
 PERFIS = "cs_perfis_monitorados"
 MARCA_PERFIL = "cs_marca_perfil"
 POSTS = "cs_posts"
+TABELA_ESTRUTURAS = "cs_estruturas"
+ESTRUTURA_BLOCOS = "cs_estrutura_blocos"
+USOS = "cs_estrutura_usos"
+CONVERSAS = "cs_chat_conversas"
+FLUXO_EVENTOS = "cs_fluxo_eventos"
 REBIND_RPC = "cs_rebind_roteiro"
 JOB_PERGUNTAS = "roteiro.perguntas"
 JOB_GERAR = "roteiro.gerar"
@@ -266,6 +274,42 @@ class RoteiroService:
         if not q.execute().data:
             raise RoteiroError(404, message)
 
+    def _estruturas_do_pedido(self, body: Any) -> tuple[str, list[str]]:
+        """EST-RO (estruturas-contract 6.7): ``(formato, estrutura_ids)``. With Estruturas the formato is the principal's
+        (an explicit different one, a mix of formatos, more than 3, or an unknown / inactive one is a coded 422);
+        without, it is the request's (default ``reels``)."""
+        pedidas = [str(e) for e in (getattr(body, "estrutura_ids", None) or [])]
+        explicito = getattr(body, "formato", None)
+        if not pedidas:
+            return explicito or "reels", []
+        if len(pedidas) > MAX_ESTRUTURAS:
+            raise RoteiroError(422, {"code": "muitas_estruturas", "detail": f"Use no máximo {MAX_ESTRUTURAS} Estruturas."})
+        if len(set(pedidas)) != len(pedidas):
+            raise RoteiroError(422, {"code": "estrutura_obrigatoria_invalida", "detail": "Estrutura repetida."})
+        rows = self.db.table(TABELA_ESTRUTURAS).select("id,formato,status").in_("id", pedidas).execute().data or []
+        por_id = {str(r["id"]): r for r in rows}
+        if any(por_id.get(e, {}).get("status") != "ativa" for e in pedidas):
+            raise RoteiroError(422, {"code": "estrutura_obrigatoria_invalida", "detail": "Estrutura não encontrada ou inativa."})
+        formatos = {por_id[e].get("formato") or "reels" for e in pedidas}
+        if len(formatos) > 1:
+            raise RoteiroError(422, {"code": "formatos_misturados", "detail": "As Estruturas têm formatos diferentes."})
+        formato = por_id[pedidas[0]].get("formato") or "reels"
+        if explicito and explicito != formato:
+            raise RoteiroError(422, {"code": "formato_diferente_da_estrutura",
+                                     "detail": "O formato informado é diferente do formato da Estrutura."})
+        return formato, pedidas
+
+    def _assert_conversa(self, conversa_id: Optional[Any]) -> Optional[str]:
+        if not conversa_id:
+            return None
+        rows = (
+            self.db.table(CONVERSAS).select("id").eq("id", str(conversa_id)).eq("org_id", self.org_id)
+            .eq("user_id", self.user_id).execute().data
+        )
+        if not rows:
+            raise RoteiroError(404, "Conversa não encontrada")
+        return str(conversa_id)
+
     def _get_row(self, roteiro_id: str) -> dict[str, Any]:
         rows = (
             self._table().select(ROTEIRO_COLS).eq("id", roteiro_id).eq("org_id", self.org_id).execute().data
@@ -415,8 +459,12 @@ class RoteiroService:
             self._exists(HEADLINES, str(body.headline_id), "Headline não encontrada", marca_id=marca_id)
         if body.brain_id:
             self._exists(BRAINS, str(body.brain_id), "Cérebro não encontrado")
-        if body.viral_id:
-            self._exists(VIRAIS, str(body.viral_id), "Vídeo viral não encontrado")
+        formato, estrutura_ids = self._estruturas_do_pedido(body)
+        conversa_id = self._assert_conversa(getattr(body, "conversa_id", None))
+        # EST-RO: ``viral_id`` is deprecated and ignored when Estruturas are given
+        viral_id = None if estrutura_ids else (str(body.viral_id) if body.viral_id else None)
+        if viral_id:
+            self._exists(VIRAIS, viral_id, "Vídeo viral não encontrado")
         headline = body.headline_texto.strip()
         if not headline:
             raise RoteiroError(422, "Informe a headline")
@@ -433,7 +481,8 @@ class RoteiroService:
             "headline_texto": headline, "instrucoes": body.instrucoes.strip(), "fonte": "ia",
             "duracao": body.duracao, "estrutura": body.estrutura,
             "brain_id": str(body.brain_id) if body.brain_id else None,
-            "viral_id": str(body.viral_id) if body.viral_id else None, "perguntas": [],
+            "viral_id": viral_id, "perguntas": [], "formato": formato, "estrutura_ids": estrutura_ids,
+            "conversa_id": conversa_id,
             "status": "criando" if pergunta_primeiro else "processando",
             "etapa": ETAPA_PERGUNTAS if pergunta_primeiro else ETAPA_GERANDO,
             "conteudo": "", "versao": 1, "modelo": self.cfg.geracao_llm_model,
@@ -705,6 +754,12 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         raise DeadLetterError(f"roteiro {roteiro_id or '?'} não existe")
     if row["status"] != "processando":
         return
+    formato = row.get("formato") or "reels"
+    estrutura_ids = [str(e) for e in (row.get("estrutura_ids") or [])]
+    if formato != "reels" or estrutura_ids:
+        # EST-RO: every format, and the Estruturas' block order; the legacy reels path below stays byte-identical
+        await _gerar_por_formato(job, db=db, llm=llm, cfg=cfg, row=row, formato=formato, estrutura_ids=estrutura_ids)
+        return
     # A row written before migration 250 has no ``estrutura``: it was generated with the cta_inicio
     # order (the column's default). A value outside the contract fails the row loudly, never a fallback.
     estrutura = row.get("estrutura") or ESTRUTURA_PADRAO
@@ -760,6 +815,126 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         from_status=["processando"],
     )
     if moved:
+        _submeter_geracao(db, row, versao=1)
+
+
+async def _chamar_llm(job: Job, db: Any, llm: RoteiroLlm, row: dict[str, Any], system: str, user: str) -> Optional[str]:
+    """The model call with the same settle rules as the legacy path; ``None`` when the row was settled as ``falha``."""
+    roteiro_id = str(row["id"])
+    try:
+        reply = await llm(system, user, row["org_id"])
+    except LLMNotConfigured:
+        _falha(db, roteiro_id, MSG_IA_NAO_CONFIGURADA, from_status=["processando"])
+        return None
+    except LLMBudgetExceeded:
+        _falha(db, roteiro_id, MSG_ORCAMENTO, from_status=["processando"])
+        return None
+    except Exception as exc:  # noqa: BLE001 - retry until the last attempt, then settle the row
+        logger.error("roteiro %s: geração falhou (%s: %s)", roteiro_id, type(exc).__name__, exc)
+        if _ultima_tentativa(job):
+            _falha(db, roteiro_id, MSG_IA_FALHOU, from_status=["processando"])
+            return None
+        raise
+    return reply
+
+
+def _evento_roteiro(db: Any, row: dict[str, Any], tipo: str, contagem: int) -> None:
+    """A content-free event of a chat roteiro (``cs_fluxo_eventos`` needs the conversation; elsewhere it is logged)."""
+    if not row.get("conversa_id"):
+        logger.warning("roteiro %s: %s (%s) fora de uma conversa", row.get("id"), tipo, contagem)
+        return
+    db.table(FLUXO_EVENTOS).insert({
+        "id": str(uuid.uuid4()), "org_id": row["org_id"], "marca_id": row["marca_id"], "conversa_id": row["conversa_id"],
+        "roteiro_id": row["id"], "proposta_id": row.get("proposta_id"), "ator_id": row.get("created_by"), "tipo": tipo,
+        "contagem": int(contagem),
+    }).execute()
+
+
+def _gravar_usos(db: Any, row: dict[str, Any], estruturas: list[Any], separada: Any) -> None:
+    """EST-RO usos (estruturas-contract 6.7): one ``cs_estrutura_usos`` row per offered Estrutura (principal first),
+    ``bloco_ids`` = the block names the model attributed that match the Estrutura's own blocks. A missing sentinel is
+    ``atribuicao_ausente``; unmatched citations are counted in ``citacao_rejeitada``. Never a failure."""
+    if not estruturas:
+        return
+    ids = [e.id for e in estruturas]
+    blocos = db.table(ESTRUTURA_BLOCOS).select("id,estrutura_id,nome").in_("estrutura_id", ids).execute().data or []
+    oferecidas: dict[str, dict[str, str]] = {e.codigo: {} for e in estruturas}
+    codigo_de = {e.id: e.codigo for e in estruturas}
+    for b in blocos:
+        oferecidas[codigo_de[str(b["estrutura_id"])]][str(b["id"])] = b["nome"]
+    resolvidos = roteiro_formatos.resolver_usos(separada.usos, oferecidas)
+    ja = {
+        str(u["estrutura_id"])
+        for u in db.table(USOS).select("estrutura_id").eq("roteiro_id", row["id"]).execute().data or []
+    }
+    novos = [
+        {"id": str(uuid.uuid4()), "org_id": row["org_id"], "marca_id": row["marca_id"], "estrutura_id": e.id,
+         "contexto": "chat" if row.get("conversa_id") else "roteiro_avancado",
+         "papel": "principal" if i == 1 else "mistura", "ordem": i,
+         "bloco_ids": list(resolvidos.blocos_por_codigo.get(e.codigo, ())), "roteiro_id": row["id"],
+         "headline_id": None, "proposta_id": row.get("proposta_id"), "created_by": row.get("created_by")}
+        for i, e in enumerate(estruturas, start=1) if e.id not in ja
+    ]
+    if novos:
+        db.table(USOS).insert(novos).execute()
+    if not separada.sentinela_presente:
+        _evento_roteiro(db, row, "atribuicao_ausente", 1)
+    if resolvidos.rejeitados:
+        _evento_roteiro(db, row, "citacao_rejeitada", resolvidos.rejeitados)
+
+
+async def _gerar_por_formato(
+    job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any, row: dict[str, Any], formato: str, estrutura_ids: list[str],
+) -> None:
+    """``roteiro.gerar`` for a non-reels formato or a roteiro that follows Estruturas (EST-RO 6.7, prompts EST-FMT 8.7)."""
+    roteiro_id = str(row["id"])
+    ordem_cta = row.get("estrutura") or ESTRUTURA_PADRAO
+    if ordem_cta not in ESTRUTURAS or (formato != "reels" and formato not in roteiro_formatos.PROMPT_VERSOES):
+        logger.error("roteiro %s: estrutura/formato desconhecido (%r, %r)", roteiro_id, ordem_cta, formato)
+        _falha(db, roteiro_id, MSG_IA_FALHOU, from_status=["processando"])
+        return
+    estruturas = carregar_estruturas(db, estrutura_ids)
+    if len(estruturas) != len(estrutura_ids):  # deleted after the request was accepted: loud, never a silent fallback
+        logger.error("roteiro %s: %d de %d Estruturas não existem mais", roteiro_id, len(estrutura_ids) - len(estruturas), len(estrutura_ids))
+        _falha(db, roteiro_id, MSG_IA_FALHOU, from_status=["processando"])
+        return
+    ctx = _contexto(db, row)
+    reply = await _chamar_llm(
+        job, db, llm, row,
+        roteiro_formatos.system_prompt(formato, com_estruturas=bool(estruturas), ordem_cta=ordem_cta),
+        roteiro_formatos.build_user_message(
+            formato, headline=row["headline_texto"], estruturas=[renderizar_estrutura(e) for e in estruturas],
+            instrucoes=row.get("instrucoes") or "", duracao=row.get("duracao") or "auto",
+            perguntas=list(row.get("perguntas") or []), bio=ctx["bio"],
+            apresentacao_magnetica=ctx["apresentacao_magnetica"], ctas=ctx["ctas"], cerebro=ctx["cerebro"],
+        ),
+    )
+    if reply is None:
+        return
+    separada = roteiro_formatos.separar_sentinela((reply or "").strip())
+    try:
+        if formato == "reels":
+            conteudo = validar_roteiro(separada.roteiro)["conteudo"]
+        else:
+            conteudo = validar_roteiro_formato(formato, separada.roteiro, headline=row["headline_texto"])["conteudo"]
+    except SaidaIaFalha as falha:
+        logger.error("roteiro %s: saída da IA rejeitada (%s)", roteiro_id, falha)
+        _falha(db, roteiro_id, MSG_SAIDA_INVALIDA.format(codigo=falha.codigo), from_status=["processando"])
+        return
+    if not conteudo or len(conteudo) > MAX_CONTEUDO:
+        _falha(db, roteiro_id, MSG_SAIDA_INVALIDA.format(codigo="saida_limite_excedido"), from_status=["processando"])
+        return
+    moved = _settle(
+        db, roteiro_id,
+        {
+            "status": "completo", "etapa": None, "erro": None, "conteudo": conteudo, "conteudo_original": conteudo,
+            "modelo": cfg.geracao_llm_model, "prompt_versao": roteiro_formatos.prompt_versao(formato, ordem_cta),
+            "finished_at": _iso(_now()),
+        },
+        from_status=["processando"],
+    )
+    if moved:
+        _gravar_usos(db, row, estruturas, separada)
         _submeter_geracao(db, row, versao=1)
 
 

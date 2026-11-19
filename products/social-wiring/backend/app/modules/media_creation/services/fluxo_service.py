@@ -11,9 +11,10 @@ This slice owns the proposta persistence and **steps 1-3** of the ``escolher`` s
    leaves the headline saved (``fluxo_etapa='headline_salva'``), gives the lease back and returns the coded error; the
    user retries the same click later.
 
-Steps 4-7 (roteiro through ``RoteiroService``, the Esteira card, the finalizer job, the ``roteiro_gerado`` message) are
-UNI-1b (wave 3, after S3): the seam is :attr:`FluxoService.continuacao`. It is ``None`` today and the response says so
-truthfully (``fluxo.etapa='headline_salva'``, ``roteiro: null``) -- there is no stub that pretends to succeed.
+Steps 4-7 (roteiro through ``RoteiroService``, the Esteira card, the finalizer job, the ``roteiro_gerado`` message; for
+a chosen roteiro the generated headline job first) are ``services/fluxo_continuacao.py`` (RP-3), plugged in through the
+seam :attr:`FluxoService.continuacao` by ``routers/chat.py``. A roteiro proposta (16.6) saves the script at step 2
+(``cs_chat_proposta_salvar_roteiro``) and is held to the daily headline cap at step 3.
 
 Every state change writes its intent-named ``cs_fluxo_eventos`` row in the SAME transaction (inside the RPCs); this
 module never writes an event by hand.
@@ -69,6 +70,7 @@ MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL = "Ainda não consigo criar a headline a parti
 #: ``Fluxo.direcao`` (contract 16.1): the proposta's ``tipo`` decides it, never a client flag.
 DIRECAO_POR_TIPO = {"headline": "headline_primeiro", "roteiro": "roteiro_primeiro"}
 MSG_LIMITE_ROTEIROS = "Limite diário de roteiros atingido. Tente novamente mais tarde."
+MSG_LIMITE_HEADLINES = "Limite diário de headlines atingido. Tente novamente mais tarde."
 MSG_IA_NAO_CONFIGURADA = "A IA não está configurada para esta conta."
 
 #: RAISE EXCEPTION '<code>' of the migration's RPCs -> (status, code, pt-BR message).
@@ -77,7 +79,7 @@ _RPC_ERROS: dict[str, tuple[int, str, str]] = {
     "headline_nao_encontrada": (404, "proposta_nao_encontrada", MSG_PROPOSTA_NAO_ENCONTRADA),
     "conversa_nao_encontrada": (404, "proposta_nao_encontrada", MSG_PROPOSTA_NAO_ENCONTRADA),
     "proposta_nao_escolhida": (409, "proposta_nao_escolhida", "Esta headline ainda não foi escolhida."),
-    # migration 358 (roteiro-first). Until RP-3 wires its saga, a click on a roteiro proposta reaches the 3-arg headline
+    # migration 358 (roteiro-first): a roteiro proposta whose tipo the claim did not return would reach the 3-arg headline
     # save and is refused here as a coded 409 -- never a 500, never a fake success.
     "headline_texto_ausente": (409, "roteiro_primeiro_indisponivel", MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL),
     "roteiro_nao_salvo": (409, "roteiro_primeiro_indisponivel", MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL),
@@ -404,7 +406,9 @@ class FluxoService:
         })
         if not reivindicacao.get("claimed"):
             return reivindicacao["proposta"], False
-        self._rpc("cs_chat_proposta_salvar_headline", {"p_proposta": proposta_id, "p_org": self.org_id, "p_user": self.user_id})
+        # step 2 by direction (16.6): a roteiro proposta saves the script as-is; a headline proposta saves the headline
+        salvar = "cs_chat_proposta_salvar_roteiro" if _tipo(reivindicacao.get("proposta") or {}) == "roteiro" else "cs_chat_proposta_salvar_headline"
+        self._rpc(salvar, {"p_proposta": proposta_id, "p_org": self.org_id, "p_user": self.user_id})
         atual = self.get_proposta(str(proposta_id))
         if atual is None:  # claimed and saved a moment ago: its absence is a bug, not a 404
             raise RuntimeError(f"proposta {proposta_id} desapareceu depois do claim")
@@ -424,9 +428,20 @@ class FluxoService:
         )
         return len(rows)
 
-    async def preflight(self) -> None:
+    def _headlines_hoje(self) -> int:
+        """Headlines generated from a roteiro by this user in the rolling window (capped read)."""
+        cap = int(self.cfg.headline_lotes_dia_usuario)
+        rows = (
+            self.db.table(HEADLINES).select("id").eq("org_id", self.org_id).eq("created_by", self.user_id)
+            .eq("modo", "do_roteiro").gte("created_at", (_agora() - JANELA_ROTEIROS).isoformat()).limit(cap).execute().data
+            or []
+        )
+        return len(rows)
+
+    async def preflight(self, tipo: str = "headline") -> None:
         """Step 3: every refusal that must come BEFORE the expensive step (contract 9.2; no format gate: every
-        formato is supported). ``geracao_jobs`` raises ``HTTPException`` with a coded detail."""
+        formato is supported). ``geracao_jobs`` raises ``HTTPException`` with a coded detail. Roteiro-first (16.6) is
+        held to the daily HEADLINE cap (its expensive step is the generated headline), headline-first to the roteiro cap."""
         geracao_jobs.assert_geracao_disponivel(self.cfg)
         try:
             await run_in_threadpool(self.ia_check, self.org_id)  # resolves a key: may read the DB
@@ -436,6 +451,13 @@ class FluxoService:
                 exc.status, detalhe.get("detail") or MSG_IA_NAO_CONFIGURADA, code=detalhe.get("code") or "ia_nao_configurada"
             ) from exc
         await self.orcamento(self.org_id)
+        if tipo == "roteiro":
+            if await run_in_threadpool(self._headlines_hoje) >= int(self.cfg.headline_lotes_dia_usuario):
+                raise ChatError(
+                    429, MSG_LIMITE_HEADLINES, code="limite_diario_headlines",
+                    headers={"Retry-After": str(RETRY_AFTER_ROTEIROS_S)},
+                )
+            return
         if await run_in_threadpool(self._roteiros_hoje) >= int(self.cfg.roteiros_dia_usuario):
             raise ChatError(
                 429, MSG_LIMITE_ROTEIROS, code="limite_diario_roteiros",
@@ -461,7 +483,7 @@ class FluxoService:
             # a concurrent double click (lease held) or an already finished flow: the current state, not an error
             return await run_in_threadpool(self._resultado, proposta, True, proposta.get("fluxo_etapa") != "concluido")
         try:
-            await self.preflight()
+            await self.preflight(_tipo(proposta))
         except (ChatError, HTTPException) as exc:
             # the headline stays saved; give the lease back so the same click can be retried at once
             await run_in_threadpool(self._liberar_sync, str(proposta["id"]), self._codigo_da_recusa(exc))
