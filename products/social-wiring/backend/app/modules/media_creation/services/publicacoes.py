@@ -15,6 +15,8 @@ and never trusts the model, so every rule the cards rely on is re-checked here::
     - Fontes: <url (verificada) | afirmação (não verificada) | nenhuma>
     - Voz: <...>                               (the agent's own declaration; not persisted)
 
+A field that appears twice in one block makes the block invalid (``campo_duplicado``): no first-wins / last-wins pick.
+
 A block that fails any rule is dropped whole and COUNTED (``invalidas`` -> the ``publicacao_invalida`` event); a text
 with no block at all is not invalid (a legacy-path reply carries none). :func:`vincular_publicacoes` binds each valid
 block to the option it belongs to: the block's ``n`` is the option's own number in the reply (``PropostaValidada.numero``;
@@ -77,20 +79,24 @@ class Vinculo:
     invalidas: int
 
 
-def _blocos(texto: str) -> list[tuple[int, dict[str, str]]]:
+def _blocos(texto: str) -> list[tuple[int, dict[str, str], tuple[str, ...]]]:
     marcas = list(_PUB_RE.finditer(texto or ""))
-    out: list[tuple[int, dict[str, str]]] = []
+    out: list[tuple[int, dict[str, str], tuple[str, ...]]] = []
     for i, m in enumerate(marcas):
         fim = marcas[i + 1].start() if i + 1 < len(marcas) else len(texto)
         resto = texto[m.end():fim]
         proximo = _CABECALHO_RE.search(resto)
         corpo = resto[: proximo.start()] if proximo else resto
         campos: dict[str, str] = {}
+        duplicados: list[str] = []
         for linha in corpo.splitlines():
             c = _CAMPO_RE.match(linha)
             if c:
-                campos.setdefault(_chave(c.group(1)), c.group(2).strip())
-        out.append((int(m.group(1)), campos))
+                chave = _chave(c.group(1))
+                if chave in campos and chave not in duplicados:
+                    duplicados.append(chave)
+                campos.setdefault(chave, c.group(2).strip())
+        out.append((int(m.group(1)), campos, tuple(duplicados)))
     return out
 
 
@@ -145,8 +151,9 @@ def extrair_publicacoes(texto: str) -> ResultadoPublicacoes:
     """Every valid ``### Publicação <n>`` block keyed by ``n``; the rest are counted (a repeated ``n`` keeps the first)."""
     por_numero: dict[int, PublicacaoValidada] = {}
     invalidas = 0
-    for numero, campos in _blocos(texto):
-        pub = _validar(numero, campos)
+    for numero, campos, duplicados in _blocos(texto):
+        # a field written twice is never silently resolved: the block is invalid (reason ``campo_duplicado``, as the agent side)
+        pub = None if duplicados else _validar(numero, campos)
         if pub is None or numero in por_numero:
             invalidas += 1
             continue
