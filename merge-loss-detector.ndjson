@@ -106,3 +106,5 @@
 {"ts": "2026-11-19T10:41:52.996514+00:00", "merge_sha": "MERGE_HEAD", "files": [], "dropped_count": 0, "mode": "shadow", "verdict": "clean"}
 {"ts": "2026-11-19T11:56:19.934071+00:00", "merge_sha": "MERGE_HEAD", "files": [], "dropped_count": 0, "mode": "shadow", "verdict": "clean"}
 {"ts": "2026-11-19T11:59:10.040886+00:00", "merge_sha": "MERGE_HEAD", "files": [], "dropped_count": 0, "mode": "shadow", "verdict": "clean"}
+{"ts": "2026-11-19T12:03:24.738905+00:00", "merge_sha": "MERGE_HEAD", "files": [], "dropped_count": 0, "mode": "shadow", "verdict": "clean"}
+{"ts": "2026-11-19T12:05:32.807368+00:00", "merge_sha": "MERGE_HEAD", "files": ["KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "mcp/noctusai/tests/stage_list_not_in_code_baseline.json", "products/social-wiring/backend/app/modules/media_creation/criacao_rotas.py", "products/social-wiring/backend/app/modules/media_creation/esteira_config.py"], "dropped_count": 92, "mode": "shadow", "verdict": "dropped", "dropped_paths": ["products/social-wiring/backend/app/modules/media_creation/criacao_rotas.py"]}
