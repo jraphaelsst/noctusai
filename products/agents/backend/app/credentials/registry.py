@@ -20,6 +20,8 @@ __all__ = [
     "CredentialKind",
     "CredentialSpec",
     "ISSUER",
+    "PLATFORM_ISSUER",
+    "SW_ONBOARDING_TOKEN",
     "ACADEMIA_AGENT_ID",
     "TOKEN_TTL_DAYS",
     "get_spec",
@@ -29,6 +31,10 @@ CredentialKind = Literal["product_token", "api_key", "key_ring", "config"]
 
 #: `api_tokens.issuer` for every token agents mints.
 ISSUER = "agents"
+
+#: `api_tokens.issuer` of a PLATFORM-issued service token (the only issuer a platform-only route accepts: an org admin's
+#: token can never carry it, the generic mint route never sets an issuer).
+PLATFORM_ISSUER = "noctus-platform"
 
 #: Seed maximum for a product token's lifetime (`auth_router`
 #: `_API_TOKEN_MAX_EXPIRY_DAYS`); a renewal always mints for the full span.
@@ -50,6 +56,8 @@ class CredentialSpec:
     secret: bool = True
     #: `agents.app_integration_config` key; defaults to ``name``.
     storage_key: str | None = None
+    #: `api_tokens.issuer` a renewal mints with (the registry, never request input).
+    issuer: str = ISSUER
 
     @property
     def store_key(self) -> str:
@@ -83,6 +91,22 @@ ACADEMIA_API_TOKEN = CredentialSpec(
     ),
     bind_principal=True,
     token_label="agents → academia (Bia)",
+)
+
+#: The onboarding interviewer's service token into social-wiring's staff channel (owner 2026-11-18: no human ever
+#: creates, copies or pastes it). Deliberately NOT in ``CREDENTIALS``: that list feeds the "Credenciais" page, whose
+#: paste / import paths must never be offered for this one. ``app.onboarding.sw_canal`` provisions and rotates it.
+SW_ONBOARDING_TOKEN = CredentialSpec(
+    name="sw_onboarding_service_token",
+    label="Canal da equipe com o Social Wiring (onboarding)",
+    kind="product_token",
+    env_var="",
+    settings_attr="",
+    target_product="social-wiring",
+    target_schema="social_wiring",
+    scopes=("social-wiring:onboarding-settings",),
+    token_label="agents -> social-wiring (onboarding, plataforma)",
+    issuer=PLATFORM_ISSUER,
 )
 
 ANTHROPIC_API_KEY = CredentialSpec(

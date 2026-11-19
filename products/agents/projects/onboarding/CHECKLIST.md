@@ -93,7 +93,10 @@ Evals: behaviour (LLM-judged) `agent/onboarding-imob-evals-comportamento.json`; 
 ## Deferred (named destinations)
 
 - SW settings are applied through `SwSettingsPort` -> social-wiring's onboarding staff channel (service token + staff
-  `ator`; SW allow-lists the settings). Not yet allow-listed in SW (reported `recusado`, apply by hand): items `visitas`,
+  `ator`; SW allow-lists the settings). The token is self-provisioned (agents mints it into `social_wiring.api_tokens`
+  under issuer `noctus-platform`, probes it against `GET /api/julia/onboarding/whoami`, stores it encrypted in
+  `agents.app_integration_config`, rotates it at <= 7 days left): no human step, no paste. The Studio card
+  "Conexão com o Social Wiring" shows its state and tests it. Not yet allow-listed in SW (reported `recusado`, apply by hand): items `visitas`,
   `agente_nome`, `destino_lead_pronto` — `NOC-REMEDIATE[onboarding-sw-staff-more-settings]`, destination: next SW slice.
 - Free-prose import (extracting items from a pasted paragraph) is the interviewer's conversational job, not the
   parser's — `NOC-REMEDIATE[onboarding-import-prose]`, destination: interviewer evals once the agent is applied.

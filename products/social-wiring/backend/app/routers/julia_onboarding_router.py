@@ -1,5 +1,7 @@
 """Onboarding staff channel -- agents writes a client org's Julia settings as the NoctusAI team (service tier).
 
+  GET /api/julia/onboarding/whoami   the harmless read-only check the channel's holder (agents) makes to prove the credential
+                                     works: answers only {"ok": true, "escopo": <the onboarding scope>} -- no org, no data
   PUT /api/julia/onboarding/orgs/{org_id}/configuracoes/{setting}   body {"corpo": {...}, "ator": {"user_id": uuid}, "grant_id"?: uuid}
 
 Auth (every layer is a refusal, none a hint):
@@ -64,6 +66,14 @@ class ConfiguracaoIn(StrictHttpModel):
     corpo: dict[str, Any] = Field(max_length=20)
     ator: Ator
     grant_id: Optional[UUID] = None
+
+
+@router.get("/api/julia/onboarding/whoami")
+@access_tier("service")
+def get_whoami() -> dict[str, Any]:
+    """Reached only with a valid, unexpired platform-issued token carrying the onboarding scope (the guard refuses
+    everything else, 401 / 403): so a 200 proves credential, scope and issuer end to end. Answers no org and no data."""
+    return {"data": {"ok": True, "escopo": ONBOARDING_SCOPE}}
 
 
 @router.put("/api/julia/onboarding/orgs/{org_id}/configuracoes/{setting}")
