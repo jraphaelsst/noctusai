@@ -102,7 +102,7 @@ export function algumRoteiroDoBoardEmAndamento(colunas: Pick<EsteiraColuna, "car
 }
 
 /** Strip empty filter values so `{busca: ""}` and `{}` share one cache entry. */
-function limpar(f: EsteiraFiltros): EsteiraFiltros {
+export function limpar(f: EsteiraFiltros): EsteiraFiltros {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(f)) {
     if (v === undefined || v === null || v === "" || v === false) continue;

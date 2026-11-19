@@ -90,6 +90,8 @@ export interface PipelineBoardProps<TCard> {
    * click.
    */
   onCardClick?: (card: TCard) => void;
+  /** Declared slot rendered inside each card after its content (forwarded to `KanbanBoard`'s `statusSlot`): live status lines. */
+  statusSlot?: (card: TCard, state: KanbanCardRenderState) => React.ReactNode;
   /** Server-side filters, forwarded to the board endpoint and the query key. */
   filtros?: Record<string, any>;
   /** Format a column's monetary total. Defaults to a plain number. */
@@ -164,6 +166,7 @@ export function PipelineBoard<TCard>({
   hooks,
   renderCard,
   onCardClick,
+  statusSlot,
   filtros,
   formatValue = (v) => String(v),
   showValue = true,
@@ -416,6 +419,7 @@ export function PipelineBoard<TCard>({
           );
         }}
         onCardActivate={onCardClick}
+        statusSlot={statusSlot}
         renderColumnHeader={(stage) => {
           const coluna = columns.find((c) => c.etapa === stage.id);
           const classes = stageColorClasses(coluna?.stage?.cor);

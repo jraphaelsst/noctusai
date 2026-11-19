@@ -7,18 +7,18 @@
  * - `POST   {ESTEIRA_BASE}/posts/{id}/aprovacoes   {alvo, decisao, motivo?}` -> `PostDetalhe` (approval organ).
  * - `GET    {ESTEIRA_BASE}/posts/{id}/criacao/progress` (SSE `JobProgress`, scope
  *   `job_progress_scope(org, "{post}:{rodada}")`) -> `useCriacaoProgresso`.
- * - `GET    {ESTEIRA_BASE}/stream` (SSE `pipeline.card_moved` / `pipeline.card_state`) -> `useEsteiraStream`.
+ * - `GET    {ESTEIRA_BASE}/stream` (seed pipeline stream: `pipeline.card_moved` / `pipeline.card_state`) -> `useEsteiraStream`.
  * - `GET/PUT {CRIACAO_BASE}/cota` -> monthly vendor-cost cap (default US$15, org-admin editable).
  *
  * Loading rule (lying-loading-state.md): `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useJobProgress, useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useJobProgress, usePipelineStream } from "@noctusai/lib";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, getAuthToken } from "@noctusai/seed/infra";
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 
-import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
+import { ESTEIRA_KEY } from "@/lib/esteiraKeys";
 import type {
   AlvoAprovacao,
   CotaCriacao,
@@ -27,7 +27,7 @@ import type {
   DecisaoAprovacao,
   PostDetalhe,
 } from "@/types/esteira";
-import { ESTEIRA_BASE, esteiraKeys, POST_SETTLE, postTargets } from "./useEsteira";
+import { ESTEIRA_BASE, esteiraKeys, limpar, POST_SETTLE, postTargets, type EsteiraFiltros } from "./useEsteira";
 
 interface Envelope<T> {
   success?: boolean;
@@ -94,32 +94,18 @@ export function useCriacaoProgresso(postId: string | null, estado: CriacaoEstado
 
 // ─── Board stream ───────────────────────────────────────────────────────────
 
-export const ESTEIRA_STREAM_EVENTS = ["pipeline.card_moved", "pipeline.card_state"] as const;
-
 /**
- * Board push: the system moves cards by itself (criação -> edição -> aprovação final), so the board
- * re-reads on `pipeline.card_moved` / `pipeline.card_state` instead of waiting for a poll.
- *
- * NOC-REMEDIATE[pipeline-stream-seed-hook]: slice S1 ships the seed `useEsteiraStream`/pipeline-stream
- * hook on `feat/seed-pipeline-stream`; this is the typed seam over `useRealtimeStream` and retires onto
- * the seed hook once it is on dev — 2026-11-19. Fallback when the stream is down is the board's own poll.
+ * Board push: the system moves cards by itself (criação -> edição -> aprovação final). The seed
+ * `usePipelineStream` merges `pipeline.card_moved` / `pipeline.card_state` straight into the cached board
+ * (re-homing the card between columns) and polls by invalidation only while the stream is down.
+ * `filtros` must be the board's own filters so the exact cache entry is the one that is filled.
  */
-export function useEsteiraStream(options: { enabled?: boolean } = {}) {
-  const qc = useQueryClient();
-  const onEvent = useCallback(
-    (m: RealtimeMessage) => {
-      if (!(ESTEIRA_STREAM_EVENTS as readonly string[]).includes(m.event)) return;
-      const cardId = typeof m.payload.card_id === "string" ? m.payload.card_id : null;
-      void qc.invalidateQueries({ queryKey: [ESTEIRA_PIPELINE_KEY] });
-      if (cardId) void qc.invalidateQueries({ queryKey: esteiraKeys.post(cardId) });
-    },
-    [qc],
-  );
-  return useRealtimeStream(`${ESTEIRA_BASE}/stream`, {
+export function useEsteiraStream(filtros: EsteiraFiltros = {}, options: { enabled?: boolean } = {}) {
+  return usePipelineStream("esteira", {
+    url: `${ESTEIRA_BASE}/stream`,
     getAuthToken,
-    events: ESTEIRA_STREAM_EVENTS,
+    queryKeys: [esteiraKeys.board(limpar(filtros))],
     enabled: options.enabled ?? true,
-    onEvent,
   });
 }
 

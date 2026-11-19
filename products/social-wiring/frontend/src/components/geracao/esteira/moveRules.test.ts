@@ -40,8 +40,8 @@ describe("decidirMovimento (contract §4)", () => {
     expect(decidirMovimento(ctx("forward", null, "postado"))).toEqual({ tipo: "postado" });
   });
 
-  it("labels the three roles", () => {
-    expect(Object.keys(ESTEIRA_ROLE_LABELS).sort()).toEqual(["cancelado", "gravacao", "postado"]);
+  it("labels every stage role (criacao keeps gravacao as legacy alias)", () => {
+    expect(Object.keys(ESTEIRA_ROLE_LABELS).sort()).toEqual(["aprovacao_midia", "cancelado", "criacao", "edicao", "gravacao", "postado", "pronto", "roteiro"]);
   });
 });
 

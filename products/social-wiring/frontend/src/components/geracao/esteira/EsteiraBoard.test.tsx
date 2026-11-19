@@ -155,7 +155,12 @@ describe("EsteiraBoard", () => {
     await screen.findByText("Reel do café");
     expect(m.props.current.showValue).toBe(false);
     expect(m.props.current.roleLabels).toEqual({
-      gravacao: "Início da produção",
+      roteiro: "Roteiro",
+      criacao: "Criação",
+      gravacao: "Criação",
+      edicao: "Edição",
+      aprovacao_midia: "Aprovação final",
+      pronto: "Pronto",
       postado: "Publicado",
       cancelado: "Encerrado",
     });
@@ -268,7 +273,7 @@ describe("EsteiraBoard", () => {
     fireEvent.click(await screen.findByText("soltar"));
     await waitFor(() => expect(m.toast.error).toHaveBeenCalled());
     const [msg, opts] = m.toast.error.mock.calls[0];
-    expect(msg).toMatch(/headline e roteiro concluído/);
+    expect(msg).toMatch(/headline e roteiro aprovados/);
     opts.action.onClick();
     expect(onOpen).toHaveBeenCalledWith("p1");
   });

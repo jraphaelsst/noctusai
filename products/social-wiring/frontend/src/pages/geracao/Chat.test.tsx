@@ -222,7 +222,7 @@ describe("Chat", () => {
     const caixas = rtl.screen.getAllByRole("checkbox");
     await userEvent.click(caixas[0]);
     await userEvent.click(caixas[1]);
-    expect(rtl.screen.getByTestId("selecao-barra")).toHaveTextContent("2 propostas selecionadas");
+    expect(rtl.screen.getByTestId("selecao-barra").textContent).toContain("2 propostas selecionadas");
     await userEvent.click(rtl.screen.getByRole("button", { name: "Criar 2 cards" }));
     expect(c.selecionar).toHaveBeenCalledWith({ conversaId: "c1", ids: ["p1", "p2"] });
   });

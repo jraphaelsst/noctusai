@@ -57,6 +57,7 @@ known_facts:
   within one collection, no columns/stages/droppable zones) — a different
   primitive (a "sortable list", not a "kanban board"). Left untouched.'
 - '`draggable?: boolean` (default true, additive): false renders every card non-draggable (no sortable listeners/attributes); with onCardActivate a card is a keyboard-reachable button (Enter/Space). For read-only boards whose column is derived (ImobShotAI etapa projection).'
+- '`statusSlot?: (card, state) => ReactNode` (additive, 2026-11-19; also on `KanbanColumn`, `PipelineBoard`, and as a ReactNode on `KanbanCard`): a declared slot rendered inside the card after its content and never in the drag overlay — a live status line (criacao-pipeline-contract §3) is mounted here, not by forking the card face. `usePipelineStream(pipelineId, {url, getAuthToken, queryKeys, getCardId?, withStage?, withState?, getColumnId?, enabled?, fallbackAfterMs?, pollMs?})` (`@noctusai/lib`, `pipeline-stream.ts`) keeps a board live: `pipeline.card_moved` re-homes the card into its target column and `pipeline.card_state` merges into it, straight in the cache (`applyPipelineEvent` understands an array of cards, `{cards}`, and the column-grouped `{cards}[]` that `PipelineBoard` caches); with the stream down for `fallbackAfterMs` it polls by invalidation, and it never invents a board while loading.'
 errors_encountered: []
 drifts_surfaced:
 - 'roadmap premise correction: `products/orbity/frontend/src/pages/Funil.tsx`
