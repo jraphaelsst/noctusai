@@ -17129,6 +17129,8 @@ def check_db_guard_registry_static(repo_root: Path | None = None) -> list[dict]:
         issues.append({"product": "<harness>", "file": "mcp/noctusai/tools/noctus/dev/verify_db_guards.py",
                        "issue": f"probe `{probe_id}`: {msg}", "severity": "high", "symbol": symbol})
 
+    # NOC-REMEDIATE[hook-primary-toolkit-registry]: this keeper statically checks the RUNNING toolkit's registry, so under the
+    # primary-toolkit hooks a branch-added probe is only validated after merge (CI judges the merged tree) — 2026-11-19
     try:
         from tools.noctus.dev import verify_db_guards as _vdg
     except Exception as exc:  # unmeasurable is surfaced, never a silent pass
@@ -17218,6 +17220,37 @@ def _dropped_guards_still_probed(content: str, rel: str, product: str, registere
     return out
 
 
+def _registered_guard_names_for_tree(root: Path) -> frozenset[str]:
+    """The guard names `DEFAULT_REGISTRY` proves = the toolkit's own set UNION the literal `guard_name="..."`
+    keywords found in the JUDGED tree's `verify_db_guards.py`, read as DATA with `ast` and NEVER executed.
+
+    The hooks run the PRIMARY's toolkit against a worktree (`--worktree-path`), so a plain import returns the
+    primary's registry and a branch that adds a probe for its own new migration could never pass this keeper
+    (the S4/S9 `NOCTUS_HOOK_OWN_TOOLKIT` workaround). Importing the branch file would execute branch code inside the
+    keeper's process (it could rebind this very function), so only its syntax tree is read. A probe whose
+    `guard_name` is not a string literal contributes nothing -- its guard stays unregistered and is flagged, never
+    passed. Retiring a probe is not visible this way (the toolkit's set still lists it). An unparseable branch file
+    -> the toolkit's set, with a logged warning. KB § PATTERNS/common/self-branching-mode.md."""
+    from . import verify_db_guards as _toolkit_vdg
+
+    base = _toolkit_vdg.REGISTERED_GUARD_NAMES
+    branch_file = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "verify_db_guards.py"
+    try:
+        if not branch_file.is_file() or branch_file.resolve() == Path(_toolkit_vdg.__file__).resolve():
+            return base
+        tree = ast.parse(branch_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as exc:
+        logger.warning("compliance: cannot parse %s (%s); using the running toolkit's probe registry", branch_file, exc)
+        return base
+    literal = {
+        kw.value.value
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for kw in node.keywords
+        if kw.arg == "guard_name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+    }
+    return base | frozenset(literal)
+
+
 def check_migration_guard_has_probe(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:
@@ -17260,7 +17293,7 @@ def check_migration_guard_has_probe(
     if not root.exists():
         return findings
 
-    from .verify_db_guards import REGISTERED_GUARD_NAMES
+    REGISTERED_GUARD_NAMES = _registered_guard_names_for_tree(root)
 
     organ_specs = _load_organ_specs(root)
 

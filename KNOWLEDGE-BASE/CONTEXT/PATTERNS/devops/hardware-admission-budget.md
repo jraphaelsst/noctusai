@@ -342,3 +342,7 @@ or starts producing false-reds), raise the limit in **scheduled, measured steps*
 Every admission and sample in the capacity log is joined with Claude usage (tokens, cost, chars per session) by `noctus.dev.usage_eval` — before/after any phase change, `action=compare`. → `KB § PATTERNS/devops/usage-evaluation.md`
 
 The CURRENT numbers, the process that produced them (`process_version`), every cycle's evidence and the deferred auto-tune + observability-organ phases live in the roadmap: `project-history/roadmaps/hw-capacity-calibration-2026-11.md`. Read it before sizing parallel work.
+
+## Open items
+
+- Pre-commit wall time under load (2026-11-19): a hook commit took ~6-7 min while several heavy sessions held the machine; the keepers in `scripts/hooks/pre-commit` are not admitted through the hw gate, so they compete with it. Measure per-keeper wall time (`--gate-alignment walls`) and decide which diff-scoped keepers can skip on unrelated paths.

@@ -105,6 +105,14 @@ BEGIN
 END $$;
 """
 
+def tl001(call: str) -> str:
+    """``call`` must be refused by the transition-log guard (custom SQLSTATE TL001, not a named condition)."""
+    return (
+        f"BEGIN {call}; RAISE EXCEPTION 'no refusal (expected TL001)'; "
+        "EXCEPTION WHEN OTHERS THEN IF SQLSTATE <> 'TL001' THEN RAISE; END IF; END;"
+    )
+
+
 PASSO = "cs_criacao_passo_registrar(o, p, 1, '{passo}', '{status}', '{dados}'::jsonb)"
 
 

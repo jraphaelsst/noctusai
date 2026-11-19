@@ -132,6 +132,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.services.julia_grant_sink import build_router as build_julia_grant_router
     from app.routers.julia_roteamento_router import router as julia_roteamento_router
     from app.routers.julia_ferramentas_router import router as julia_ferramentas_router
+    from app.routers.criacao_ferramentas_router import router as criacao_ferramentas_router
     from app.routers.julia_onboarding_router import router as julia_onboarding_router
     from app.routers.julia_conhecimento_router import router as julia_conhecimento_router
     from app.routers.julia_perguntas_router import router as julia_perguntas_router
@@ -283,6 +284,7 @@ def _register_media_wiring() -> ModuleRegistration:
             build_julia_grant_router(get_auth_context),  # PUT/DELETE /api/platform/grants/agents (Julia-line D2-D5)
             julia_roteamento_router,
             julia_ferramentas_router,
+            criacao_ferramentas_router,
             julia_onboarding_router,
             julia_conhecimento_router,
             julia_conversas_router,  # BEFORE julia_perguntas_router: `/contatos/{id}/notas` vs its `/contatos/{c}/{chat}`
@@ -831,7 +833,7 @@ app = create_product_app(
 # (`social_wiring.api_token_audit`, created by migration 105), best-effort and
 # logged loudly on failure, never altering the response. Added after
 # `create_product_app` so the middleware wraps the fully built app. The
-# product-token surface here is Julia's read tools (`julia_ferramentas_router`).
+# product-token surface here is Julia's read tools (`julia_ferramentas_router`) + the criacao tools (`criacao_ferramentas_router`).
 app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyApiTokenAuditWriter())
 
 # Pre-rename Lais URLs keep working for one release (see the class docstring). Added LAST so it is the OUTERMOST
