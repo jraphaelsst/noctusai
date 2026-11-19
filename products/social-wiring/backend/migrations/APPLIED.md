@@ -690,3 +690,7 @@ Authored 2026-11-15. CONTRACT step of the 344/345 expand-migrate-contract: drops
 ## 349 — imovel_historico_vista_escrita — NOT APPLIED
 
 Authored 2026-11-15 (re-cut v3 of the 2026-11-04 Vista sync-and-history work; the WhatsApp digest and its `destino_user_id` are KEPT, owner option 1). ADDs `vista_escrita_ativa boolean NOT NULL DEFAULT false` (the owner's switch to edit Vista), and creates the append-only `imovel_historico` (UPDATE/DELETE revoked + seed GUC carve-out guard trigger; DELETE only for a future LGPD erasure that sets `social_wiring.imovel_historico_expurgo`). Apply BEFORE deploying the image: the sync writes `imovel_historico` and the config reads `vista_escrita_ativa`. Idempotent.
+
+## 367 — cs_chat_proposta_publicacoes — NOT APPLIED
+
+Authored 2026-11-19 (criação pipeline S9). Creates `cs_chat_proposta_publicacoes` (the validated `### Publicação` block of a chat proposta: legenda, exactly 5 hashtags, primeiro comentário, CTA objective/justification, fontes) and WIDENS the `cs_fluxo_eventos.tipo` CHECK with `opcoes_selecionadas`, `publicacao_gerada`, `publicacao_invalida`, `publicacao_falhou`. Additive; **apply BEFORE deploying the image** (the chat writes the table and the new event names; an N-1 image ignores both). Requires 352/358. Forward-only, idempotent.

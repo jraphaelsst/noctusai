@@ -776,9 +776,13 @@ def make_channel_tools_factory(**_unused: Any):
     sites (``make_channel_tools_factory(collector, ...)``) keep composing while they are migrated."""
 
     def _factory(spec: Any, ctx: Any) -> LlmToolset | None:
-        t: JuliaTurno | None = getattr(ctx, "julia", None)
+        t: Any = getattr(ctx, "julia", None)
         if t is None:
             return None
+        from app.criacao.ferramentas import CriacaoTurno, construir_toolset_criacao
+
+        if isinstance(t, CriacaoTurno):  # the Diretor de Criacao's turn state rides the same slot
+            return construir_toolset_criacao(t)
         return construir_toolset(t)
 
     return _factory

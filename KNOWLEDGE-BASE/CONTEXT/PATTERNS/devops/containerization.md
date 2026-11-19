@@ -122,6 +122,17 @@ the product forgot the opt-in, instead of the old silent `None`). The plain
 base is built with an explicit `--target runtime` because the media stage
 is last in the file.
 
+**Media flavour also ships ImageMagick + fonts (2026-11-19).** For
+`noctusai_lib.integrations.motion_render` (preset `papel-explainer`) the
+`media` target adds `imagemagick`, `fonts-liberation`, `fonts-dejavu-core`
+(about +55 MB over the ffmpeg layer; the exact delta is read off
+`docker image ls` at the next base build). The engine calls the IM7 `magick`
+entrypoint; Debian bookworm only packages IM6, so the stage writes a tiny
+`magick` shim (identify/compare/... passthrough, else `convert`) when the
+real binary is absent. Georgia / American Typewriter / Noteworthy are not
+redistributable: font roles resolve through an installed-font fallback check
+and the fallback used is recorded in the render's `medicoes.fontes_fallback`.
+
 `seed/docker/Dockerfile.frontend-base` → **`noctus-seed-frontend-base`**:
 `node:20-alpine` with the seed Vite alias targets
 (`seed/framework/frontend`, `seed/lib/frontend`) and their deps

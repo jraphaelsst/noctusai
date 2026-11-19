@@ -99,6 +99,19 @@ COPY --from=builder /app/start.sh /app/start.sh
 # orientation "unknown".
 FROM runtime AS media
 LABEL org.opencontainers.image.title="noctus-seed-backend-media-base"
+# Also ships ImageMagick + the preset fonts for `noctusai_lib.integrations.motion_render`
+# (preset papel-explainer): the engine calls the IM7 `magick` entrypoint; Debian bookworm
+# only packages IM6, so a 4-line `magick` shim dispatches to identify/compare/convert when
+# the real one is absent. Font roles resolve with a fallback check
+# (`motion_render.preset.resolver_fontes`): Liberation (serif/mono/sans) + DejaVu stand in
+# for Georgia / American Typewriter / Noteworthy, which are not redistributable.
+# Size: ffmpeg ~110 MB + imagemagick/fonts ~55 MB over the plain base (measured at build:
+# `docker image ls noctus-seed-backend-media-base` vs noctus-seed-backend-base).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ffmpeg imagemagick fonts-liberation fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && if ! command -v magick >/dev/null 2>&1; then \
+         printf '#!/bin/sh\ncase "$1" in identify|compare|mogrify|montage|composite) c="$1"; shift; exec "$c" "$@";; *) exec convert "$@";; esac\n' > /usr/local/bin/magick \
+         && chmod +x /usr/local/bin/magick; \
+       fi \
+    && magick -version >/dev/null

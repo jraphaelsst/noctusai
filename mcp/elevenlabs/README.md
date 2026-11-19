@@ -6,6 +6,12 @@ deletion. A platform tool (noc level) — nothing client-specific in its default
 Composes `mcp/_kit` (same shape as `mcp/waha`); HTTP via `_kit.transport`
 (`request_json`, plus the new binary/multipart path `request_bytes` / `encode_multipart`).
 
+**One implementation.** The ElevenLabs rules (guards, request body, word alignment, billed-credits header,
+consent port, clone) live in the seed adapter `noctusai_lib.integrations.tts`; this server is a thin shell
+(`seed_shell.py`: `KitTransport` routes the adapter's HTTP through `api.request_*`; `OperatorConsent` = the
+confirm gate + `consent_reference` are this connector's consent authority). It keeps only the confirm gate,
+the path guard and the typed-error envelope.
+
 ## Enable it (owner steps)
 
 1. Create an API key at <https://elevenlabs.io/app/settings/api-keys>; restrict its scopes

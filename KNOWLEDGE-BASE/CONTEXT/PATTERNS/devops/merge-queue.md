@@ -276,6 +276,16 @@ hang, `Ign:` or `Err:`. It fails loudly naming the mirror. Playwright jobs run i
 `--with-deps` / `install-deps`. The fix rides in the candidate's own `test.yml`, so the batch that carries it already
 gets past the broken mirror.
 
+**Slow mirror (2026-11-19).** 11+ reds in 24h, same step, with the mirror UP. The runner mirror
+(`us-east-2.ec2.archive.ubuntu.com`, Ubuntu 26.04) served the 68-package cairo/pango tree (11.7 MB) at ~100 kB/s
+with 5-12s stalls per small `.deb`; the 90s per-attempt cap killed a healthy download, and "switch mirror" changed
+nothing (`mirror+file:` resolves to the same host). **Rule:** the cap is sized to the slow case, not the fast one. The
+action now (1) restores a `.deb` cache (`actions/cache`, key = image version + package-list hash) so a hit downloads
+nothing, (2) prefetches missing `.deb`s 4-wide (8-wide drew 503/504s) on a miss (the bottleneck is per-file latency), (3) takes a separate
+`install-seconds` cap (420) and the package steps carry `timeout-minutes: 20`. Telemetry: `::notice::` lines
+`apt .deb cache hit`, `apt prefetch: N file(s) not in cache`, `apt install OK on <mirror>`. The `::error::` CI-infra
+classification stays, so a real failure is still loud.
+
 ## 6b · Watchdog — the queue tells the owner, with or without a steward
 
 **Rule.** The queue reports itself off-host. A watcher that lives in a session
