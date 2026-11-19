@@ -144,4 +144,4 @@ Third-party skill packs studied have **no licence file: study-only, nothing is v
 
 Study notes (outside git, third-party reference only, paraphrased, nothing copied): `_private-studies/{edicao-ia-aulao,maquina-edicao-ia,caixa-preta-ia,aprendavfx}/STUDY-*.md`. Verified against: the CoreStudio structure spec (file CORESTUDIO-STRUCTURE.md on branch `feat/corestudio-structure`, not yet on dev) §1.2, §3; `mcp/noctusai/tools/noctus/transcription/client.py`; `seed/lib/backend/noctusai_lib/integrations/transcription/validation.py` (`max_duration_s = 600`).
 
-→ Composes with `KB § PATTERNS/common/agent-context-architecture.md` · `KB § GUIDES/agent-creation.md` (when the agent moves to the agents product).
+→ Composes with `KB § PATTERNS/common/agent-context-architecture.md` · `KB § GUIDES/agent-creation.md` (when the agent moves to the agents product). · `KB § PATTERNS/media/script-to-media-production.md` (no-footage path: roteiro → reel/carousel → voice → retime by word id).
