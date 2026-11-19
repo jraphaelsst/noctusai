@@ -189,7 +189,8 @@ def test_checkpoint_5_notifies_progress_without_stopping():
     [n] = w.sink.sent
     assert n["kind"] == KIND_CHECKPOINT and "rodada 5" in n["title"]
     assert w.estado()["status"] == "ativo"
-    assert w.estado()["checkpoints"][0] == {"rodada": 5, "atingido": True, "score": 0.5, "gasto_usd": 5.0}
+    assert w.estado()["checkpoints"][0] == {
+        "rodada": 5, "atingido": True, "score": 0.5, "gasto_usd": 5.0, "refinamentos": 0, "gasto_refino_usd": 0.0}
 
 
 def test_notification_failure_is_logged_and_never_undoes_the_stop(caplog):

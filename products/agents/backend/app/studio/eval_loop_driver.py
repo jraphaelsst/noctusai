@@ -13,17 +13,17 @@ There is no queue to invent: a round is already a background task (``EvalRunner`
 Where the gate refuses a round the driver does not guess: ``hash_inalterado`` (the content did not change since the last round,
 and re-running it would only repeat the result) leaves the loop active and IDLE with the reason in ``aviso`` -- the loop waits for a
 draft edit and the owner's "Retomar"; the budget / rounds codes stop the loop with that reason; anything else (the turn cannot
-start, no cases, compile blocked ...) stops it with motivo ``erro`` + the code and text. There is no refine step between rounds in
-the product (refining the draft is the owner's / a content-writing agent's job, ``noctus.agents.content``); the UI says so.
+start, no cases, compile blocked ...) stops it with motivo ``erro`` + the code and text.
 
-NOC-REMEDIATE[eval-loop-refine-step]: the loop only RE-MEASURES; nothing proposes or writes a content change between rounds, so
-an automatic loop on an unchanged draft idles at ``hash_inalterado`` after round 1 (2026-11-18). Design: after a round closes
-below the target without stopping the loop, a ``refinar`` seam (an LLM call through the seed entry points, metered into the loop
-budget) reads the failing cases + their judge notes and the draft rows, proposes ONE bounded row edit (a section/text/tool row,
-never a prompt blob), writes it to the DRAFT only through the same store the Studio uses (never publishes), records it as a loop
-event ``refinamento_proposto`` with the row diff, then books the next round on the new hash; G4 (2 rounds without gain) reverts
-nothing but stops. Parent-before-child order (agente-base -> sdr-base -> julia) is kept: a refine step may edit only the loop's own
-agent rows, never an inherited layer's.
+The REFINE step (owner 2026-11-19). Between two rounds, when a round closed below the target without stopping the loop, the driver
+runs the injected ``refinar`` seam BEFORE it books the next round: an LLM call (through the seed entry points, its cost counted INTO
+the loop budget) that reads the failing cases and the draft rows and writes ONE bounded edit of ONE of the loop agent's own draft rows
+-- never a prompt blob, never an inherited layer's row, never a publish -- recorded as the loop event ``refinamento_proposto`` with
+the row diff (or ``refinamento_recusado`` with the reason). The next round then runs on the new hash. G4 (2 rounds without gain) still
+stops the loop and reverts nothing: the owner reads the series, sees each edit and its effect (``refinamento_avaliado``) and reverts
+by hand in the Studio. Orchestration: :mod:`app.studio.eval_loop_refino_service`; the rules and the validator:
+:mod:`app.studio.eval_loop_refino`. Without a ``refinar`` seam (tests, a deploy without the refiner) the loop only re-measures, as
+before. A refine pass never raises into the driver.
 
 The booking itself (``iniciar``) is injected: the production one calls the SAME functions the HTTP routes call
 (``reservar_run`` / ``iniciar_run_mecanismo``) with the loop owner's context, so every guard (one run per user, G6/G7 admission,
@@ -58,14 +58,17 @@ _AGUARDA = ("hash_inalterado", "execucao_em_andamento", "loop_ativo_do_usuario",
 
 Iniciar = Callable[[LoopRecord], Awaitable[UUID]]
 LerResumo = Callable[[LoopRecord, UUID], RunResumo | None]
+#: the refine pass between two rounds (``RefinoService.refinar``): returns what it did; it never raises
+Refinar = Callable[[LoopRecord], Awaitable[str]]
 
 
 class LoopDriver:
     def __init__(
         self, *, servico: Callable[[], EvalLoopService], iniciar: Iniciar, ler_resumo: LerResumo,
-        event_loop: asyncio.AbstractEventLoop | None = None,
+        event_loop: asyncio.AbstractEventLoop | None = None, refinar: Refinar | None = None,
     ) -> None:
         self._servico = servico
+        self._refinar = refinar
         self._iniciar = iniciar
         self._ler_resumo = ler_resumo
         self._event_loop = event_loop
@@ -136,6 +139,11 @@ class LoopDriver:
             if resumo is None:
                 return "rodando"  # the close hook calls us back when it ends
             await anyio.to_thread.run_sync(lambda: svc.fechar_por_run(org_id, resumo))
+            rec = await anyio.to_thread.run_sync(lambda: store.get_loop(org_id, agent_id, loop_id))
+            if rec.status != "ativo" or rec.modo != "automatico":
+                return "inativo"
+        if self._refinar is not None:
+            await self._refinar(rec)  # one bounded draft edit (or a recorded refusal) before the next round; may spend loop budget
             rec = await anyio.to_thread.run_sync(lambda: store.get_loop(org_id, agent_id, loop_id))
             if rec.status != "ativo" or rec.modo != "automatico":
                 return "inativo"

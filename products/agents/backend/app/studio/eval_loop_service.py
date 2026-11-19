@@ -18,8 +18,9 @@ from fastapi import HTTPException
 
 from app.stores.errors import NotFound
 from app.stores.studio_eval_loops import LoopRecord, LoopStore
+from app.studio.eval_loop_refino import EVENTOS_REFINO, refinamentos_do_estado, resumo_de_refinamentos
 from app.studio.eval_loop import (
-    MAX_FALHAS_NA_MENSAGEM, Decisao, Recusa, Rodada, avaliar_rodada, checar_admissao, checkpoints_atingidos, ordenar,
+    EPS, MAX_FALHAS_NA_MENSAGEM, Decisao, Recusa, Rodada, avaliar_rodada, checar_admissao, checkpoints_atingidos, ordenar,
     serie_de_scores,
 )
 
@@ -233,6 +234,7 @@ class EvalLoopService:
         self._evento(org_id, rec.id, "rodada_com_erro" if erro else "rodada_fechada", run_id=resumo.run_id, rodada_seq=rodada.seq,
                      detalhe={"status": resumo.status, "score": resumo.score, "custo_usd": resumo.custo_usd,
                               "falhas": len(resumo.falhas), "erros": len(resumo.erros), **({"erro": erro} if erro else {})})
+        self._avaliar_refino(org_id, rec, rodada.seq, resumo, rodada.compiled_hash)
         if decisao.parada is not None:
             self._evento(org_id, rec.id, "loop_parado", run_id=resumo.run_id, rodada_seq=rodada.seq,
                          detalhe={"motivo": decisao.parada.motivo, **decisao.parada.detalhe})
@@ -241,16 +243,38 @@ class EvalLoopService:
                 "agents.eval_loop.overcall loop_id=%s seq=%s score=%s custo_usd=%s", rec.id, rodada.seq, resumo.score, resumo.custo_usd)
         final = self._loops.get_loop(org_id, rec.agent_id, rec.id)
         rodadas = self._loops.list_rodadas(org_id, rec.id)
+        refino = resumo_de_refinamentos(refinamentos_do_estado(self.eventos_de_refino(org_id, rec.id)))
         if decisao.parada is not None:
             self._notificar(final, self._mensagem_parada(final, rodadas, resumo), KIND_PARADA, f"eval_loop:{rec.id}:parada",
-                            {"motivo": final.motivo_parada, **self._payload(final, rodadas, resumo)})
+                            {"motivo": final.motivo_parada, **self._payload(final, rodadas, resumo), "refinamentos": refino})
         elif decisao.checkpoint is not None:
             cp = decisao.checkpoint
-            self._notificar(final, self._mensagem_checkpoint(final, rodadas, cp), KIND_CHECKPOINT, f"eval_loop:{rec.id}:cp{cp}",
-                            {"checkpoint": cp, **self._payload(final, rodadas, resumo)})
+            self._notificar(final, self._mensagem_checkpoint(final, rodadas, cp, refino), KIND_CHECKPOINT, f"eval_loop:{rec.id}:cp{cp}",
+                            {"checkpoint": cp, **self._payload(final, rodadas, resumo), "refinamentos": refino})
         if decisao.parada is None and self._ao_fechar is not None:
             self._ao_fechar(final)  # the driver (an automatic loop opens its next round by itself)
         return decisao
+
+    def _avaliar_refino(self, org_id: UUID, rec: LoopRecord, seq: int, resumo: RunResumo, hash_depois: str) -> None:
+        """Measurement by design: the round right after a ``refinamento_proposto`` closed -> did that edit raise the score? One
+        ``refinamento_avaliado`` event with the score before / after, the hashes and the costs. ``melhorou`` compares with the round
+        the edit was based on (``None`` when either round has no score); ``melhorou_o_melhor`` is the loop gate's own flag (strictly above
+        the best earlier round). Never blocks the close."""
+        try:
+            propostos = self._loops.listar_eventos(org_id, rec.id, eventos=("refinamento_proposto",), limite=1000)
+            prop = next((e for e in propostos if e.get("rodada_seq") == seq - 1), None)
+            if prop is None:
+                return
+            d = prop.get("detalhe") or {}
+            antes = d.get("score_base")
+            depois = resumo.score
+            self._loops.registrar_evento(org_id, rec.id, "refinamento_avaliado", run_id=resumo.run_id, rodada_seq=seq, detalhe={
+                "rodada_refinada": seq - 1, "rodada_avaliada": seq, "status_rodada": resumo.status, "alvo": d.get("alvo"),
+                "melhorou": (depois > antes + EPS) if (depois is not None and antes is not None) else None,
+                "score_antes": antes, "score_depois": depois, "hash_antes": d.get("hash_base"), "hash_depois": hash_depois,
+                "custo_refino_usd": d.get("custo_usd"), "custo_rodada_usd": resumo.custo_usd})
+        except Exception:
+            logger.exception("agents.eval_loop.refinamento_avaliado_falhou loop_id=%s seq=%s", rec.id, seq)
 
     def fechar_sem_falhar(self, org_id: UUID, ler: Callable[[], RunResumo | None], *, run_id: UUID, run_tipo: str) -> None:
         """The completion-hook entry point: never raises into a finished run (its verdict is stored). A failure is logged
@@ -304,7 +328,7 @@ class EvalLoopService:
 
     def eventos(self, org_id: UUID, agent_id: UUID, loop_id: UUID) -> list[dict[str, Any]]:
         self.estado(org_id, agent_id, loop_id)  # 404 for a foreign / unknown loop
-        return self._loops.listar_eventos(org_id, loop_id)
+        return self._loops.listar_eventos(org_id, loop_id, limite=500)
 
     # ── read model ─────────────────────────────────────────────────────────
 
@@ -313,11 +337,15 @@ class EvalLoopService:
             rec = self._loops.get_loop(org_id, agent_id, loop_id)
         except NotFound as exc:
             raise HTTPException(404, detail={"detail": "Loop de avaliação não encontrado.", "code": "loop_not_found"}) from exc
-        return self.montar_estado(rec, self._loops.list_rodadas(org_id, loop_id))
+        return self.montar_estado(rec, self._loops.list_rodadas(org_id, loop_id), self.eventos_de_refino(org_id, loop_id))
+
+    def eventos_de_refino(self, org_id: UUID, loop_id: UUID) -> list[dict[str, Any]]:
+        return self._loops.listar_eventos(org_id, loop_id, eventos=EVENTOS_REFINO, limite=1000)
 
     @staticmethod
-    def montar_estado(rec: LoopRecord, rodadas: list[Rodada]) -> dict[str, Any]:
+    def montar_estado(rec: LoopRecord, rodadas: list[Rodada], eventos_refino: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         rs = ordenar(rodadas)
+        refinos = refinamentos_do_estado(eventos_refino or [])
         serie = serie_de_scores(rs)
         melhor = max(serie) if serie else None
         overcalls = [r for r in rs if r.overcall]
@@ -336,10 +364,16 @@ class EvalLoopService:
                 "rodada": r.seq, "run_id": r.run_id, "status": r.status, "score": r.score, "custo_usd": r.custo_usd,
                 "compiled_hash": r.compiled_hash, "melhorou": r.melhorou, "overcall": r.overcall, "falhas": list(r.falhas),
                 "erro_codigo": r.erro_codigo, "erro_mensagem": r.erro_mensagem,
+                #: the refine decided AFTER this round (based on its failures): the edit + its evaluation, or why it did not edit
+                "refinamento": refinos.get(r.seq),
             } for r in rs],
+            "refinamentos": resumo_de_refinamentos(refinos),
             "overcalls": [{"rodada": r.seq, "run_id": r.run_id, "score": r.score, "custo_usd": r.custo_usd} for r in overcalls],
             "custo_overcalls_usd": round(sum(r.custo_usd for r in overcalls), 4),
-            "checkpoints": checkpoints_atingidos(d, rs),
+            "checkpoints": [
+                {**cp, "refinamentos": sum(1 for q, v in refinos.items() if q <= cp["rodada"] and v["estado"] == "proposto"),
+                 "gasto_refino_usd": round(sum(v["custo_usd"] for q, v in refinos.items() if q <= cp["rodada"]), 4)}
+                for cp in checkpoints_atingidos(d, rs)],
         }
 
     # ── notification text ──────────────────────────────────────────────────
@@ -397,14 +431,16 @@ class EvalLoopService:
         extra = len(resumo.falhas) - MAX_FALHAS_NA_MENSAGEM
         return f"Casos ainda falhando ({len(resumo.falhas)}): {nomes}" + (f" e mais {extra}." if extra > 0 else ".")
 
-    def _mensagem_checkpoint(self, rec: LoopRecord, rodadas: list[Rodada], cp: int) -> tuple[str, str]:
+    def _mensagem_checkpoint(self, rec: LoopRecord, rodadas: list[Rodada], cp: int, refino: dict[str, Any] | None = None) -> tuple[str, str]:
         rs = ordenar([r for r in rodadas if not r.aberta])
         serie = serie_de_scores(rs)
         over = [r for r in rs if r.overcall]
         return (f"Loop de avaliação: checkpoint da rodada {cp} ({rec.agente_chave}, {_ROTULO_SUITE[rec.suite]})",
                 f"Rodada {cp} de {rec.rodadas_planejadas}. Notas: {' → '.join(_pct(s) for s in serie) or 'sem nota'}. "
                 f"Gasto {_usd(rec.gasto_usd)} de {_usd(rec.orcamento_usd)}. Rodadas sem melhora: {len(over)} "
-                f"({_usd(sum(r.custo_usd for r in over))}).")
+                f"({_usd(sum(r.custo_usd for r in over))})."
+                + (f" Refinamentos: {refino['propostos']} proposto(s), {refino['melhoraram']} com melhora da nota, "
+                   f"{refino['recusados']} dispensado(s) ({_usd(refino['custo_usd'])})." if refino and (refino['propostos'] or refino['recusados']) else ""))
 
     def _notificar(self, rec: LoopRecord, texto: tuple[str, str], kind: str, dedup: str, metadata: dict[str, Any]) -> None:
         """In-app notification to every platform admin (the owner is one). A delivery failure is logged with the exception

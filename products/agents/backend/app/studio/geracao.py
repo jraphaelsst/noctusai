@@ -116,7 +116,9 @@ class Gerador:
 # ── the generator (found by role) ───────────────────────────────────────────
 
 
-def _preco(provider: str, model: str) -> tuple[float, float] | None:
+def preco_do_modelo(provider: str, model: str) -> tuple[float, float] | None:
+    """``(USD / 1M input tokens, USD / 1M output tokens)`` of a priced chat model; ``None`` = no price (a cap that cannot
+    be computed is no cap). Shared with the eval-loop refine step."""
     from noctusai_lib.integrations.llm import is_priced, models_for
 
     entry = next((m for m in models_for(provider, "chat") if m.id == model), None)
@@ -136,7 +138,7 @@ def carregar_gerador(studio: Any) -> Gerador:
     version = studio.get_active_version(definicao.org_id, definicao.id)
     if version is None:
         raise indisponivel
-    preco = _preco(version.provider, version.model)
+    preco = preco_do_modelo(version.provider, version.model)
     if preco is None:
         logger.error("agents.geracao.gerador_sem_preco provider=%s model=%s", version.provider, version.model)
         raise indisponivel

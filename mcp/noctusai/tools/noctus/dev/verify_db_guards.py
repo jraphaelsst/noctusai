@@ -6652,6 +6652,52 @@ _AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — agents.eval_loop_eventos refine events (agents migration 092).
+# ---------------------------------------------------------------------------
+#
+# The eval-loop refine step: the events CHECK was widened with the three refine events (a vocabulary the code writes, so an
+# unknown event must still be refused) and a partial UNIQUE index allows ONE refine decision per (loop, base round) -- the
+# race backstop that rolls back a second driver's whole transaction (draft write included). Same self-provisioning as the 088
+# probes; own group, proven on the real chain in test_agents_camadas_probes_on_replay.py.
+
+_AGENTS_EVAL_LOOP_REFINO_CHECK_GUARD = "eval_loop_eventos_evento_check"
+_AGENTS_EVAL_LOOP_REFINO_UNIQUE_GUARD = "uq_agents_eval_loop_eventos_refino_por_rodada"
+_EVAL_REFINO_MIGS = (*_EVAL_EVENTOS_MIGS, "092_eval_loop_refino.sql")
+_EVAL_REFINO_SETUP = (
+    _EVAL_EVENTOS_SETUP
+    + f"\n    INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+    "VALUES (v_org, v_pv, 1, 'refinamento_proposto');"
+)
+
+_AGENTS_EVAL_LOOP_REFINO_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.evento_desconhecido_refused", guard_name=_AGENTS_EVAL_LOOP_REFINO_CHECK_GUARD,
+        migrations=_EVAL_REFINO_MIGS, setup=_EVAL_EVENTOS_SETUP,
+        attack=f"INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, evento) VALUES (v_org, v_pv, 'evento_que_nao_existe');",
+        fragments=("eval_loop_eventos_evento_check",), what="INSERT of an eval_loop_eventos row with an unknown event",
+        rationale=(
+            "The loop events are a closed vocabulary the driver, the service and the refine step write; an event outside it "
+            "would be a measurement the dashboards and the loop state cannot interpret."
+        ),
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.refino_duplicado_refused", guard_name=_AGENTS_EVAL_LOOP_REFINO_UNIQUE_GUARD,
+        migrations=_EVAL_REFINO_MIGS, setup=_EVAL_REFINO_SETUP,
+        attack=(
+            f"INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+            "VALUES (v_org, v_pv, 1, 'refinamento_recusado');"
+        ),
+        fragments=("uq_agents_eval_loop_eventos_refino_por_rodada",),
+        what="a second refine decision for the same loop and base round",
+        rationale=(
+            "One refine decision per base round: two drivers racing for the same round must not both write a draft edit and "
+            "spend the budget; the loser's whole transaction (draft write included) rolls back on this index."
+        ),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — agents.sw_canal_eventos append-only guard (agents migration 090).
 # ---------------------------------------------------------------------------
 #
@@ -14253,6 +14299,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CORE_AUDIT_LOGS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_AGENTS_EVAL_LOOP_EVENTOS_PROBES,
+    *_AGENTS_EVAL_LOOP_REFINO_PROBES,
     *_AGENTS_SW_CANAL_EVENTOS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,

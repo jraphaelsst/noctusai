@@ -122,7 +122,9 @@ class LoopStore(Protocol):
         """Append one lifecycle event (``eval_loop_eventos``, append-only)."""
         ...
 
-    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
+    def listar_eventos(
+        self, org_id: UUID, loop_id: UUID, *, limite: int = 200, eventos: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         """The loop's events, oldest first."""
         ...
 
@@ -181,8 +183,10 @@ class FakeLoopStore:
             "org_id": org_id, "loop_id": loop_id, "evento": evento, "run_id": run_id, "rodada_seq": rodada_seq,
             "detalhe": dict(detalhe or {}), "ator": ator, "created_at": utcnow()})
 
-    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
-        return [e for e in self.eventos if e["org_id"] == org_id and e["loop_id"] == loop_id][:limite]
+    def listar_eventos(
+        self, org_id: UUID, loop_id: UUID, *, limite: int = 200, eventos: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        return [e for e in self.eventos if e["org_id"] == org_id and e["loop_id"] == loop_id and (eventos is None or e["evento"] in eventos)][:limite]
 
     def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
         return [l for l in self.loops.values() if l.started_by == started_by and l.status == "ativo"]
@@ -418,9 +422,13 @@ class SupabaseLoopStore:
             "run_id": None if run_id is None else str(run_id), "detalhe": detalhe or {},
             "ator": None if ator is None else str(ator)}))
 
-    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
-        return exec_query(self._t("eval_loop_eventos").select("*").eq("org_id", str(org_id)).eq("loop_id", str(loop_id))
-                          .order("created_at").limit(limite)).data or []
+    def listar_eventos(
+        self, org_id: UUID, loop_id: UUID, *, limite: int = 200, eventos: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        q = self._t("eval_loop_eventos").select("*").eq("org_id", str(org_id)).eq("loop_id", str(loop_id))
+        if eventos is not None:
+            q = q.in_("evento", list(eventos))
+        return exec_query(q.order("created_at").limit(limite)).data or []
 
 
 def get_loop_store(settings: Any) -> LoopStore:

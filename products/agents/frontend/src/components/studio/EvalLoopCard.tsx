@@ -29,6 +29,7 @@ import type {
   EvalLoopMotivoParada,
   EvalLoopConfig,
   EvalLoopEstadoDriver,
+  EvalLoopRefinamento,
   EvalLoopRodada,
   EvalLoopSuite,
 } from "@/api/studio/types-ke";
@@ -74,6 +75,47 @@ function RefusalNote({ error }: { error: unknown }) {
         </p>
       )}
     </div>
+  );
+}
+
+const TIPO_REFINO: Record<"secao" | "texto" | "ferramenta", string> = { secao: "seção", texto: "texto", ferramenta: "ferramenta" };
+
+/** What the refine step did after a round: the ONE row it edited (what changed and why), or the reason it did not edit, and
+ * whether the next round's score improved. The owner reverts by hand in the Studio; nothing here changes the draft. */
+function RefinamentoNota({ rodada, r }: { rodada: number; r: EvalLoopRefinamento }) {
+  if (r.estado === "recusado") {
+    return (
+      <span className="block text-muted-foreground" data-testid={`loop-refino-${rodada}`}>
+        Refinamento dispensado{r.mensagem ? `: ${r.mensagem}` : ""}
+        {r.custo_usd > 0 ? ` (${formatUsdCost(r.custo_usd)})` : ""}
+      </span>
+    );
+  }
+  const efeito = !r.avaliado
+    ? "aguardando a próxima rodada"
+    : r.melhorou === true
+      ? `melhorou a nota (${pct(r.score_antes)} → ${pct(r.score_depois)})`
+      : r.melhorou === false
+        ? `não melhorou a nota (${pct(r.score_antes)} → ${pct(r.score_depois)})`
+        : "a próxima rodada ficou sem nota";
+  return (
+    <details className="block" data-testid={`loop-refino-${rodada}`}>
+      <summary className="cursor-pointer">
+        Refinamento: editou {r.alvo ? `${TIPO_REFINO[r.alvo.tipo]} “${r.alvo.chave}”` : "uma linha"} do rascunho · {efeito} ·{" "}
+        {formatUsdCost(r.custo_usd)}
+      </summary>
+      <div className="mt-1 space-y-1 rounded border p-2">
+        {r.racional && <p data-testid={`loop-refino-racional-${rodada}`}>Por quê: {r.racional}</p>}
+        {r.casos_alvo.length > 0 && <p>Casos visados: {r.casos_alvo.join(", ")}.</p>}
+        {r.diff && (
+          <div className="grid gap-1 sm:grid-cols-2" data-testid={`loop-refino-diff-${rodada}`}>
+            <pre className="whitespace-pre-wrap break-words rounded bg-muted p-1">{r.diff.antes}</pre>
+            <pre className="whitespace-pre-wrap break-words rounded bg-muted p-1">{r.diff.depois}</pre>
+          </div>
+        )}
+        <p>Só o rascunho foi alterado (nada publicado). Para desfazer, edite essa linha no Studio com o texto da esquerda.</p>
+      </div>
+    </details>
   );
 }
 
@@ -125,6 +167,7 @@ function ScoreSeries({ loop }: { loop: EvalLoop }) {
               </span>
             )}
             {p.overcall && <span className="text-destructive"> · não melhorou (overcall)</span>}
+            {p.refinamento && <RefinamentoNota rodada={p.rodada} r={p.refinamento} />}
           </li>
         ))}
       </ol>
@@ -265,6 +308,7 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
           <li key={c.rodada} className="rounded border border-border px-2 py-0.5 text-muted-foreground">
             Rodada {c.rodada}:{" "}
             {c.atingido ? `${pct(c.score)} · gasto ${formatUsdCost(c.gasto_usd)}` : "ainda não atingido"}
+            {c.atingido && (c.refinamentos ?? 0) > 0 && ` · ${c.refinamentos} refinamento(s) (${formatUsdCost(c.gasto_refino_usd ?? 0)})`}
           </li>
         ))}
       </ul>
@@ -326,8 +370,10 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
         {automatico
           ? "Automático: o servidor roda as rodadas sozinho até chegar ao alvo, 2 rodadas sem melhora, o orçamento, as rodadas planejadas ou um erro."
           : "Manual: cada rodada é um clique seu."}{" "}
-        O loop não refina o rascunho entre as rodadas: quem edita o conteúdo é você (ou um agente de conteúdo). Se o conteúdo não
-        mudar, uma nova rodada só repetiria o resultado e o loop espera a sua edição.
+        {automatico
+          ? "Entre as rodadas o servidor propõe UMA edição pontual de uma linha do rascunho (seção, texto ou ferramenta), a partir dos casos que falharam, e a grava só no rascunho: nada é publicado e você vê cada edição abaixo, com o motivo e o efeito na nota, para desfazer à mão. O custo do refinamento entra no orçamento do loop. "
+          : "No modo manual o loop não edita o rascunho: quem edita o conteúdo é você (ou um agente de conteúdo). "}
+        Se o conteúdo não mudar, uma nova rodada só repetiria o resultado e o loop espera a sua edição.
       </p>
       {emAndamento && (
         <p role="status" className="text-xs text-muted-foreground">

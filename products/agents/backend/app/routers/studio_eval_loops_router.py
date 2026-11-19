@@ -43,6 +43,7 @@ from app.schemas.studio_eval_loops import (
 from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.stores.eval_loop_config import ConfigRegistrada
 from app.studio.eval_loop_config import EvalLoopConfig, resolver_criacao
+from app.studio.eval_loop_refino import EVENTOS_REFINO
 from app.studio.eval_loop_service import EvalLoopService
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -100,7 +101,8 @@ def list_loops(
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     return LoopListOut(items=[
-        LoopOut(**EvalLoopService.montar_estado(r, loops.list_rodadas(ctx.org_id, r.id)))
+        LoopOut(**EvalLoopService.montar_estado(
+            r, loops.list_rodadas(ctx.org_id, r.id), loops.listar_eventos(ctx.org_id, r.id, eventos=EVENTOS_REFINO, limite=1000)))
         for r in loops.list_loops(ctx.org_id, agent.id, status=status_, suite=suite)])
 
 

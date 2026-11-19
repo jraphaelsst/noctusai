@@ -368,6 +368,33 @@ export type EvalLoopRodadaStatus = "executando" | "concluida" | "falhou" | "canc
 export type EvalLoopEstadoDriver = "rodando" | "automatico" | "aguardando_edicao" | "manual" | "encerrado";
 export type EvalLoopModo = "automatico" | "manual";
 
+/** What the refine step did AFTER a round (`docs/eval-loop-gate-contract.md` § Refine step): one bounded draft-row edit
+ * (`proposto`) or nothing written (`recusado`, with `codigo` + `mensagem`). `diff` is the changed window of the row; the
+ * full before/after texts are in the loop events. `melhorou` is set once the next round closed (`avaliado`). */
+export interface EvalLoopRefinamento {
+  estado: "proposto" | "recusado";
+  custo_usd: number;
+  modelo: string | null;
+  codigo: string | null;
+  mensagem: string | null;
+  alvo: { tipo: "secao" | "texto" | "ferramenta"; chave: string } | null;
+  racional: string | null;
+  casos_alvo: string[];
+  diff: { antes: string; depois: string } | null;
+  avaliado: boolean;
+  melhorou: boolean | null;
+  score_antes: number | null;
+  score_depois: number | null;
+}
+
+export interface EvalLoopRefinamentosResumo {
+  propostos: number;
+  recusados: number;
+  avaliados: number;
+  melhoraram: number;
+  custo_usd: number;
+}
+
 export interface EvalLoopRodada {
   rodada: number;
   run_id: string;
@@ -381,6 +408,8 @@ export interface EvalLoopRodada {
   /** A round whose run ERRORED says why — shown as an error, never as failing cases. */
   erro_codigo?: string | null;
   erro_mensagem?: string | null;
+  /** The refine decided AFTER this round (based on its failures); `null`/absent = none ran. */
+  refinamento?: EvalLoopRefinamento | null;
 }
 
 export interface EvalLoopOvercall {
@@ -395,6 +424,9 @@ export interface EvalLoopCheckpoint {
   atingido: boolean;
   score: number | null;
   gasto_usd: number | null;
+  /** Refines proposed up to this round / what the refine step cost up to it. */
+  refinamentos?: number;
+  gasto_refino_usd?: number;
 }
 
 /** `sem_melhora` carries the hash comparison; other motives may send `null` or an arbitrary object. */
@@ -434,6 +466,8 @@ export interface EvalLoop {
   /** Why an automatic loop is idle right now (e.g. `hash_inalterado`: the content did not change); `null` = nothing to say. */
   aviso?: { codigo: string; mensagem: string } | null;
   estado_driver?: EvalLoopEstadoDriver;
+  /** Totals of the refine step between rounds (its cost is INCLUDED in `gasto_usd`). */
+  refinamentos?: EvalLoopRefinamentosResumo;
 }
 
 export interface EvalLoopListResponse {
