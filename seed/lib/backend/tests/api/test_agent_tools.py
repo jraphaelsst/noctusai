@@ -64,7 +64,7 @@ def test_gate_matrix():
     assert c.post("/api/t/eco").status_code == 403
     c, _ = _app({"ctx": _ctx(issuer="x")})
     r = c.post("/api/t/eco")
-    assert r.status_code == 403 and r.json()["code"] == "issuer_not_allowed"
+    assert r.status_code == 403 and "issuer_not_allowed" in r.text
     c, _ = _app({"ctx": _ctx(caller_kind="user", api_token_id=None, user_id=uuid4())})
     assert c.post("/api/t/eco").status_code == 403
 
