@@ -13,12 +13,13 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
 from pydantic import BaseModel, Field, StrictInt, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.access_tiers import make_router
 from noctusai_lib.api.auth.session import require_org_admin_for
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.config.credentials import resolve_org_credential
 
 from app.config import SocialWiringSettings
@@ -94,7 +95,7 @@ def update_limites_geracao(
     try:
         lg.definir(get_admin_client(), org_id, payload.limites, getattr(user, "id", None))
     except lg.LimiteInvalido as exc:  # the schema already validated; kept so a refusal can never become a 500
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise integration_error("invalid_request", exc=exc, op="limites_geracao_definir") from exc
     return _lista(org_id, cfg)
 
 
