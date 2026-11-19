@@ -472,8 +472,10 @@ class TestMove:
     def test_inactive_stage_is_409_and_foreign_stage_404(self, ec):
         st = _stages(ec)
         p = _post(ec)
-        assert ec.patch(f"{BASE}/etapas/{st['edicao']['id']}", json={"ativo": False}).status_code == 200
-        r = _mover(ec, p["id"], st["edicao"]["id"])
+        # a stage that carries a role (edicao now has one) cannot be deactivated (400); `ideacao` carries none
+        assert _mover(ec, p["id"], st["headline_roteiro"]["id"]).status_code == 200
+        assert ec.patch(f"{BASE}/etapas/{st['ideacao']['id']}", json={"ativo": False}).status_code == 200
+        r = _mover(ec, p["id"], st["ideacao"]["id"])
         assert r.status_code == 409 and _detail(r)["code"] == "etapa_invalida"
         assert _mover(ec, p["id"], _id()).status_code == 404
 
@@ -661,5 +663,5 @@ class TestTimelineGatherer:
         assert r.status_code == 200, r.text
         items = [i for i in r.json()["items"] if i["kind"] == "movimento"]
         assert len(items) == 1
-        assert items[0]["de_etapa"] == "Ideação" and items[0]["para_etapa"] == "Headline + roteiro"
+        assert items[0]["de_etapa"] == "Ideação" and items[0]["para_etapa"] == "Roteiro"
         assert items[0]["ocorrido_em"]
