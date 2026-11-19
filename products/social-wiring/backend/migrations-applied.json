@@ -101,6 +101,8 @@
     "355_julia_portal_primeiro_contato.sql": "7f10de53bcdb4836010ed3592b8e4b27886ce0587cf91e221032cb874348b5e2",
     "356_julia_post_instagram_imovel.sql": "603effdaa4d58d17bbdfb492eec9e882ebefe562aa500c1bbfd9b60e62b366be",
     "357_cs_post_publicacoes_alvo_nulls_not_distinct.sql": "fb29c0b48360e5d4306f401de35844ba26969cd7042818bd387f2b716e176b47",
-    "358_cs_roteiro_primeiro.sql": "cda94459ece88f991561128c12f7cf4bfdfc4e09e584f8034c6b433bf58215bf"
+    "358_cs_roteiro_primeiro.sql": "cda94459ece88f991561128c12f7cf4bfdfc4e09e584f8034c6b433bf58215bf",
+    "359_julia_horario_atendimento.sql": "59f52fcfaac60efdaafd8520acdb0417b7265fcb6a98577af070d20bf085d083",
+    "360_cs_fluxo_saga.sql": "058412ebb1fddf4ecd9ebbdeaac1ad155cbd9d0c29c917dbbeffaa93b791e42b"
   }
 }
