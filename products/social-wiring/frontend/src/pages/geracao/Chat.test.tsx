@@ -37,6 +37,7 @@ const c = vi.hoisted(() => ({
   estado: { current: null as any },
   criar: vi.fn(),
   escolher: vi.fn(),
+  selecionar: vi.fn(),
   escolhendo: { current: false },
   perfilPendente: { current: null as any },
   limpar: vi.fn(),
@@ -54,6 +55,8 @@ vi.mock("@/hooks/geracao/useChat", () => ({
   useRenomearConversa: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useApagarConversa: () => ({ mutateAsync: vi.fn(), isPending: false }),
   mensagemEscolher: () => "ERRO-ESCOLHER",
+  mensagemFalhaSelecao: (codigo: string) => `FALHA-${codigo}`,
+  useSelecionarPropostas: () => ({ mutateAsync: c.selecionar, isPending: false }),
   useEscolherProposta: () => ({ mutateAsync: c.escolher, isPending: c.escolhendo.current, variables: c.escolhendo.current ? { proposta_id: "p1" } : undefined }),
   useEnviarMensagem: () => ({
     estado: c.estado.current,
@@ -207,6 +210,21 @@ describe("Chat", () => {
     renderPage();
     await userEvent.click(rtl.screen.getByRole("button", { name: "Criar roteiro" }));
     expect(c.escolher).toHaveBeenCalledWith({ conversaId: "c1", proposta_id: "p1" });
+  });
+
+  it("multisseleção: marcar duas propostas e criar chama selecionar com {conversaId, ids}", async () => {
+    c.selecionar.mockResolvedValue({ criados: [{ proposta_id: "p1", post_id: "x" }, { proposta_id: "p2", post_id: "y" }], ja_existiam: [], falhas: [] });
+    c.mensagens.mockReturnValue({
+      mensagens: [msg({ propostas: [proposta(), { ...proposta(), id: "p2", ordem: 2, texto: "Outra" }], conteudo: "Aqui vão" })],
+      showSkeleton: false, isRefreshing: false, isError: false, data: {}, hasNextPage: false,
+    });
+    renderPage();
+    const caixas = rtl.screen.getAllByRole("checkbox");
+    await userEvent.click(caixas[0]);
+    await userEvent.click(caixas[1]);
+    expect(rtl.screen.getByTestId("selecao-barra")).toHaveTextContent("2 propostas selecionadas");
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Criar 2 cards" }));
+    expect(c.selecionar).toHaveBeenCalledWith({ conversaId: "c1", ids: ["p1", "p2"] });
   });
 
   it("recusa do escolher aparece como toast pt-BR", async () => {

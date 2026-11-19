@@ -546,6 +546,47 @@ export function useEscolherProposta() {
   });
 }
 
+/**
+ * Multi-select (criacao-pipeline-contract.md §4 "Batching"): `POST /chat/propostas/selecionar {ids[]}`
+ * claims N propostas at once; the saga runs once per id (idempotent) and each becomes a card at
+ * `aguardando_aprovacao`. The answer reports per-id outcomes, so a partly refused batch is NEVER silent:
+ * the claimed ones are marked `escolhida` in the cache, the refused ones come back in `falhas`.
+ */
+export type SelecionarInput = { conversaId: string; ids: string[] };
+export type SelecionarResposta = {
+  /** Propostas claimed now (a card was created at `aguardando_aprovacao`). */
+  criados: { proposta_id: string; post_id: string }[];
+  /** Ids that were already claimed earlier (idempotent replay). */
+  ja_existiam: string[];
+  /** Ids the server refused, with the stable error code (`ERROS_ESCOLHER` vocabulary). */
+  falhas: { proposta_id: string; codigo: string }[];
+};
+
+export function mensagemFalhaSelecao(codigo: string): string {
+  return ERROS_ESCOLHER[codigo] ?? "Não foi possível criar este card.";
+}
+
+export function useSelecionarPropostas() {
+  return useCacheWriteMutation<SelecionarResposta, SelecionarInput>({
+    mutationFn: async ({ conversaId, ids }) =>
+      unwrap(await api.post<Envelope<SelecionarResposta>>(`${BASE}/propostas/selecionar`, { ids, conversa_id: conversaId })),
+    targets: (v) => [
+      {
+        queryKey: [...MENSAGENS_KEY, v.conversaId],
+        commit: (old: MensagensCache | undefined, saved) => {
+          const tomadas = new Set([...saved.criados.map((c) => c.proposta_id), ...saved.ja_existiam]);
+          return mapMensagens(old, (m) =>
+            m.propostas.some((p) => tomadas.has(p.id))
+              ? { ...m, propostas: m.propostas.map((p) => (tomadas.has(p.id) ? { ...p, status: "escolhida" as const } : p)) }
+              : m,
+          );
+        },
+      },
+    ],
+    invalidate: [[...GERACAO_KEY, "headlines"], [...GERACAO_KEY, "roteiros"], [ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY],
+  });
+}
+
 // ─── Ditado (mic) ───────────────────────────────────────────────────────────
 
 type TranscricaoResp = {

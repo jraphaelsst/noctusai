@@ -24,7 +24,6 @@ import { boardOps, listOps, useCacheWriteMutation } from "@noctusai/lib/cache-wr
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type {
-  LegendaGerada,
   MembroEquipe,
   PostCard,
   PostCreate,
@@ -89,7 +88,7 @@ function useInvalidateEsteira() {
 const board = boardOps<PostCard>(() => 0);
 
 /** Keys refreshed in the background after any post write (badge on the Geração libraries, §5.3). */
-const POST_SETTLE = [[ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY, GERACAO_KEY];
+export const POST_SETTLE = [[ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY, GERACAO_KEY];
 
 // ─── Board ──────────────────────────────────────────────────────────────────
 
@@ -182,7 +181,7 @@ export function useCriarPost() {
 }
 
 /** Commit a saved post into its detail and into the card on every cached board. */
-function postTargets(id: string) {
+export function postTargets(id: string) {
   return [
     {
       queryKey: esteiraKeys.post(id),
@@ -296,20 +295,6 @@ export function useDesvincularRoteiro() {
 }
 
 // ─── Legenda (§5.3) ─────────────────────────────────────────────────────────
-
-/**
- * Generate caption + hashtags + first comment. The result is RETURNED, not
- * saved (the user edits, then PATCHes via `useAtualizarPost`), so this
- * invalidates nothing.
- */
-export function useGerarLegenda() {
-  return useMutation({ // noc-allow: invalidate-only — the generated caption is returned for editing, never stored, so there is no cached read
-    mutationFn: async (postId: string) =>
-      unwrap(
-        await api.post<Envelope<LegendaGerada>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(postId)}/legenda/gerar`),
-      ),
-  });
-}
 
 // ─── Equipe (§5.2) ──────────────────────────────────────────────────────────
 

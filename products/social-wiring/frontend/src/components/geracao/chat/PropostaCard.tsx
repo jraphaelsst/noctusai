@@ -9,6 +9,7 @@ import { Check, Loader2, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FORMATO_ROTULO } from "./rotulos";
 import type { Proposta } from "@/types/estruturas";
 
@@ -21,9 +22,12 @@ interface Props {
   /** Another proposta of the conversation is being created: only one flow starts at a time. */
   bloqueada: boolean;
   onEscolher: (propostaId: string) => void;
+  /** Multi-select (criacao-pipeline-contract §4): when `onAlternar` is set, a checkbox picks this proposta for the batch. */
+  selecionada?: boolean;
+  onAlternar?: (propostaId: string) => void;
 }
 
-export function PropostaCard({ proposta, escolhendo, bloqueada, onEscolher }: Props) {
+export function PropostaCard({ proposta, escolhendo, bloqueada, onEscolher, selecionada = false, onAlternar }: Props) {
   const escolhida = proposta.status === "escolhida";
   const mistura = proposta.estruturas.length > 1;
   const roteiro = proposta.tipo === "roteiro";
@@ -31,6 +35,17 @@ export function PropostaCard({ proposta, escolhendo, bloqueada, onEscolher }: Pr
   const roteiroId = useId();
   return (
     <li className="rounded-md border p-3 text-sm" data-proposta-id={proposta.id} data-tipo={roteiro ? "roteiro" : "headline"}>
+      {onAlternar && (
+        <label className="mb-2 flex w-fit items-center gap-2 text-xs text-muted-foreground">
+          <Checkbox
+            checked={selecionada}
+            disabled={escolhida || escolhendo}
+            onCheckedChange={() => onAlternar(proposta.id)}
+            aria-label={`Selecionar para criar card: ${roteiro ? proposta.titulo ?? proposta.texto : proposta.texto}`.slice(0, 160)}
+          />
+          {escolhida ? "Já virou card" : "Selecionar"}
+        </label>
+      )}
       {roteiro ? (
         <div className="mb-2 space-y-2">
           <div className="flex flex-wrap items-center gap-2">

@@ -39,6 +39,7 @@ import {
 } from "./moveRules";
 import { PostadoDialog } from "./PostadoDialog";
 import { PostCardFace } from "./PostCardFace";
+import { useEsteiraStream } from "@/hooks/geracao/useCriacao";
 
 export interface EsteiraBoardProps {
   filtros: EsteiraFiltros;
@@ -61,6 +62,8 @@ interface Pendente {
 export function EsteiraBoard({ filtros, onOpenPost, className }: EsteiraBoardProps) {
   const podeEditarEtapas = useIsOrgAdmin();
   const board = useEsteiraBoard(filtros);
+  // Cards move by themselves (criação -> edição -> aprovação final): re-read on the pipeline stream.
+  useEsteiraStream();
   const [motivo, setMotivo] = useState<(Pendente & { regra: Motivo }) | null>(null);
   const [postado, setPostado] = useState<Pendente | null>(null);
 

@@ -66,4 +66,18 @@ describe("PropostaCard", () => {
     renderCard(roteiro, { bloqueada: true });
     expect((rtl.screen.getByRole("button", { name: "Usar este roteiro" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("multisseleção: sem onAlternar não há checkbox; com ele alterna e proposta já escolhida fica travada", async () => {
+    renderCard(base);
+    expect(rtl.screen.queryByRole("checkbox")).toBeNull();
+    rtl.cleanup();
+    const alternar = vi.fn();
+    renderCard(base, { onAlternar: alternar });
+    await userEvent.click(rtl.screen.getByRole("checkbox"));
+    expect(alternar).toHaveBeenCalledWith("p1");
+    rtl.cleanup();
+    renderCard({ ...base, status: "escolhida" }, { onAlternar: alternar });
+    expect((rtl.screen.getByRole("checkbox") as HTMLButtonElement).disabled).toBe(true);
+    expect(rtl.screen.getByText("Já virou card")).toBeTruthy();
+  });
 });

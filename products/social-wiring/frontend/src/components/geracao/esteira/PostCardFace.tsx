@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/geracao/StatusBadge";
 import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { cn } from "@/lib/utils";
 import type { PostCard } from "@/types/esteira";
+import { CriacaoStatusLine } from "./CriacaoStatusLine";
 
 export interface PostCardFaceProps {
   post: PostCard;
@@ -79,6 +80,8 @@ export function PostCardFace({ post, papelEtapa, esconderMarca, isDragging, onCl
       )}
 
       {post.roteiro && <StatusBadge status={post.roteiro.status} />}
+
+      <CriacaoStatusLine postId={post.id} estado={post.criacao_estado} falhaCodigo={post.falha_codigo} />
 
       {papelEtapa === "cancelado" && post.motivo_bloqueio && (
         <p className="line-clamp-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive">

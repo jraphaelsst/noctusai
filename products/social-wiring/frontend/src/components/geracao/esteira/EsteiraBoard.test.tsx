@@ -23,6 +23,12 @@ const m = vi.hoisted(() => ({
 vi.mock("@noctusai/seed/infra", () => ({ api: m.seedApi }));
 vi.mock("@/lib/api", () => ({ api: m.libApi }));
 vi.mock("sonner", () => ({ toast: m.toast }));
+vi.mock("@/hooks/geracao/useCriacao", () => ({
+  useEsteiraStream: () => ({ status: "closed", lastEventId: null }),
+  useCriacaoProgresso: () => ({ progresso: null, mode: "idle", ativo: false }),
+  ESTADO_ROTULO: {},
+  emAndamentoCriacao: () => false,
+}));
 vi.mock("@noctusai/lib/design-system", async (orig) => ({
   ...(await orig<object>()),
   useIsOrgAdmin: () => true,
