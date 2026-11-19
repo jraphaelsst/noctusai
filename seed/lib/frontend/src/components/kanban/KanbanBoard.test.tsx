@@ -19,7 +19,7 @@
  */
 /// <reference types="@testing-library/jest-dom" />
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 import { KanbanBoard } from './KanbanBoard';
 import { computeMove } from './computeMove';
@@ -258,5 +258,40 @@ describe('computeMove — the move-resolution logic behind onMove', () => {
     const columns = erpColumns();
     const result = computeMove(columns, (c) => c.id, (c) => c.etapa_atual, 'does-not-exist', 'novo');
     expect(result).toBeNull();
+  });
+});
+
+describe('<KanbanBoard draggable={false}/> — read-only boards', () => {
+  const boardProps = {
+    columns: erpColumns(),
+    getCardId: (c: Cliente) => c.id,
+    getCardStage: (c: Cliente) => c.etapa_atual,
+    renderCard: (c: Cliente) => <span>{c.nome}</span>,
+    onMove: () => {},
+  };
+
+  it('default (draggable) cards carry the sortable a11y attributes', () => {
+    const { container } = render(<KanbanBoard<Cliente, Etapa> {...boardProps} />);
+    const card = container.querySelector('[data-kanban-card-id="c1"]')!;
+    expect(card).toHaveAttribute('aria-roledescription', 'sortable');
+  });
+
+  it('draggable={false} renders cards with no sortable plumbing', () => {
+    const { container } = render(<KanbanBoard<Cliente, Etapa> {...boardProps} draggable={false} />);
+    const card = container.querySelector('[data-kanban-card-id="c1"]')!;
+    expect(card).not.toHaveAttribute('aria-roledescription');
+    expect(card).not.toHaveAttribute('tabindex');
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+  });
+
+  it('draggable={false} still opens a card: click and Enter/Space, as a button', () => {
+    const opened: string[] = [];
+    render(<KanbanBoard<Cliente, Etapa> {...boardProps} draggable={false} onCardActivate={(c) => opened.push(c.id)} />);
+    const card = screen.getByText('Ana').closest('[data-kanban-card-id]')!;
+    expect(card).toHaveAttribute('role', 'button');
+    fireEvent.click(card);
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(opened).toEqual(['c1', 'c1', 'c1']);
   });
 });

@@ -12,6 +12,24 @@ export interface OnboardingItem {
   quando: string[];
   /** `preenchido` | `vazio` for spec-backed items; `fora_do_agents` when the answer lives in SW or is a human step. */
   estado: "preenchido" | "vazio" | "fora_do_agents";
+  /** What the LIVE interview says about the item; `null` when no interview exists for this company. */
+  entrevista: EstadoEntrevista | null;
+}
+export type EstadoEntrevista = "aberto" | "respondido" | "pendente" | "proposto" | "recusado";
+export interface SessaoEntrevista {
+  id: string;
+  conversation_id: string;
+  criada_em: string;
+  /** Ledger event count: grows with every answer, refusal, import, summary and apply. */
+  eventos: number;
+  resumo_apresentado: boolean;
+  aplicada: boolean;
+}
+/** `POST .../onboarding/conversa`: the interviewer's conversation bound to the company. */
+export interface ConversaEntrevista {
+  sessao_id: string;
+  conversation_id: string;
+  agent_key: string;
 }
 export interface OnboardingProgresso {
   por_nivel: Record<"R" | "C" | "O", { total: number; feitos: number }>;
@@ -23,6 +41,7 @@ export interface Onboarding {
   itens: OnboardingItem[];
   progresso: OnboardingProgresso;
   proximo_passo: string;
+  sessao: SessaoEntrevista | null;
 }
 export interface RespostaImportada {
   n: number;

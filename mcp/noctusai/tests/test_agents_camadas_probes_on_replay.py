@@ -27,6 +27,7 @@ _GROUPS = {
                                     {"guard_eval_um_por_usuario", "guard_eval_recusas_eventos_append_only"}),
     "088_eval_erro_e_loop_driver.sql": (vdg._AGENTS_EVAL_LOOP_EVENTOS_PROBES, {"eval_loop_eventos_append_only"}),
     "090_sw_canal_eventos.sql": (vdg._AGENTS_SW_CANAL_EVENTOS_PROBES, {"sw_canal_eventos_append_only"}),
+    "089_onboarding_sessoes.sql": (vdg._AGENTS_ONBOARDING_PROBES, {"guard_onboarding_eventos_append_only"}),
     "079_emergencia_inatividade.sql": (vdg._AGENTS_EMERGENCIA_PROBES,
                                        {"thread_alertas_tipo_check", "ck_thread_participantes_fecha_inativo_min"}),
     "080_retomada_limite.sql": (vdg._AGENTS_RETOMADA_PROBES,

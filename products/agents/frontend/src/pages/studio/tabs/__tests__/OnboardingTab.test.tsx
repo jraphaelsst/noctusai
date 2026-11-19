@@ -13,6 +13,13 @@ vi.mock("@/lib/api", async () => {
 const platform = vi.hoisted(() => ({ admin: true }));
 vi.mock("@/hooks/useIsPlatformAdmin", () => ({ useIsPlatformAdmin: () => platform.admin }));
 
+// the chat organ has its own suite; here only WHICH conversation the tab opens matters
+vi.mock("@/components/AgentChatWindow", () => ({
+  AgentChatWindow: (p: { scopeId: string | null; selectedThreadId?: string | null }) => (
+    <div data-testid="chat-stub">{`${p.scopeId}:${p.selectedThreadId}`}</div>
+  ),
+}));
+
 import OnboardingTab from "../OnboardingTab";
 
 const OPCOES = "/api/studio/plataforma/grants/opcoes";
@@ -106,5 +113,51 @@ describe("OnboardingTab", () => {
     expect(screen.getByTestId("relatorio-37").textContent).toContain("Recusado");
     expect(screen.getByTestId("relatorio-37").textContent).toContain("PUT /api/julia/reengajamento/config");
     expect(screen.getByTestId("onboarding-proximo").textContent).toContain("modo de avaliação");
+  });
+
+  it("starts the interview (one POST), then opens THAT conversation of the interviewer", async () => {
+    const SESSAO = { id: "s1", conversation_id: "c1", criada_em: "2026-11-17T12:00:00Z", eventos: 0, resumo_apresentado: false, aplicada: false };
+    let iniciada = false;
+    const net = installFetch([
+      { method: "GET", path: OPCOES, body: OPCOES_BODY },
+      { method: "GET", path: ORGS, body: LISTA },
+      { method: "GET", path: BASE, body: { ...PROGRESSO, sessao: null } },
+      { method: "POST", path: `${BASE}/conversa`, status: 201, body: { sessao_id: "s1", conversation_id: "c1", agent_key: "onboarding-imob" } },
+    ]);
+    renderWith(<OnboardingTab agentKey={KEY} />);
+    await open();
+    expect(screen.queryByTestId("chat-stub")).toBeNull();
+    // after the POST the progress is re-read and now carries the session
+    const spy = net.spy;
+    const base = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      if (url.pathname === BASE && (init?.method ?? "GET") === "GET" && iniciada) {
+        return new Response(JSON.stringify({ ...PROGRESSO, sessao: SESSAO }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(input, init);
+    });
+    fireEvent.click(screen.getByTestId("onboarding-iniciar"));
+    iniciada = true;
+    await waitFor(() => expect(screen.getByTestId("chat-stub").textContent).toBe("onboarding-imob:c1"));
+    expect(net.calls.filter((c) => c.method === "POST" && c.path === `${BASE}/conversa`).length).toBe(1);
+    expect(screen.getByTestId("onboarding-sessao").textContent).toContain("0 registro(s)");
+  });
+
+  it("shows what the live interview says per item (folded by the server)", async () => {
+    const SESSAO = { id: "s1", conversation_id: "c1", criada_em: "2026-11-17T12:00:00Z", eventos: 4, resumo_apresentado: true, aplicada: true };
+    installFetch([
+      { method: "GET", path: OPCOES, body: OPCOES_BODY },
+      { method: "GET", path: ORGS, body: LISTA },
+      {
+        method: "GET", path: BASE,
+        body: { ...PROGRESSO, sessao: SESSAO, itens: PROGRESSO.itens.map((i) => ({ ...i, entrevista: i.n === 1 ? "respondido" : "pendente" })) },
+      },
+    ]);
+    renderWith(<OnboardingTab agentKey={KEY} />);
+    await open();
+    expect(screen.getByTestId("onboarding-item-1-entrevista").textContent).toContain("confirmado na conversa");
+    expect(screen.getByTestId("onboarding-item-37-entrevista").textContent).toContain("pendente");
+    expect(screen.getByTestId("onboarding-sessao").textContent).toContain("resumo apresentado");
   });
 });

@@ -27,6 +27,7 @@ from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 
 from app.services import (
     julia_agente_service, julia_avaliacoes_service, julia_capi_service, julia_credito_service, julia_envio_service,
+    julia_portal_primeiro_contato_service,
     julia_reengajamento_service as svc,
 )
 
@@ -87,6 +88,7 @@ def build_worker(repo: JobRepository, cfg: Any) -> Worker:
     julia_credito_service.registrar_repo(repo)  # the credit analysis (wave 13) is queued on the same repo
     julia_avaliacoes_service.registrar_repo(repo)  # wave 13: the review-ask job
     julia_capi_service.registrar_repo(repo)  # wave 13: the CAPI send job
+    julia_portal_primeiro_contato_service.registrar_repo(repo)  # Lais S1: the deferred portal opener
     # poll-budget: claim poll, 5s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (17280/day only while busy at the 5s base); idle=backoff
     return Worker(
         repo,
@@ -94,6 +96,7 @@ def build_worker(repo: JobRepository, cfg: Any) -> Worker:
         handlers={
             **svc.handlers(deps_factory=_lead_deps_factory(cfg), repo=repo, run_turn=run_reengajamento_turn),
             **julia_envio_service.handlers(),
+            **julia_portal_primeiro_contato_service.handlers(),
             **julia_credito_service.handlers(),
             **julia_avaliacoes_service.handlers(client_provider=_scoped_client, enviar_factory=_enviador_avaliacao(cfg),
                                                agents_factory=lambda org_id: julia_agente_service.resolve_agents_client(org_id, cfg=cfg)),

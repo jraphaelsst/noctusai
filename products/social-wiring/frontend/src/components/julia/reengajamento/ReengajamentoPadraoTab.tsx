@@ -117,6 +117,44 @@ function ConfigDrawer({
   );
 }
 
+/** Lais study S1: the opener to a new portal lead is one switch, saved on toggle (no interval to edit). */
+function PortalPrimeiroContatoCard({ config, isAdmin }: { config: ReengajamentoConfig; isAdmin: boolean }) {
+  const salvar = useSalvarReengajamentoConfig();
+  const ativo = config.portal_primeiro_contato_ativo;
+  function alternar(valor: boolean) {
+    salvar.mutate(
+      { ...config, portal_primeiro_contato_ativo: valor },
+      {
+        onSuccess: () => toast.success(valor ? "Primeiro contato dos portais ativado" : "Primeiro contato dos portais desativado"),
+        onError: (e) => toast.error(mensagemErroReengajamento(e, "Não foi possível salvar o primeiro contato dos portais.")),
+      },
+    );
+  }
+  return (
+    <Card data-testid="card-portal">
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle className="text-base">Primeiro contato dos portais</CardTitle>
+          <CardDescription>
+            A Julia chama primeiro o lead novo do OLX, ZAP/VivaReal e ImovelWeb, com o aviso de IA e de privacidade · Funciona das 8h às
+            20h · Quem já está em conversa nunca recebe de novo
+          </CardDescription>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={ativo ? "default" : "secondary"}>{ativo ? "Ativo" : "Inativo"}</Badge>
+          <Switch
+            aria-label="Primeiro contato dos portais"
+            checked={ativo}
+            onCheckedChange={alternar}
+            disabled={!isAdmin || salvar.isPending}
+          />
+        </div>
+      </CardHeader>
+      <CardContent className="sr-only" />
+    </Card>
+  );
+}
+
 export function ReengajamentoPadraoTab({ isAdmin }: { isAdmin: boolean }) {
   const q = useReengajamentoConfig();
   const [aberto, setAberto] = useState<Modo | null>(null);
@@ -180,6 +218,7 @@ export function ReengajamentoPadraoTab({ isAdmin }: { isAdmin: boolean }) {
           <CardContent className="sr-only" />
         </Card>
       ))}
+      <PortalPrimeiroContatoCard config={c} isAdmin={isAdmin} />
       {aberto && (
         <SideDrawer
           open

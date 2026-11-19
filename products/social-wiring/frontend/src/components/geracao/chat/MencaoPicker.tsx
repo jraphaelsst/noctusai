@@ -1,6 +1,8 @@
 /**
- * @-mention picker (contract §7.2 / #46): 4 tabs — Minha Pesquisa · Segundo
- * Cérebro · Biblioteca · Headlines. Picking an entry attaches it as a chip.
+ * @-mention picker (contract §7.2 / #46): 5 tabs — Estruturas · Minha Pesquisa ·
+ * Segundo Cérebro · Biblioteca · Headlines. Opens on Estruturas: the platform
+ * library is the one tab that is populated for every brand (the others start
+ * empty until the brand fills them). Picking an entry attaches it as a chip.
  */
 import { useState } from "react";
 
@@ -14,11 +16,11 @@ import { useMencoes } from "@/hooks/geracao/useChat";
 import type { Mencao, MencaoTipo } from "@/types/geracao";
 
 export const ABAS_MENCAO: { tipo: MencaoTipo; rotulo: string }[] = [
+  { tipo: "estrutura", rotulo: "Estruturas" },
   { tipo: "pesquisa", rotulo: "Minha Pesquisa" },
   { tipo: "cerebro", rotulo: "Segundo Cérebro" },
   { tipo: "biblioteca", rotulo: "Biblioteca" },
   { tipo: "headline", rotulo: "Headlines" },
-  { tipo: "estrutura", rotulo: "Estruturas" },
 ];
 
 interface Props {
@@ -31,7 +33,7 @@ interface Props {
 }
 
 export function MencaoPicker({ open, onOpenChange, marcaId, anexados, limiteAtingido, onEscolher }: Props) {
-  const [tipo, setTipo] = useState<MencaoTipo>("pesquisa");
+  const [tipo, setTipo] = useState<MencaoTipo>(ABAS_MENCAO[0].tipo);
   const [busca, setBusca] = useState("");
   const buscaDeb = useDebouncedValue(busca, 300);
   const q = useMencoes(marcaId, tipo, buscaDeb, open);

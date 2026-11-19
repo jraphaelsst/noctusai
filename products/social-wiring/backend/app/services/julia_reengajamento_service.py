@@ -67,6 +67,8 @@ JOB_MAX_RETRIES = 2
 #: An org that saved its own row keeps it.
 CONFIG_PADRAO: dict[str, Any] = {
     "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4,
+    #: Lais study S1: Julia opens the conversation with a new portal (OLX / ImovelWeb) lead. Off until the owner enables it.
+    "portal_primeiro_contato_ativo": False,
 }
 
 

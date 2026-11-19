@@ -620,6 +620,13 @@ def get_conformidade_store_dep():
     return get_conformidade_store(settings)
 
 
+def get_onboarding_store_dep():
+    """``agents.onboarding_sessoes`` / ``onboarding_eventos`` -- the onboarding interview's session + ledger (migration 089)."""
+    from app.stores.onboarding_sessoes import get_onboarding_store
+
+    return get_onboarding_store(settings)
+
+
 def get_thread_alerta_store_dep():
     """``agents.thread_alertas`` -- what ``sinalizar_alerta`` records (migration 057)."""
     from app.stores.thread_alertas import get_thread_alerta_store
@@ -779,6 +786,7 @@ __all__ = [
     "get_channel_llm_runtime_dep",
     "get_channel_retention_dep",
     "get_conformidade_store_dep",
+    "get_onboarding_store_dep",
     "get_thread_alerta_store_dep",
     "get_relatorio_resumo_factory_dep",
     "get_julia_tools_client_dep",

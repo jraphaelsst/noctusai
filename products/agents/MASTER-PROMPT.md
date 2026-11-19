@@ -50,7 +50,7 @@ products/agents/backend/app/
   controls (SW reads, Studio admin writes; turning ON also needs complete content via `conteudo_status`), hand-off
   notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
-- Eval errors + loop driver (migration 088, 2026-11-17; `docs/eval-loop-gate-contract.md`): a run whose cases errored is
+- Eval errors + loop driver (migration 089, 2026-11-17; `docs/eval-loop-gate-contract.md`): a run whose cases errored is
   `erro` / `parcial_com_erros` (never `concluida`; errored cases are out of the score denominator; no measurement = score
   `NULL`, never 0.0) with `erro_codigo`; a preflight (`app/studio/eval_preflight.py`) refuses before a run or round is booked;
   a round that errored stops its loop (`motivo_parada=erro`). An agent with no qualification standard (a base layer) is
@@ -564,5 +564,8 @@ mapped to an org spec key, a social-wiring setting or a human step) is `projects
 step with a per-item report: `aplicado` / `recusado` + reason / `pendente_humano`). Spec values go through the one org-spec
 write path (`aplicar_org_specs`: validation, audit); an invalid value is refused, never stored. SW operational settings go through `SwSettingsPort`: the Real client calls social-wiring's onboarding staff channel (`PUT /api/julia/onboarding/orgs/{org}/configuracoes/{setting}`, service tier, platform-issued token, scope `social-wiring:onboarding-settings`, which agents provisions and rotates ITSELF: nobody creates, copies or pastes it; see `app/onboarding/sw_canal.py`) carrying the verified staff user as `ator`; SW allow-lists the settings (visitas, agente_nome, destino_lead_pronto are not yet allowed: reported `recusado`, apply by hand) and records the event. A channel failure is a named code per item (`emissao_falhou`, `sw_forbidden`, `armazenamento_indisponivel`, ...), never a silent fallback. Studio > Onboarding opens with the card "Conexão com o Social Wiring" (platform admin: state, scope, expiry, last ok call, last error, "Testar conexão"). The interviewer agent `onboarding-imob` is a platform definition whose draft
 section rows live in `projects/onboarding/agent/` (applied with `noctus.agents.content`, never published from code). After
-an apply the owner is pointed to evaluation mode before go-live. Deferred:
-`[onboarding-import-prose]`, `[onboarding-agent-rows]`.
+an apply the owner is pointed to evaluation mode before go-live. The interview runs live: `POST .../onboarding/conversa`
+opens a chat of `onboarding-imob` bound to the company; its `onboarding` tool group (`progresso_onboarding`,
+`registrar_resposta`, `importar_configuracao`, `revisar_e_aplicar`) records every answer as an append-only event
+(`agents.onboarding_eventos`, migration 089) and the tab polls the folded progress. Deferred:
+`NOC-REMEDIATE[onboarding-import-prose]`, `[onboarding-agent-rows]`, `[onboarding-evals-mecanismo-studio]`.

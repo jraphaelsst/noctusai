@@ -85,12 +85,16 @@ class ImovelWebWebhookService:
         ingest_fn: Optional[Callable[[Any, UUID, ImovelWebLead], dict]] = None,
         default_org_id: Optional[UUID] = None,
         dedup: Any = None,
+        julia_portal_intake: Optional[Callable[[UUID, dict], Any]] = None,
     ) -> None:
         self._client = client
         self._org_resolver = org_resolver or self._resolve_org
         self._ingest = ingest_fn or imovelweb_ingest_service.ingest_imovelweb_lead
         self._default_org_id = default_org_id
         self._dedup = dedup
+        # DI seam: `(org_id, lead_dict) -> dict` -- Julia's opener for a NEW portal lead (default: the production-wired
+        # `julia_portal_primeiro_contato_service.iniciar_com_padroes`; a no-op for an org with Julia / the switch off).
+        self._julia_portal_intake = julia_portal_intake
         #: Round-trips made on the REQUEST path. Read by the router to log a
         #: budget warning, and asserted by tests — a wall-clock assertion
         #: would be flaky, but "how many times did we hit the database before
@@ -274,6 +278,8 @@ class ImovelWebWebhookService:
             error=None,
             processed_at=_now(),
         )
+        if result.get("created"):
+            self._julia_opener(org_id, lead, event)
         return ProcessResult(
             lead.event_id,
             STATUS_PROCESSED,
@@ -281,6 +287,13 @@ class ImovelWebWebhookService:
             lead_id=str((result.get("lead") or {}).get("id") or "") or None,
             source_slug=result.get("source_slug"),
         )
+
+    def _julia_opener(self, org_id: UUID, lead: ImovelWebLead, event: Optional[dict]) -> None:
+        """Julia speaks first to a NEW portal lead (Lais study S1). Never raises: the lead is already stored."""
+        from app.services import julia_portal_primeiro_contato_service as portal
+
+        chegou = (event or {}).get("received_at") or _now()
+        portal.iniciar_em_background(org_id, portal.lead_de_imovelweb(lead, chegou), intake=self._julia_portal_intake)
 
     def record_unparseable(self, payload: Any, reason: str) -> None:
         """A body we cannot key on is still evidence.

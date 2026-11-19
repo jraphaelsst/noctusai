@@ -17,6 +17,8 @@ export interface ReengajamentoConfig {
   minutos_intervalo: number; // 5..60 step 5 (60 = "1 hora")
   horas_ativo: boolean;
   horas_intervalo: number; // 1..11
+  /** Lais study S1: Julia speaks first to a new portal (OLX / ImovelWeb) lead. Off until the owner turns it on. */
+  portal_primeiro_contato_ativo: boolean;
 }
 
 export interface ReguaTentativa {

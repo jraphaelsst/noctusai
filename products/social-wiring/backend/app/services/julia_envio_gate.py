@@ -17,6 +17,8 @@ lead-form first contact, the Google review ask) passes `exigir` BEFORE it reache
             reengajamento_minutos -- `julia_reengajamento_config.minutos_ativo`   (default false)
             reengajamento_horas   -- `julia_reengajamento_config.horas_ativo`     (default false)
             regua                 -- the `julia_reguas` row is `ativa`            (default false)
+            primeiro_contato_portal -- `julia_reengajamento_config.portal_primeiro_contato_ativo` (default false): the
+                                     opener to a new OLX / ImovelWeb lead, a plain WAHA message (Lais study S1)
             primeiro_contato      -- an APPROVED `primeiro_contato` modelo exists (none until the org submits one
                                      and Meta approves it)
             avaliacao             -- `julia_avaliacao_config.google_review_url` is set (default NULL)
@@ -67,6 +69,7 @@ class Fluxo(str, Enum):
     REENGAJAMENTO_HORAS = "reengajamento_horas"
     REGUA = "regua"
     PRIMEIRO_CONTATO = "primeiro_contato"
+    PRIMEIRO_CONTATO_PORTAL = "primeiro_contato_portal"
     AVALIACAO = "avaliacao"
     #: A staff notice (report / alert to the org's destination number), never a message to a lead.
     INTERNO = "interno"
@@ -159,6 +162,9 @@ def motivo_do_bloqueio(
         cfg = _uma(db, T_REENGAJAMENTO_CONFIG, org) or {}
         chave = "minutos_ativo" if fluxo is Fluxo.REENGAJAMENTO_MINUTOS else "horas_ativo"
         return None if cfg.get(chave) is True else "reengajamento_desativado"
+    if fluxo is Fluxo.PRIMEIRO_CONTATO_PORTAL:
+        cfg = _uma(db, T_REENGAJAMENTO_CONFIG, org) or {}
+        return None if cfg.get("portal_primeiro_contato_ativo") is True else "portal_primeiro_contato_desativado"
     if fluxo is Fluxo.REGUA:
         regua = _uma(db, T_REGUAS, org, id=str(regua_id)) if regua_id else None
         return None if regua and regua.get("ativa") is True else "regua_inativa"

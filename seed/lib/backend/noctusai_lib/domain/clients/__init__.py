@@ -18,6 +18,7 @@ Mount it from a product (`noctusai_seed.organs.mount_clients` does this binding)
     app.include_router(create_clients_router(store_factory=..., get_current_user_org=auth,
                                              admin_dependency=admin, config=config, booking_factory=...))
 """
+# NOC-REMEDIATE[therapy-platform-onto-clients-organ]: products/therapy-platform keeps its own recurring scheduling (routers/recurring.py, scheduler.py, availability_service.py) -- N=2 with this organ; migrate it onto the clients organ pilot-first once nosnolimiar has run it in prod — 2026-11-17
 from .config import (
     DEFAULT_PAYMENT_METHODS,
     DEFAULT_SESSION_STATUSES,

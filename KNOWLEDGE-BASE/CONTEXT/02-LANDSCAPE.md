@@ -50,26 +50,26 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 57 | 127 | 280 | 229 | 725 | 11,428 |
+| Social Wiring | 57 | 128 | 288 | 231 | 728 | 11,489 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 57 | 986 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 37 | 1 | 86 | 55 | 248 | 3,482 |
+| Agents | 37 | 1 | 86 | 55 | 251 | 3,515 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
-| Nosnolimiar | 2 | 1 | 15 | 0 | 8 | 39 |
+| Nosnolimiar | 2 | 1 | 15 | 0 | 9 | 50 |
 | Assistant | 3 | 7 | 18 | 0 | 19 | 186 |
-| **Total** | **368** | **450** | **933** | **555** | **1701** | **24,227** |
+| **Total** | **368** | **451** | **941** | **557** | **1708** | **24,332** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1236** declared across those schemas.
+- **Schemas DECLARED in migrations (21):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `nosnolimiar` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
+- **Tables: 1244** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

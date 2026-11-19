@@ -118,6 +118,15 @@ _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
     "agents/runtime_settings/runtime_settings_eval_loop_valores": (
         "key-scoped JSONB bounds; refused by EvalLoopConfigIn (422), CHECK pinned to the API bounds, DB guard probed"
     ),
+    # Reviewed 2026-11-17 (social-wiring migration 358). A per-tipo LENGTH bound (`CASE WHEN tipo = 'roteiro' THEN
+    # 12000 ELSE 1000 END`), which sql_check cannot parse; not a conditional-presence shape. Every write goes through
+    # SECURITY DEFINER RPCs fed by `services/propostas.py`, which refuses a headline under 1 char and a script past
+    # MAX_ROTEIRO (saida_ia, 12000); tests/test_migration_cs_roteiro_primeiro.py pins both bounds per tipo on PGlite;
+    # the DB refusal is proven by the `verify_db_guards` probes `sw352_proposta_texto_valido` /
+    # `sw358_proposta_headline_texto_max_1000`.
+    "social-wiring/cs_chat_propostas/cs_chat_propostas_texto_check": (
+        "per-tipo length CASE; bounded by the parser + RPC path, pinned on PGlite, DB guard probed"
+    ),
     # Reviewed 2026-10-03 (migration 192). "valor OR percentual, never both"
     # has no discriminant column, so a ConditionalPresenceManifest cannot
     # express it. It is pinned three times above the DB: the request schema

@@ -5,12 +5,17 @@
     GET    /tags                           -> {data: [tag]}
     POST   ""                              -> 201 {data: client}
     GET    /sessions ?from=&to=            -> {data: [session]}   (every client, starts_at asc, <= 62 days)
+    GET    /summary ?month=YYYY-MM         -> {data: month summary}   (sessions by status, charged / received / open)
     PATCH  /sessions/{id} · DELETE /sessions/{id} (204; 409 SESSAO_COM_PAGAMENTO)
+    POST   /sessions/{id}/reschedule       -> 201 {data: new session}  (the old one becomes `remarcada`)
+    GET    /sessions/{id}/events           -> {data: [event]}          (the session's history, no note text)
+    GET|PUT /sessions/{id}/clinical-note [therapist]  -> {data: {body, ...}}   (403 for any other role; 404 if the organ has it off)
     PATCH  /schedules/{id} · DELETE /schedules/{id} (204)
     GET    /{id} · PATCH /{id} · DELETE /{id} [admin] (204; 409 CLIENTE_COM_FINANCEIRO)
     GET    /{id}/sessions ?from=&to=&status=   -> {data: [session]}  (starts_at desc)
     POST   /{id}/sessions                  -> 201 {data: session}
     GET    /{id}/schedules · POST /{id}/schedules (201)
+    GET    /{id}/events                    -> {data: [event]}
     GET    /{id}/finance                   -> {data: finance}
     POST   /{id}/payments [admin]          -> {data: {settlement_ids, finance}}
 
@@ -33,7 +38,9 @@ from noctusai_lib.primitives.responses import success_response
 
 from .config import ClientsConfig
 from .errors import FILTRO_INVALIDO, invalid
-from .schemas import ClientBody, ClientPatch, PaymentBody, ScheduleBody, SchedulePatch, SessionBody, SessionPatch
+from .schemas import (
+    ClientBody, ClientPatch, ClinicalNoteBody, PaymentBody, RescheduleBody, ScheduleBody, SchedulePatch, SessionBody, SessionPatch,
+)
 from .service import ClientsService
 from .store import ClientFilters, ClientsStore
 from noctusai_lib.api.access_tiers import access_tier
@@ -48,12 +55,16 @@ def create_clients_router(
     admin_dependency: Callable[..., Any],
     config: ClientsConfig,
     booking_factory: Optional[Callable[[], FinanceBooking]] = None,
+    clinical_dependency: Optional[Callable[..., Any]] = None,
     prefix: str = "/api/clients",
     tags: Optional[list[str]] = None,
     resolve_org_id: Callable[[Any], str] = str,
     clock: Optional[Callable[[], datetime]] = None,
 ) -> APIRouter:
     router = APIRouter(prefix=prefix, tags=tags or ["clients"])
+    # The clinical note is for the therapist ONLY: by default the org admin (`admin_dependency`); a host with a narrower
+    # role passes its own dependency. It is a different gate from the rest of the surface on purpose.
+    therapist_dependency = clinical_dependency or admin_dependency
 
     def _ctx(auth: Any) -> tuple:
         user, _token, raw_org = auth
@@ -67,6 +78,9 @@ def create_clients_router(
         return _ctx(auth)
 
     def admin_svc(auth: Any = Depends(admin_dependency)) -> tuple:
+        return _ctx(auth)
+
+    def therapist_svc(auth: Any = Depends(therapist_dependency)) -> tuple:
         return _ctx(auth)
 
     # -- fixed paths first ----------------------------------------------------------------------
@@ -115,26 +129,56 @@ def create_clients_router(
         service, org_id, _uid, _admin = ctx
         return success_response(service.agenda(org_id, frm, to))
 
+    @router.get("/summary", name="clients_month_summary")
+    def month_summary_route(month: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), ctx=Depends(svc)) -> dict:
+        service, org_id, _uid, _admin = ctx
+        year, mon = (int(x) for x in month.split("-"))
+        return success_response(service.month_summary(org_id, year, mon))
+
     @router.patch("/sessions/{session_id}", name="clients_session_update")
     def session_update_route(session_id: UUID, body: SessionPatch, ctx=Depends(svc)) -> dict:
-        service, org_id, _uid, _admin = ctx
-        return success_response(service.update_session(org_id, str(session_id), body.model_dump(exclude_unset=True)))
+        service, org_id, uid, _admin = ctx
+        return success_response(service.update_session(org_id, str(session_id), body.model_dump(exclude_unset=True), user_id=uid))
 
     @router.delete("/sessions/{session_id}", status_code=204, name="clients_session_delete")
     def session_delete_route(session_id: UUID, ctx=Depends(svc)) -> Response:
-        service, org_id, _uid, _admin = ctx
-        service.delete_session(org_id, str(session_id))
+        service, org_id, uid, _admin = ctx
+        service.delete_session(org_id, str(session_id), user_id=uid)
         return Response(status_code=204)
+
+    @router.post("/sessions/{session_id}/reschedule", status_code=201, name="clients_session_reschedule")
+    def session_reschedule_route(session_id: UUID, body: RescheduleBody, ctx=Depends(svc)) -> dict:
+        service, org_id, uid, _admin = ctx
+        return success_response(service.reschedule_session(org_id, str(session_id), body.starts_at, user_id=uid))
+
+    @router.get("/sessions/{session_id}/events", name="clients_session_events")
+    def session_events_route(session_id: UUID, ctx=Depends(svc)) -> dict:
+        service, org_id, _uid, _admin = ctx
+        return success_response(service.session_events(org_id, str(session_id)))
+
+    @router.get("/sessions/{session_id}/clinical-note", name="clients_clinical_note_get")
+    @access_tier('org', reason='therapist_svc: therapist-only (org admin by default) gate; LGPD art. 11 clinical data, org-scoped')
+    def clinical_note_get_route(session_id: UUID, ctx=Depends(therapist_svc)) -> dict:
+        service, org_id, _uid, _admin = ctx
+        return success_response(service.get_clinical_note(org_id, str(session_id)))
+
+    @router.put("/sessions/{session_id}/clinical-note", name="clients_clinical_note_put")
+    @access_tier('org', reason='therapist_svc: therapist-only (org admin by default) gate; LGPD art. 11 clinical data, org-scoped')
+    def clinical_note_put_route(session_id: UUID, body: ClinicalNoteBody, ctx=Depends(therapist_svc)) -> dict:
+        service, org_id, uid, _admin = ctx
+        return success_response(service.set_clinical_note(org_id, str(session_id), body.body, user_id=uid))
 
     @router.patch("/schedules/{schedule_id}", name="clients_schedule_update")
     def schedule_update_route(schedule_id: UUID, body: SchedulePatch, ctx=Depends(svc)) -> dict:
-        service, org_id, _uid, _admin = ctx
-        return success_response(service.update_schedule(org_id, str(schedule_id), body.model_dump(exclude_unset=True)))
+        service, org_id, uid, _admin = ctx
+        data = body.model_dump(exclude_unset=True)
+        apply = bool(data.pop("apply_to_existing", True))
+        return success_response(service.update_schedule(org_id, str(schedule_id), data, user_id=uid, apply_to_existing=apply))
 
     @router.delete("/schedules/{schedule_id}", status_code=204, name="clients_schedule_delete")
     def schedule_delete_route(schedule_id: UUID, ctx=Depends(svc)) -> Response:
-        service, org_id, _uid, _admin = ctx
-        service.delete_schedule(org_id, str(schedule_id))
+        service, org_id, uid, _admin = ctx
+        service.delete_schedule(org_id, str(schedule_id), user_id=uid)
         return Response(status_code=204)
 
     # -- one client -------------------------------------------------------------------------------
@@ -169,8 +213,8 @@ def create_clients_router(
 
     @router.post("/{client_id}/sessions", status_code=201, name="clients_session_create")
     def session_create_route(client_id: UUID, body: SessionBody, ctx=Depends(svc)) -> dict:
-        service, org_id, _uid, _admin = ctx
-        return success_response(service.create_session(org_id, str(client_id), body.model_dump(exclude_none=True)))
+        service, org_id, uid, _admin = ctx
+        return success_response(service.create_session(org_id, str(client_id), body.model_dump(exclude_none=True), user_id=uid))
 
     @router.get("/{client_id}/schedules", name="clients_schedules")
     def schedules_route(client_id: UUID, ctx=Depends(svc)) -> dict:
@@ -179,8 +223,13 @@ def create_clients_router(
 
     @router.post("/{client_id}/schedules", status_code=201, name="clients_schedule_create")
     def schedule_create_route(client_id: UUID, body: ScheduleBody, ctx=Depends(svc)) -> dict:
+        service, org_id, uid, _admin = ctx
+        return success_response(service.create_schedule(org_id, str(client_id), body.model_dump(exclude_none=True), user_id=uid))
+
+    @router.get("/{client_id}/events", name="clients_events")
+    def events_route(client_id: UUID, ctx=Depends(svc)) -> dict:
         service, org_id, _uid, _admin = ctx
-        return success_response(service.create_schedule(org_id, str(client_id), body.model_dump(exclude_none=True)))
+        return success_response(service.client_events(org_id, str(client_id)))
 
     @router.get("/{client_id}/finance", name="clients_finance")
     def finance_route(client_id: UUID, ctx=Depends(svc)) -> dict:

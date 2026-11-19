@@ -262,13 +262,99 @@ def harness_status(
     rc, top = _git(["rev-parse", "--show-toplevel"], tree_root) if primary else (1, "")
     tree_root = Path(top) if rc == 0 and top else (primary or tree_root)
     if full and primary is not None:
-        out["caches"] = run("caches", lambda: _section_caches(tree_root, errors))
-        out["auto_improvement"] = run("auto_improvement", _section_auto_improvement)
-        out["branch_pointers"] = run("branch_pointers", _section_pointers)
-        out["worktrees"] = run("worktrees", lambda: _section_worktrees(primary))
-        out["dispatcher_pending"] = run("dispatcher_pending", lambda: _section_dispatcher(primary))
+        def compute() -> tuple[dict, list[dict]]:
+            sec_errors: list[dict] = []
+
+            def sec(name: str, fn: Callable[[], Any]) -> Any:
+                try:
+                    return ov[name]() if name in ov else fn()
+                except Exception as exc:  # noqa: BLE001 — surfaced in errors[], never dropped
+                    sec_errors.append({"section": name, "error": f"{type(exc).__name__}: {exc}"})
+                    return None
+
+            got = {
+                "caches": sec("caches", lambda: _section_caches(tree_root, sec_errors)),
+                "auto_improvement": sec("auto_improvement", _section_auto_improvement),
+                "branch_pointers": sec("branch_pointers", _section_pointers),
+                "worktrees": sec("worktrees", lambda: _section_worktrees(primary)),
+                "dispatcher_pending": sec("dispatcher_pending", lambda: _section_dispatcher(primary)),
+            }
+            return got, sec_errors
+
+        # Every open session polls this; without sharing, N sessions run N
+        # overlapping full scans (2026-11-18: 5 concurrent scans, fans at max).
+        # Tests (section_overrides) always compute fresh.
+        if ov:
+            sections, sec_errors = compute()
+            cached_age = None
+        else:
+            sections, sec_errors, cached_age = _shared_full_sections(primary, tree_root, compute)
+        out.update(sections)
+        errors.extend(sec_errors)
+        out["full_cache_age_s"] = cached_age
     out["errors"] = errors
     return out
+
+
+# ── shared full-mode cache (one scan per tree, across sessions) ──────────────
+FULL_CACHE_TTL_S = 120
+
+
+def _shared_full_sections(
+    primary: Path, tree_root: Path,
+    compute: Callable[[], tuple[dict, list[dict]]],
+    *, ttl_s: int = FULL_CACHE_TTL_S, now: Callable[[], float] | None = None,
+) -> tuple[dict, list[dict], int | None]:
+    """Return the five repo-wide full sections, computed at most once per
+    ``ttl_s`` per tree across every session. An exclusive file lock makes a
+    concurrent caller WAIT for the scan in flight and then reuse its result,
+    instead of starting a second one. Returns (sections, errors, age_s) where
+    age_s is None for a fresh compute. A broken cache is recomputed, and the
+    failure is reported in errors (never silent)."""
+    import fcntl
+    import time as _time
+
+    clock = now or _time.time
+    key = hashlib.sha256(str(tree_root).encode()).hexdigest()[:16]
+    cache_dir = primary / ".claude" / "cache" / "harness-status"
+    path = cache_dir / f"full-{key}.json"
+    notes: list[dict] = []
+
+    def read_fresh() -> tuple[dict, list[dict], int] | None:
+        try:
+            data = json.loads(path.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            notes.append({"section": "full_cache", "error": f"unreadable, recomputed: {exc}"})
+            return None
+        age = clock() - float(data.get("at", 0))
+        if 0 <= age < ttl_s:
+            return data["sections"], data.get("errors", []), int(age)
+        return None
+
+    hit = read_fresh()
+    if hit is not None:
+        return hit
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        lock = open(cache_dir / f"full-{key}.lock", "w")  # noqa: SIM115 — held across the scan
+    except OSError as exc:
+        sections, errs = compute()
+        return sections, errs + notes + [{"section": "full_cache", "error": f"no lock, scanned unshared: {exc}"}], None
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # waits for a scan another session has in flight
+        hit = read_fresh()  # that scan may have just written a fresh result
+        if hit is not None:
+            return hit
+        sections, errs = compute()
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"at": clock(), "sections": sections, "errors": errs}, default=str))
+            tmp.replace(path)
+        except OSError as exc:
+            notes.append({"section": "full_cache", "error": f"not written: {exc}"})
+        return sections, errs + notes, None
 
 
 def harness_event(payload: Any) -> dict:

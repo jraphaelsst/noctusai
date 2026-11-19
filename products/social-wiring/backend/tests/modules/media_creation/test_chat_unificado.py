@@ -127,6 +127,9 @@ class _PropostaValidada:
     headline: str
     gatilho: str | None
     estrutura_ids: tuple
+    tipo: str = "headline"
+    titulo: str | None = None
+    formato: str | None = None
 
 
 @dataclass(frozen=True)
@@ -366,6 +369,7 @@ def test_mensagem_traz_propostas_no_formato_do_contrato(ch):
     com = next(m for m in msgs if m["id"] == mid)
     assert com["propostas"] == [{
         "id": pid, "ordem": 1, "texto": "Headline um", "gatilho_tag": None, "status": "proposta", "headline_id": None,
+        "tipo": "headline", "titulo": None, "formato": None, "roteiro_id": None,
         "estruturas": [
             {"id": E1, "codigo": 101, "perfil": {"id": PERFIL, "handle": "psifernandosegredo", "nome": "Fernando Segredo"}, "principal": True},
             {"id": E2, "codigo": 102, "perfil": {"id": PERFIL, "handle": "psifernandosegredo", "nome": "Fernando Segredo"}, "principal": False},
@@ -419,7 +423,7 @@ def test_fluxo_e_composto_na_leitura_a_partir_das_tabelas_verdade(ch, roteiro_st
     msg = next(m for m in msgs if m["id"] == mid)
     assert msg["tipo"] == "roteiro_gerado"
     f = msg["fluxo"]
-    assert f["proposta_id"] == pid and f["etapa"] == etapa
+    assert f["proposta_id"] == pid and f["etapa"] == etapa and f["direcao"] == "headline_primeiro"
     assert f["headline"] == {"id": hid, "texto": "Headline um"}
     assert f["roteiro"] == {"id": rid, "nome": "Roteiro 1", "status": roteiro_status, "formato": "carrossel",
                             "duracao": "auto", "ordem_cta": "cta_inicio", "versao": 1}
@@ -452,6 +456,102 @@ def test_fluxo_sem_roteiro_e_headline_salva_e_a_etapa_falhou_vence(ch):
     ch.db.from_("cs_chat_propostas").update({"fluxo_etapa": "falhou", "fluxo_erro_codigo": "demorou"}).eq("id", pid).execute()
     f = svc.compor_fluxo(svc.get_proposta(pid))
     assert f["etapa"] == "falhou" and f["erro_codigo"] == "demorou"
+
+
+# ── roteiro-first (contract 16.5): the proposta's tipo decides the direction; the read side composes the states ──
+
+
+def _fluxo_roteiro_primeiro(st, *, fluxo_etapa="roteiro_salvo", com_headline=False, com_post=False,
+                            roteiro_status="completo", erro=None):
+    cid = _conversa(st)
+    mid = _mensagem(st, cid, "assistant", "### Roteiro 1: ...")
+    rid = _roteiro(st, cid, None, status=roteiro_status, formato="carrossel", nome="O erro mais caro")
+    hid = None
+    if com_headline:
+        hid = str(uuid.uuid4())
+        st.db.from_("cs_headlines").insert(
+            {"id": hid, "org_id": TEST_ORG_ID, "marca_id": MARCA, "texto": "Headline gerada", "modo": "do_roteiro"}).execute()
+    pid = _proposta(st, cid, mid, texto="**Slide 1 — Gancho**\nTexto", status="escolhida", fluxo_etapa=fluxo_etapa,
+                    fluxo_erro_codigo=erro, tipo="roteiro", titulo="O erro mais caro", formato="carrossel",
+                    roteiro_id=rid, headline_id=hid)
+    if com_post:
+        etapa_id = str(uuid.uuid4())
+        st.db.from_("pipeline_stages").insert({"id": etapa_id, "org_id": TEST_ORG_ID, "label": "Headline + roteiro"}).execute()
+        st.db.from_("cs_posts").insert({
+            "id": str(uuid.uuid4()), "org_id": TEST_ORG_ID, "marca_id": MARCA, "titulo": "Headline gerada",
+            "etapa_id": etapa_id, "roteiro_id": rid, "legenda": None}).execute()
+    return cid, pid, rid, hid
+
+
+def _evento(st, cid, pid, tipo):
+    st.db.from_("cs_fluxo_eventos").insert({"id": str(uuid.uuid4()), "org_id": TEST_ORG_ID, "marca_id": MARCA,
+                                            "conversa_id": cid, "proposta_id": pid, "tipo": tipo}).execute()
+
+
+def test_proposta_de_roteiro_e_apresentada_com_tipo_titulo_formato_e_roteiro_id(ch):
+    cid, pid, rid, _ = _fluxo_roteiro_primeiro(ch)
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    (prop,) = svc.apresentar_propostas([svc.get_proposta(pid)])
+    assert (prop["tipo"], prop["titulo"], prop["formato"], prop["roteiro_id"]) == ("roteiro", "O erro mais caro", "carrossel", rid)
+    assert prop["texto"].startswith("**Slide 1") and prop["headline_id"] is None
+
+
+def test_roteiro_primeiro_salvo_sem_job_e_roteiro_salvo_com_headline_nula(ch):
+    cid, pid, rid, _ = _fluxo_roteiro_primeiro(ch)
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    f = svc.compor_fluxo(svc.get_proposta(pid))
+    assert f["direcao"] == "roteiro_primeiro" and f["etapa"] == "roteiro_salvo" and f["headline"] is None
+    assert f["roteiro"]["id"] == rid and f["roteiro"]["status"] == "completo" and f["roteiro"]["nome"] == "O erro mais caro"
+    assert f["post"] is None and f["legenda"] == "pendente"
+
+
+def test_roteiro_primeiro_com_o_job_da_headline_pendente_e_headline_gerando(ch):
+    cid, pid, *_ = _fluxo_roteiro_primeiro(ch)
+    _evento(ch, cid, pid, "headline_gerando")
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    f = svc.compor_fluxo(svc.get_proposta(pid))
+    assert f["etapa"] == "headline_gerando" and f["headline"] is None
+
+
+def test_roteiro_primeiro_com_headline_mas_sem_card_ainda_esta_em_andamento(ch):
+    cid, pid, _, hid = _fluxo_roteiro_primeiro(ch, fluxo_etapa="headline_gerada", com_headline=True)
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    f = svc.compor_fluxo(svc.get_proposta(pid))
+    assert f["etapa"] == "headline_gerando" and f["headline"] == {"id": hid, "texto": "Headline gerada"}
+
+
+def test_roteiro_primeiro_com_headline_e_card_e_roteiro_pronto(ch):
+    cid, pid, _, hid = _fluxo_roteiro_primeiro(ch, fluxo_etapa="card_criado", com_headline=True, com_post=True)
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    f = svc.compor_fluxo(svc.get_proposta(pid))
+    assert f["etapa"] == "roteiro_pronto" and f["headline"]["texto"] == "Headline gerada"
+    assert f["post"]["titulo"] == "Headline gerada"
+
+
+def test_roteiro_primeiro_headline_invalida_e_falhou_com_o_codigo(ch):
+    cid, pid, *_ = _fluxo_roteiro_primeiro(ch, fluxo_etapa="falhou", erro="headline_invalida")
+    _evento(ch, cid, pid, "headline_gerando")
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    f = svc.compor_fluxo(svc.get_proposta(pid))
+    assert f["etapa"] == "falhou" and f["erro_codigo"] == "headline_invalida" and f["headline"] is None
+
+
+def test_uma_linha_legada_sem_tipo_e_headline_primeiro(ch):
+    cid = _conversa(ch)
+    pid = _proposta(ch, cid, _mensagem(ch, cid), status="escolhida", fluxo_etapa="headline_salva")
+    ch.db.from_("cs_chat_propostas").update({"tipo": None}).eq("id", pid).execute()
+    svc = FluxoService(ch.db, TEST_ORG_ID, TEST_USER_ID, cfg=ch.cfg)
+    linha = svc.get_proposta(pid)
+    assert svc.apresentar_propostas([linha])[0]["tipo"] == "headline"
+    assert svc.compor_fluxo(linha)["direcao"] == "headline_primeiro"
+
+
+def test_clique_num_roteiro_antes_da_saga_do_rp3_e_409_codificado_nunca_500(ch):
+    cid, mid, pid = _proposta_para_escolher(ch)
+    ch.rpc.results["cs_chat_proposta_reivindicar"] = _claimed(pid, cid)
+    ch.rpc.errors["cs_chat_proposta_salvar_headline"] = FakeApiError("headline_texto_ausente")
+    r = ch.client.post(f"{BASE}/conversas/{cid}/escolher", json={"proposta_id": pid})
+    assert r.status_code == 409 and r.json()["code"] == "roteiro_primeiro_indisponivel"
 
 
 # ── the stream: meta / delta / done.propostas ─────────────────────────────────────────────────────────────
@@ -508,12 +608,28 @@ def test_done_traz_as_propostas_validadas_gravadas_numa_transacao(ch):
     assert p["org_id"] == TEST_ORG_ID and p["user_id"] == TEST_USER_ID and p["conversa_id"] == cid
     assert p["conteudo"] == TEXTO_COM_HEADLINES and p["truncada"] is False and p["modelo"]
     assert p["propostas"] == [
-        {"ordem": 1, "texto": "Você erra isso no consultório", "gatilho_tag": None, "estrutura_ids": [E1]},
-        {"ordem": 2, "texto": "O erro que custa clientes", "gatilho_tag": None, "estrutura_ids": [E1, E2]},
+        {"ordem": 1, "tipo": "headline", "texto": "Você erra isso no consultório", "titulo": None, "formato": None,
+         "gatilho_tag": None, "estrutura_ids": [E1]},
+        {"ordem": 2, "tipo": "headline", "texto": "O erro que custa clientes", "titulo": None, "formato": None,
+         "gatilho_tag": None, "estrutura_ids": [E1, E2]},
     ]
     assert p["eventos"] == [{"tipo": "citacao_rejeitada", "contagem": 1}]
     # the assistant message was NOT inserted a second time by the plain path
     assert [m["id"] for m in ch.rows("cs_chat_mensagens") if m["role"] == "assistant"] == [mid_novo]
+
+
+def test_um_roteiro_proposto_e_gravado_com_tipo_titulo_formato_e_o_script_inteiro_pelo_parser_real(ch):
+    cid = _conversa(ch)
+    corpo = "**Slide 1 — Gancho**\nVocê erra nisso.\n**Slide 2 — Virada**\nFaça assim."
+    texto = (f"### Roteiro 1: O erro mais caro (estrutura #101)\n{corpo}\n\n"
+             "### Roteiro 2: Sem slides (estrutura #101)\nTexto corrido.\n")
+    ch.rpc.results["cs_chat_resposta_gravar"] = {"mensagem_id": str(uuid.uuid4()), "propostas": []}
+    mapa = {"101": _Citavel(E1, "101", "carrossel")}
+    asyncio.run(_stream(_svc_com_catalogo(ch, mapa), ch, cid, texto, extrair=chat_service.extrair_propostas_padrao))
+    p = ch.rpc.last("cs_chat_resposta_gravar")["p"]
+    assert p["propostas"] == [{"ordem": 1, "tipo": "roteiro", "texto": corpo, "titulo": "O erro mais caro",
+                               "formato": "carrossel", "gatilho_tag": None, "estrutura_ids": [E1]}]
+    assert p["eventos"] == [{"tipo": "roteiro_invalido", "contagem": 1}]
 
 
 def _proposta_rows(st, cid, mid, p1, p2):
@@ -878,12 +994,12 @@ def test_a_resposta_do_escolher_nao_vaza_campos_internos(ch):
 
 def test_o_prompt_unificado_carrega_o_contrato_de_citacao_e_de_mistura():
     p = chat_unificado.SYSTEM_PROMPT
-    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v1-draft"
+    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v2-draft"
     assert "(estrutura #<código>)" in p and "(estrutura #<código> + #<código>)" in p
     assert "MÁXIMO 3" in p and chat_unificado.MAX_CITACOES == 3
     assert "### Estruturas usadas" in p and "### Análise da Estrutura Escolhida" in p
     assert "mesmo formato" in p and "NUNCA deixe um [espaço] entre colchetes" in p
-    assert "o roteiro é escrito quando o usuário escolhe uma headline" in p
+    assert "NÃO escreve o roteiro" not in p and "o roteiro é escrito quando" not in p
     assert "<material" in p and "nunca instrução" in p  # the prompt-injection fence is kept
     assert "{MAX_CITACOES}" not in p and "{METODO" not in p
 
