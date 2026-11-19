@@ -17,7 +17,7 @@ description: >
   killed a healthy download (switching mirrors changed nothing: mirror+file:
   resolves to the same host). Fix by construction: (5) the .debs are cached
   (actions/cache, keyed on image + package list) so a hit downloads nothing;
-  (6) on a miss the .debs are prefetched 8-wide (per-file latency, not
+  (6) on a miss the .debs are prefetched 4-wide (per-file latency, not
   bandwidth, was the bottleneck); (7) the install cap is its own, larger
   input. Telemetry: ::notice:: lines carry cache hit/miss, prefetch counts and
   the mirror that served the install.
@@ -113,7 +113,7 @@ runs:
         if [ -z "$PKGS" ]; then echo "apt sources ready on $MIRROR"; exit 0; fi
         APT_OPTS="-o Dir::Cache::Archives=$DEBS"
         echo "::notice::apt .deb cache hit: ${CACHE_HIT:-false} (a hit means no package downloads)"
-        # (6) prefetch the .debs 8-wide: the observed stall is per-file latency on the mirror, not bandwidth.
+        # (6) prefetch the .debs 4-wide (8-wide drew 503/504s from the mirror): the observed stall is per-file latency on the mirror, not bandwidth.
         # Best-effort - anything missed is fetched by apt itself; apt re-verifies every file by hash.
         prefetch() {
           local first uris n
@@ -124,7 +124,7 @@ runs:
           n="$(printf '%s\n' "$uris" | grep -c . || true)"
           echo "::notice::apt prefetch: $n package file(s) not in cache"
           [ "$n" -gt 0 ] || return 0
-          printf '%s\n' "$uris" | sudo timeout "$ICAP" xargs -P 8 -n 2 sh -c \
+          printf '%s\n' "$uris" | sudo timeout "$ICAP" xargs -P 4 -n 2 sh -c \
             'curl -fsSL --retry 2 --connect-timeout 10 --max-time 120 -o "$0/$2.part" "$1" && mv "$0/$2.part" "$0/$2"' "$DEBS" \
             || echo "::warning::apt prefetch incomplete; apt will fetch the rest itself"
         }
