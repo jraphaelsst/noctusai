@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { useToastErroGeracao } from "@/components/geracao/LimiteDiarioAviso";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -45,6 +45,7 @@ export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
   const taxQ = useTaxonomias();
   const perfisQ = usePerfisMonitorados();
   const criar = useCriarLote();
+  const toastErro = useToastErroGeracao();
 
   const [passo, setPasso] = useState<1 | 2>(1);
   const [assuntoIds, setAssuntoIds] = useState<string[]>([]);
@@ -91,7 +92,7 @@ export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
       const sug = sugestoesDoErro(e);
       if (amb.length > 0) setCandidatos({ tipo: "ambiguo", lista: amb });
       else if (sug.length > 0) setCandidatos({ tipo: "sugestao", lista: sug });
-      toast.error(mensagemDoForm(e, "Não foi possível gerar as headlines."));
+      toastErro(mensagemDoForm(e, "Não foi possível gerar as headlines."), e);
     }
   }
 

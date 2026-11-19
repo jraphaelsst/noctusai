@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Brain, BookMarked } from "lucide-react";
 import { toast } from "sonner";
+import { LinkAjustarLimites, useToastErroGeracao } from "@/components/geracao/LimiteDiarioAviso";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -71,6 +72,7 @@ export default function Chat() {
   const renomear = useRenomearConversa();
   const apagar = useApagarConversa();
   const escolher = useEscolherProposta();
+  const toastErro = useToastErroGeracao();
   const { estado, enviar, parar, perfilPendente, limparPerfilPendente } = useEnviarMensagem();
   const perfisQ = usePerfisMonitorados();
 
@@ -188,7 +190,7 @@ export default function Chat() {
       const r = await escolher.mutateAsync({ conversaId, proposta_id: propostaId });
       if (r.ja_existia) toast.info(r.em_andamento ? "Este roteiro já está sendo criado." : "Este roteiro já foi criado.");
     } catch (e) {
-      toast.error(mensagemEscolher(e));
+      toastErro(mensagemEscolher(e), e);
     }
   }
 
@@ -329,9 +331,12 @@ export default function Chat() {
                     />
                   )}
                   {estado.erro && (
-                    <p role="alert" className="text-sm text-destructive">
-                      {estado.erro}
-                    </p>
+                    <div className="space-y-1">
+                      <p role="alert" className="text-sm text-destructive">
+                        {estado.erro}
+                      </p>
+                      {estado.erroLimiteDiario && <LinkAjustarLimites />}
+                    </div>
                   )}
                 </>
               )}

@@ -47,6 +47,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
 
 from app.config import settings
+from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.prompts import chat_unificado
 from app.modules.media_creation.services.chat_contexto import (
     ChatContexto,
@@ -408,16 +409,18 @@ class ChatService:
             ]
         user_msgs = [d for d in user_msgs if d]
         org_msgs = [d for d in org_msgs if d]
-        if len(user_msgs) >= settings.chat_mensagens_dia_usuario:
+        limite_usuario = limite_geracao("chat_mensagens_dia_usuario", self.org_id, settings)
+        limite_org = limite_geracao("chat_mensagens_dia_org", self.org_id, settings)
+        if len(user_msgs) >= limite_usuario:
             raise ChatError(
-                429, f"Você atingiu o limite de {settings.chat_mensagens_dia_usuario} mensagens por dia no chat.",
+                429, f"Você atingiu o limite de {limite_usuario} mensagens por dia no chat.",
                 code=ERRO_LIMITE,
-                headers={"Retry-After": str(self._retry_after(user_msgs, settings.chat_mensagens_dia_usuario, agora))},
+                headers={"Retry-After": str(self._retry_after(user_msgs, limite_usuario, agora))},
             )
-        if len(org_msgs) >= settings.chat_mensagens_dia_org:
+        if len(org_msgs) >= limite_org:
             raise ChatError(
                 429, "A sua organização atingiu o limite diário de mensagens no chat.", code=ERRO_LIMITE,
-                headers={"Retry-After": str(self._retry_after(org_msgs, settings.chat_mensagens_dia_org, agora))},
+                headers={"Retry-After": str(self._retry_after(org_msgs, limite_org, agora))},
             )
 
     # ── memories (endpoint 47) ───────────────────────────────────────────

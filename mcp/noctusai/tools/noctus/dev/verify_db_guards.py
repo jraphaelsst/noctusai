@@ -13805,6 +13805,120 @@ _SW_358_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+
+# ---------------------------------------------------------------------------
+# Registry — social_wiring per-org daily generation limits (migration 361, geracao-contract.md §9.4.1). The
+# append-only change log `cs_limite_geracao_eventos` (who / old / new per limit change). Self-provisioning: each probe
+# builds its OWN org and one `limite_definido` row inside the rolled-back transaction.
+# ---------------------------------------------------------------------------
+
+_SW_361_MIGRATION = "361_cs_limites_geracao.sql"
+
+
+def _sw361_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-361 guard; same contract as ``_sw352_probe`` (``write_refusal`` / ``write_allowed``)."""
+    fragment_lit = _sql_lit(guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_361_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid; v_ev uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_limite_geracao_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_limite_geracao_eventos does not exist (migration 361 not applied)';
+  END IF;
+{_probe_own_org_sql('v_org')}  INSERT INTO {_SW_SCHEMA}.cs_limite_geracao_eventos (org_id, chave, evento, valor_anterior, valor_novo)
+  VALUES (v_org, 'roteiros_dia_usuario', 'limite_definido', NULL, 50) RETURNING id INTO v_ev;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW361_INS = f"    INSERT INTO {_SW_SCHEMA}.cs_limite_geracao_eventos (org_id, chave, evento, valor_anterior, valor_novo) VALUES "
+
+_SW_361_PROBES: tuple[GuardProbe, ...] = (
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_update_refused", guard_name="cs_limite_geracao_eventos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_limite_geracao_eventos SET valor_novo = 1 WHERE id = v_ev;",
+        permitted_msg="a limit change was rewritten",
+        rationale="The change log answers who raised which limit, from what to what: a rewritten row falsifies it.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_delete_refused", guard_name="cs_limite_geracao_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_limite_geracao_eventos WHERE id = v_ev;",
+        permitted_msg="a limit change was deleted",
+        rationale="A deleted change hides a raise; only the org's ON DELETE CASCADE may remove one.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_truncate_refused", guard_name="cs_limite_geracao_recusa_truncate",
+        statements=f"    TRUNCATE {_SW_SCHEMA}.cs_limite_geracao_eventos;",
+        permitted_msg="the limit change log was truncated",
+        rationale="Row triggers never fire on TRUNCATE: the statement-level refusal keeps the log append-only.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_org_cascade_allowed", guard_name="cs_limite_geracao_eventos_imutavel",
+        kind="write_allowed",
+        statements="    DELETE FROM public.organizations WHERE id = v_org;",
+        permitted_msg="deleting the org cascaded its limit change log, as it must",
+        after_ok=(f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_limite_geracao_eventos WHERE id = v_ev) THEN\n"
+                  "      RAISE EXCEPTION 'NOC_PROBE:blocked: the change row survived the ON DELETE CASCADE of its org';\n"
+                  "    END IF;"),
+        rationale="An append-only log must not block the org's erase (account deletion, LGPD).",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_chave_valida", guard_name="cs_limite_geracao_eventos_chave_check",
+        statements=_SW361_INS + "(v_org, 'limite_inventado', 'limite_definido', NULL, 5);",
+        permitted_msg="a change to an unknown limit was recorded",
+        rationale="The key vocabulary is the resolver's (limites_geracao.LIMITES): any other key is a row no metric reads.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_evento_valido", guard_name="cs_limite_geracao_eventos_evento_check",
+        statements=_SW361_INS + "(v_org, 'roteiros_dia_usuario', 'limite_apagado', NULL, 5);",
+        permitted_msg="a limit change with an unknown evento was recorded",
+        rationale="A change is limite_definido or limite_restaurado; the metrics branch on it.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_valor_positivo", guard_name="cs_limite_geracao_eventos_valor_novo_check",
+        statements=_SW361_INS + "(v_org, 'roteiros_dia_usuario', 'limite_definido', 50, 0);",
+        permitted_msg="a limit of zero was recorded",
+        rationale="A daily limit is a finite integer >= 1: zero would read as 'blocked' or 'unlimited' depending on the reader.",
+    ),
+    _sw361_probe(
+        probe_id="sw361_limite_eventos_forma_restaurado", guard_name="cs_limite_geracao_eventos_forma_check",
+        statements=_SW361_INS + "(v_org, 'roteiros_dia_usuario', 'limite_restaurado', 50, 30);",
+        permitted_msg="a restore carried a new value",
+        rationale="A restore drops the org's own value (valor_novo NULL); a definido always carries one.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -13939,6 +14053,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_351_PROBES,
     *_SW_352_PROBES,
     *_SW_358_PROBES,
+    *_SW_361_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

@@ -160,3 +160,41 @@ def reservar_transcricao_biblioteca(client: Any, params: dict) -> MockSelectBuil
     }
     client.table(tabela).insert(row).execute()
     return MockSelectBuilder([{"ok": True, "row": row}])
+
+
+
+_LIMITE_CHAVES = frozenset({
+    "headline_lotes_dia_usuario", "headlines_sugeridas_por_dia_marca", "roteiros_dia_usuario",
+    "legendas_dia_usuario", "chat_mensagens_dia_usuario", "chat_mensagens_dia_org",
+})
+
+
+def cs_limite_geracao_definir(client: Any, params: dict) -> MockSelectBuilder:
+    """Migration 361 `social_wiring.cs_limite_geracao_definir(p_org, p_chave, p_valor, p_ator)`: upserts (or, with
+    `p_valor` NULL, deletes) the org's `public.org_settings` row and, when the value changed, appends ONE
+    `cs_limite_geracao_eventos` row; returns `{anterior, novo, mudou}`. Unknown key / value < 1 raise `22023`."""
+    org, chave, valor, ator = str(params["p_org"]), params["p_chave"], params.get("p_valor"), params.get("p_ator")
+    if chave not in _LIMITE_CHAVES or (valor is not None and valor < 1):
+        raise ValueError("22023: cs_limite_geracao_definir: invalid argument")
+    linhas = [
+        r for r in client.table("org_settings").select("*").execute().data or []
+        if str(r.get("org_id")) == org and r.get("key") == chave
+    ]
+    texto = str(linhas[0].get("value") or "") if linhas else ""
+    anterior = int(texto) if texto.isdigit() and 1 <= int(texto) <= 999_999_999 else None
+    if valor is None:
+        client.table("org_settings").delete().eq("org_id", org).eq("key", chave).execute()
+    elif linhas:
+        client.table("org_settings").update({"value": str(valor)}).eq("org_id", org).eq("key", chave).execute()
+    else:
+        client.table("org_settings").insert(
+            {"org_id": org, "key": chave, "value": str(valor), "is_secret": False}
+        ).execute()
+    mudou = anterior != valor
+    if mudou:
+        client.table("cs_limite_geracao_eventos").insert({
+            "org_id": org, "chave": chave, "evento": "limite_restaurado" if valor is None else "limite_definido",
+            "valor_anterior": anterior, "valor_novo": valor, "ator_id": ator,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    return MockSelectBuilder([{"anterior": anterior, "novo": valor, "mudou": mudou}])

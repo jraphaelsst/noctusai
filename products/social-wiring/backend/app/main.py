@@ -161,6 +161,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_conhecimento_editor_router import router as julia_conhecimento_editor_router
     from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
+    from app.routers.limites_geracao_router import router as limites_geracao_router
     from app.routers.whatsapp_router import router as whatsapp_router
     from app.routers.whatsapp_connections_router import (
         router as whatsapp_connections_router,
@@ -277,6 +278,7 @@ def _register_media_wiring() -> ModuleRegistration:
         routers=[
             auth_router,
             settings_router,
+            limites_geracao_router,  # GET/PUT /api/settings/limites-geracao (geracao-contract 9.4.1)
             julia_agente_router,
             build_julia_grant_router(get_auth_context),  # PUT/DELETE /api/platform/grants/agents (Julia-line D2-D5)
             julia_roteamento_router,

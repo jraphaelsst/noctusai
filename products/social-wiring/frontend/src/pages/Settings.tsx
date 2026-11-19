@@ -39,6 +39,7 @@ import {
 import { TestemunhasSection } from "@/components/settings/TestemunhasSection";
 import { ConexaoPlataformaDoAgente } from "@/components/julia/ConexaoPlataforma";
 import { VistaCard } from "@/components/settings/VistaCard";
+import { LimitesDiariosSection } from "@/components/settings/LimitesDiariosSection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -2247,6 +2248,9 @@ export default function Settings() {
     // Read is open to any member -- a corretor should be able to look up how long we keep a buyer's
     // income tax return. Only the write is narrowed to owner/admin (the backend's `_require_admin`).
     { key: "retencao", label: "Retenção", render: () => <DocumentoRetencaoTab canEdit={canEditClientesInactivity} /> },
+    // Geração's daily limits (geracao-contract 9.4.1). Read open to every member (a person who hit a limit can see
+    // it); the write is owner/admin, exactly the backend's `require_org_admin_for`. The 429s link here.
+    { key: "limites", label: "Limites diários", render: () => <LimitesDiariosSection canEdit={canEditClientesInactivity} /> },
     // Owner/admin only -- matches the backend's `decidir_conflito_route` gate exactly (not "dev").
     {
       key: "pendencias",
