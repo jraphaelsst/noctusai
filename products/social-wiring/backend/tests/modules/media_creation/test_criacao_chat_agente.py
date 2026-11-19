@@ -159,7 +159,7 @@ def test_with_the_switch_on_and_no_diretor_the_refusal_is_coded_and_nothing_is_p
     ch.client._tc.app.dependency_overrides[get_diretor_factory] = lambda: (lambda org_id: None)
     cid = _conversa(ch)
     r = ch.client.post(f"{BASE}/conversas/{cid}/mensagens", json={"conteudo": "oi", "referencias": []})
-    assert r.status_code == 503 and r.json()["detail"]["code"] == "diretor_indisponivel"
+    assert r.status_code == 503 and r.json()["code"] == "diretor_indisponivel"
     assert ch.fake.calls == [] and [m for m in ch.rows("cs_chat_mensagens") if m["role"] == "user"] == []
 
 
@@ -171,7 +171,7 @@ def test_with_the_switch_off_the_legacy_stream_answers_and_the_diretor_is_never_
     cid = _conversa(ch)
     r = ch.client.post(f"{BASE}/conversas/{cid}/mensagens", json={"conteudo": "oi", "referencias": []})
     assert r.status_code == 200 and diretor.turnos == [] and len(ch.fake.calls) == 1
-    assert _frames(r.text)[0]["meta"]["via"] == "legado"
+    assert "via" not in _frames(r.text)[0]["meta"]  # the legacy frame is unchanged
 
 
 def test_a_failing_diretor_is_an_error_frame_never_a_silent_legacy_fallback(ch):
@@ -350,7 +350,7 @@ def test_one_refused_item_does_not_stop_the_others_and_is_reported_with_its_code
 def test_a_foreign_or_unknown_id_is_a_404_before_any_claim(sg):
     cid, ids = _duas_propostas(sg)
     r = sg.client.post(SEL, json={"ids": [ids[0], str(uuid.uuid4())]})
-    assert r.status_code == 404 and r.json()["detail"]["code"] == "proposta_nao_encontrada"
+    assert r.status_code == 404 and r.json()["code"] == "proposta_nao_encontrada"
     assert sg.rpc.names() == [] and sg.rows("cs_posts") == []
 
 

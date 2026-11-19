@@ -714,8 +714,9 @@ class ChatService:
                 "contexto_chars": envio.contexto.chars,
                 "codigos_permitidos": codigos_para_meta(envio.contexto),
                 "modo_estrutura": envio.modo_estrutura,
-                "via": envio.via,
                 "resolucao_perfis": envio.resolucao_perfis or RESOLUCAO_VAZIA,
+                # the legacy frame stays byte-for-byte what it was (a pinned wire shape): only a Director turn names its engine
+                **({"via": envio.via} if envio.via == VIA_DIRETOR else {}),
             }})
             if envio.via == VIA_DIRETOR:
                 # the agents turn does not stream yet (contract 4): tell the screen the Director is working
