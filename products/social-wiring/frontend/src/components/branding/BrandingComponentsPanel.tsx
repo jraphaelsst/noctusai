@@ -133,7 +133,7 @@ export function BrandingComponentsPanel({
               <ComponentForm brandingId={brandingId} initial={c} onDone={() => setEditing(null)} />
             ) : (
               <>
-                {c.guideline_md && <MarkdownRenderer content={c.guideline_md} />}
+                {c.guideline_md && <MarkdownRenderer content={c.guideline_md} remoteImages="block" />}
                 {c.preview_html ? (
                   tokens ? (
                     <SandboxedPreview name={c.name} html={c.preview_html} tokens={tokens} themeId={themeId} fonts={fonts} />
