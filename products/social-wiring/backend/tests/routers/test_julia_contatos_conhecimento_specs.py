@@ -178,10 +178,13 @@ class TestContatosSetoriais:
             assert admin.req("put", CONTATOS, corpo).status_code == 422
         assert admin.w.agents.especificacoes_salvas == []
 
-    def test_agents_still_refusing_channel_writes_is_a_clear_403_and_no_event(self, admin):
-        admin.w.agents.especificacoes_script.append(EspecificacoesResposta(403, {"code": "edicao_restrita_plataforma", "detail": "restrito"}))
-        r = admin.req("put", CONTATOS, {"contatos": [_contato()]})
-        assert r.status_code == 403 and r.json()["error"]["code"] == "edicao_restrita_plataforma" and admin.eventos() == []
+    def test_a_member_cannot_save_contacts_403_before_any_call_to_agents(self, member):
+        r = member.req("put", CONTATOS, {"contatos": [_contato()]})
+        assert r.status_code == 403 and member.w.agents.especificacoes_salvas == [] and member.eventos() == []
+
+    def test_the_acting_user_and_role_reach_agents(self, org_admin):
+        assert org_admin.req("put", CONTATOS, {"contatos": [_contato()]}).status_code == 200
+        assert org_admin.w.agents.especificacoes_atores[-1]["papel"] == "admin"
 
     def test_a_legacy_comma_value_is_shown_not_dropped(self, admin):
         admin.w.agents.especificacoes_valores[setoriais.SPEC_CHAVE] = "+5511911112222, +5511933334444"
@@ -205,13 +208,15 @@ class TestConhecimentoEditor:
         venda = d["itens"][0]
         assert venda["valor"] == "Aceitamos financiamento." and venda["declarada"] is True
 
-    def test_org_admin_reads_but_cannot_write_knowledge_403(self, org_admin):
-        assert org_admin.req("get", CONHEC).status_code == 200
-        r = org_admin.req("put", CONHEC, {"valores": {"conhecimento_venda": "x"}})
-        assert r.status_code == 403 and r.json()["error"]["code"] == "edicao_restrita_plataforma"
-        assert org_admin.w.agents.especificacoes_salvas == []
+    def test_member_reads_nothing_and_cannot_write_knowledge_403(self, member):
+        r = member.req("put", CONHEC, {"valores": {"conhecimento_venda": "x"}})
+        assert r.status_code == 403 and member.w.agents.especificacoes_salvas == []
 
-    def test_platform_admin_writes_only_the_three_keys_and_records_an_event_without_text(self, admin):
+    def test_org_admin_who_is_not_a_platform_admin_writes_knowledge(self, org_admin):
+        r = org_admin.req("put", CONHEC, {"valores": {"conhecimento_venda": "x"}})
+        assert r.status_code == 200 and org_admin.w.agents.especificacoes_atores[-1]["papel"] == "admin"
+
+    def test_org_admin_writes_only_the_three_keys_and_records_an_event_without_text(self, admin):
         r = admin.req("put", CONHEC, {"valores": {"conhecimento_venda": " Texto de vendas. ", "conhecimento_politicas": ""}})
         assert r.status_code == 200
         assert admin.w.agents.especificacoes_salvas == [("julia", {"conhecimento_venda": "Texto de vendas.", "conhecimento_politicas": ""})]

@@ -72,3 +72,30 @@ export interface RelatorioAplicacao {
   obrigatorios_faltando: number[];
   proximo_passo: string;
 }
+
+/** The onboarding channel to social-wiring — wire types of `sw_canal_router.py` (platform admin). NEVER carries the token. */
+export type SwCanalEstado = "provisionado" | "ausente" | "expirado" | "erro";
+export interface SwCanalEvento {
+  em: string;
+  evento: string;
+  codigo: string | null;
+  /** pt-BR reason, short; never a secret. */
+  motivo: string | null;
+}
+export interface SwCanalStatus {
+  estado: SwCanalEstado;
+  escopo: string;
+  emissor: string;
+  expira_em: string | null;
+  dias_restantes: number | null;
+  ultima_chamada_ok: SwCanalEvento | null;
+  ultimo_erro: SwCanalEvento | null;
+  codigo: string | null;
+  motivo: string | null;
+}
+export interface SwCanalTeste {
+  ok: boolean;
+  codigo: string | null;
+  motivo: string;
+  status: SwCanalStatus;
+}

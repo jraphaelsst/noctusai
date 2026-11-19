@@ -24,12 +24,15 @@ export interface FakeRoute {
   path: string;
   status?: number;
   body?: unknown;
+  /** Successive answers: the Nth call of this route answers `bodies[N]` (the last one repeats). Wins over `body`. */
+  bodies?: unknown[];
   headers?: Record<string, string>;
 }
 
 export function installFetch(routes: FakeRoute[]) {
   const calls: RecordedCall[] = [];
   const unmatched: string[] = [];
+  const served = new Map<FakeRoute, number>();
 
   const impl = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -43,7 +46,10 @@ export function installFetch(routes: FakeRoute[]) {
     }
     const status = route.status ?? 200;
     if (status === 204) return new Response(null, { status: 204 });
-    return new Response(JSON.stringify(route.body ?? {}), {
+    const nth = (served.get(route) ?? 0);
+    served.set(route, nth + 1);
+    const answer = route.bodies ? route.bodies[Math.min(nth, route.bodies.length - 1)] : route.body;
+    return new Response(JSON.stringify(answer ?? {}), {
       status,
       headers: { "content-type": "application/json", ...(route.headers ?? {}) },
     });

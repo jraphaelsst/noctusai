@@ -99,7 +99,7 @@ from app.stores.studio_definitions_conteudo import (
     SpecDefInput,
     TextoInput,
 )
-from app.studio.especificacoes_service import ConfigValidacao, config_atual, validar as validar_specs, violacoes_armazenadas
+from app.studio.especificacoes_service import ConfigValidacao, chave_editavel_pela_org, config_atual, validar as validar_specs, violacoes_armazenadas
 from app.routers.studio_geracoes_router import get_geracao_agendador_dep, get_geracao_deps_dep
 from app.studio import geracao as engine
 from app.studio.plataforma import ensure_definicao
@@ -159,7 +159,7 @@ def _decisao_out(r) -> DecisaoOut:
 def _spec_out(r) -> SpecDefOut:
     return SpecDefOut(
         id=r.id, chave=r.chave, rotulo=r.rotulo, descricao=r.descricao, tipo=r.tipo,
-        obrigatoria=r.obrigatoria, exemplo=r.exemplo,
+        obrigatoria=r.obrigatoria, exemplo=r.exemplo, editavel_pela_org=chave_editavel_pela_org(r.chave),
     )
 
 
@@ -460,10 +460,11 @@ def aplicar_org_specs(
     depois: dict[str, Any] = {"chaves": sorted(payload.valores)}
     if ator:
         depois["token_id"] = str(ctx.api_token_id)
-        depois["ator"] = {k: v for k, v in (("user_id", str(ator.user_id)), ("nome", ator.nome), ("email", ator.email)) if v}
+        depois["ator"] = {k: v for k, v in (("user_id", str(ator.user_id)), ("nome", ator.nome), ("email", ator.email), ("papel", ator.papel)) if v}
     if origem:
         depois.update(origem)
-        # the diff by KEY (values are the org's business data, not audit payload): which declared keys changed
+    # the diff by KEY (values are the org's business data, not audit payload): which declared keys changed
+    if ator or origem:
         depois["chaves_alteradas"] = sorted(c for c, v in res.valores.items() if antes_valores.get(c) != v)
     store.append_audit(
         ctx.org_id, agent.id, ator.user_id if ator else actor_id(ctx), "specs_org_editadas",

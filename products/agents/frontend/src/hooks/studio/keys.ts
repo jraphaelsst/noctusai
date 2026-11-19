@@ -59,6 +59,7 @@ export const studioKeys = {
   bibliotecaRefs: (key: string, vid: string) => ["studio", key, "biblioteca-refs", vid] as const,
   plataformaTextos: () => ["studio", "__plataforma__", "textos"] as const,
   contentTokens: () => ["studio", "__plataforma__", "content-tokens"] as const,
+  swCanal: () => ["studio", "__plataforma__", "sw-canal"] as const,
   biblioteca: () => ["studio", "__biblioteca__"] as const,
   bibliotecaVersoes: (chave: string) => ["studio", "__biblioteca__", chave, "versoes"] as const,
   bibliotecaVersao: (id: string) => ["studio", "__biblioteca__", "versao", id] as const,

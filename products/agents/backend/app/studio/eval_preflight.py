@@ -46,6 +46,8 @@ def checar_turno(driver: Any, agent: Any, *, suite: str) -> None:
         logger.warning("eval preflight refused agent=%s code=%s detalhe=%s", agent.key, exc.codigo, exc.detalhe)
         codigo = str(exc.codigo)
         motivo = _MOTIVOS.get(codigo, _MOTIVO_GENERICO)
+        if codigo == "conteudo_incompleto" and getattr(exc, "interno", ""):
+            motivo = f"{motivo.rstrip('.')}. {exc.interno}"  # registry keys from our own compile: names the missing system texts
         raise HTTPException(409, detail={
             "detail": "O agente não pode ser avaliado agora: " + motivo, "code": codigo, "preflight": True}) from exc
 

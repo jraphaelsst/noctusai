@@ -35,6 +35,7 @@ __all__ = [
     "HttpCredentialProber",
     "ProbeResult",
     "ProbeStatus",
+    "classify_status",
     "get_credential_prober",
 ]
 
@@ -89,7 +90,7 @@ class FakeCredentialProber:
         return self.results.get(spec.name, ProbeResult.of("ok", 200))
 
 
-def _classify(status_code: int, *, not_found_is_ok: bool) -> ProbeResult:
+def classify_status(status_code: int, *, not_found_is_ok: bool) -> ProbeResult:
     if 200 <= status_code < 300 or (not_found_is_ok and status_code == 404):
         return ProbeResult.of("ok", status_code)
     if status_code == 401:
@@ -135,7 +136,7 @@ class HttpCredentialProber:
         except httpx.HTTPError as exc:
             logger.warning("agents.credential_probe credential=%s error=%s", spec.name, type(exc).__name__)
             return ProbeResult.of("unreachable")
-        result = _classify(resp.status_code, not_found_is_ok=not_found_is_ok)
+        result = classify_status(resp.status_code, not_found_is_ok=not_found_is_ok)
         logger.info(
             "agents.credential_probe credential=%s status=%s http=%s",
             spec.name, result.status, resp.status_code,

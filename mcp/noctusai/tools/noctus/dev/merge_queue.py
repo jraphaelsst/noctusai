@@ -556,6 +556,7 @@ class Queue:
             if rc != 0:
                 return False, self._redact(f"kb-counts commit failed: git {args[0]} ({rc}): {err.strip()[:300]}")
         self.log(f"  regenerated kb-counts at compose ({len(paths)} file(s))")
+        self.log(f"[mq-kb-counts-regen] files={len(paths)} run={self.run_id}")
         return True, ""
 
     def fetch(self) -> None:

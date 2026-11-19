@@ -89,6 +89,40 @@ class TestAuthMatrix:
         assert canal.eventos() == []
 
 
+class TestWhoami:
+    """The channel holder's harmless read-only proof: same guard as the PUT, answers only ok + scope."""
+
+    def _get(self, canal):
+        return canal.raw.get("/api/julia/onboarding/whoami")
+
+    def test_no_credential_is_exactly_401(self, canal):
+        assert self._get(canal).status_code == 401
+
+    def test_an_invalid_token_is_exactly_401(self, canal):
+        r = canal.raw.get("/api/julia/onboarding/whoami", headers={"Authorization": "Bearer noc_" + "0" * 64})
+        assert r.status_code == 401
+
+    def test_a_human_session_is_403_product_required(self, canal):
+        canal.as_ctx(_ctx(kind="user"))
+        r = self._get(canal)
+        assert r.status_code == 403 and r.json()["code"] == "product_required"
+
+    def test_wrong_scope_is_403_scope_missing(self, canal):
+        canal.as_ctx(_ctx(scopes=["social-wiring:lais-tools"]))
+        r = self._get(canal)
+        assert r.status_code == 403 and r.json()["code"] == "scope_missing"
+
+    def test_wrong_issuer_is_403_issuer_not_allowed(self, canal):
+        canal.as_ctx(_ctx(issuer="agents"))
+        r = self._get(canal)
+        assert r.status_code == 403 and r.json()["code"] == "issuer_not_allowed"
+
+    def test_the_platform_token_gets_only_ok_and_scope(self, canal):
+        canal.as_ctx(_ctx())
+        r = self._get(canal)
+        assert r.status_code == 200 and r.json() == {"data": {"ok": True, "escopo": _SCOPE}}
+
+
 class TestGuards:
     @pytest.fixture(autouse=True)
     def _auth(self, canal):

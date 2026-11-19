@@ -9,10 +9,12 @@
  * `noctus_users.telefone`) at every request, so it is never typed or stored in this screen. Loading = two signals off
  * `data` (never `isLoading`). A refusal is mapped to a pt-BR sentence, never swallowed.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { mensagemErroJulia } from "@/hooks/useJuliaAgente";
+import { JULIA_ESPECIFICACOES_KEY } from "@/hooks/useJuliaEspecificacoes";
 
 export interface ContatoSetorial {
   setor: string;
@@ -51,9 +53,6 @@ const URL = "/api/julia/contatos-setoriais";
 /** pt-BR sentence per refusal code this card can provoke (the server's own sentence wins when it sends one). */
 export function mensagemErroContatos(err: unknown, fallback: string): string {
   const code = (err as { body?: { error?: { code?: unknown } } } | null | undefined)?.body?.error?.code;
-  if (code === "edicao_restrita_plataforma") {
-    return "Salvar os contatos por setor ainda não foi liberado pela NoctusAI. Nada foi alterado. Fale com o suporte.";
-  }
   return mensagemErroJulia(err, fallback);
 }
 
@@ -71,9 +70,11 @@ export function useJuliaContatosSetoriais() {
 
 /** The answer carries the whole saved state (owner entry included): it replaces the cached read. */
 export function useSalvarContatosSetoriais() {
-  const qc = useQueryClient();
-  return useMutation<ContatosSetoriais, unknown, ContatoSetorial[]>({
+  return useCacheWriteMutation<ContatosSetoriais, ContatoSetorial[]>({
     mutationFn: async (contatos) => (await api.put<{ data: ContatosSetoriais }>(URL, { contatos })).data,
-    onSuccess: (saved) => qc.setQueryData(JULIA_CONTATOS_SETORIAIS_KEY, saved),
+    targets: [
+      { queryKey: JULIA_CONTATOS_SETORIAIS_KEY, commit: (_old: ContatosSetoriais | undefined, saved) => saved },
+      { queryKey: JULIA_ESPECIFICACOES_KEY },
+    ],
   });
 }

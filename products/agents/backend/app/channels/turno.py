@@ -94,9 +94,11 @@ _JANELA_LEAD = 12
 class TurnoRecusado(Exception):
     """A turn that must not start; ``codigo`` is the 409 code the route answers."""
 
-    def __init__(self, status: int, codigo: str, detalhe: str) -> None:
+    def __init__(self, status: int, codigo: str, detalhe: str, *, interno: str = "") -> None:
         super().__init__(detalhe)
         self.status, self.codigo, self.detalhe = status, codigo, detalhe
+        #: what is missing, for the platform admin / eval owner ONLY: never part of the lead-facing answer
+        self.interno = interno
 
 
 @dataclass(frozen=True)
@@ -248,7 +250,9 @@ def _compilar(
     # (what SW / Studio show) stays strict.
     bloqueantes = set(avisos) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
     if bloqueantes:
-        raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
+        # WHAT is missing (our own compile messages: registry keys) rides in ``interno`` for the eval preflight, never the lead's 409
+        faltas = " ".join(w.mensagem for w in compiled.avisos if w.bloqueante and w.codigo == "texto_ausente")
+        raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.", interno=faltas)
     return r, padrao, compiled
 
 
@@ -1136,6 +1140,11 @@ async def _escalar(
 
 
 def _dossie(padrao: VersaoPadrao, estado: Any, eventos: list[Any], handoff: Any) -> Dossie:
+    if e_padrao_nulo(padrao):
+        # an agent WITHOUT a qualification standard (a base layer under evaluation) has no stage/score/criteria to show, and
+        # it owes no ``contexto.rotulo_*`` text (registry condition ``qualificacao``): rendering the null standard's
+        # placeholder stage would read a row the agent was never required to carry (prod 2026-11-18: 46/46 cases errored)
+        return Dossie(resumo_handoff=handoff.resumo if handoff is not None else None)
     rot = {c.chave: c for c in padrao.criterios}
     valores = [
         (rot[c.chave].rotulo, estado.valores[c.chave])

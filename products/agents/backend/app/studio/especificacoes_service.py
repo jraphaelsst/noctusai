@@ -18,11 +18,25 @@ from app.studio.models import SPEC_TIPOS_TEXTO_LIVRE, ConfigValidacao
 from app.studio.spec_formatos import ContextoSpec, SpecInvalida, Violacao, dividir_itens, validar_valor
 
 __all__ = [
-    "ConfigValidacao", "ResultadoValidacao", "VOCABULARIO_LISTA", "ValoresOrg", "config_atual", "preparar", "validar",
+    "CHAVES_EDITAVEIS_PELA_ORG", "chave_editavel_pela_org", "ConfigValidacao", "ResultadoValidacao", "VOCABULARIO_LISTA", "ValoresOrg", "config_atual", "preparar", "validar",
     "violacoes_armazenadas",
 ]
 
 CHAVE_DOMINIOS = "dominios_permitidos"
+
+#: The org-spec keys an org's OWN admin may write (owner decision 2026-11-18: an org's business knowledge and contacts are
+#: org-owned data, edited in Social Wiring). CLOSED: every other declared key (identity/legal data, readiness criteria,
+#: anything that shapes how the agent behaves) stays staff-only through the platform route. Declared here, next to the
+#: validators of the same values, and read by the channel PUT, the channel GET (``editavel_pela_org``) and the SW editors;
+#: a test pins that each one is declared by the shipped Julia definition.
+CHAVES_EDITAVEIS_PELA_ORG: frozenset[str] = frozenset({
+    "conhecimento_venda", "conhecimento_locacao", "conhecimento_politicas", "operacoes_atendidas", "titulo_profissional",
+    "contatos_oficiais",
+})
+
+
+def chave_editavel_pela_org(chave: str) -> bool:
+    return chave in CHAVES_EDITAVEIS_PELA_ORG
 
 #: Specs whose items come from a CLOSED vocabulary (``{chave: valid items}``). ``operacoes_atendidas`` (Lais study A2):
 #: what the agency attends, so the opener can skip the operation question and a captation lead is routed.

@@ -110,6 +110,8 @@ class AtorAtestado(StrictHttpModel):
     user_id: UUID
     nome: str | None = None
     email: str | None = None
+    #: The acting user's role in the org as the product knows it (recorded in the audit with the id).
+    papel: str | None = Field(default=None, max_length=40, pattern=r"^[a-z_]+$")
 
     @field_validator("nome", "email", mode="before")
     @classmethod
@@ -175,6 +177,8 @@ class SpecDefOut(BaseModel):
     tipo: str
     obrigatoria: bool
     exemplo: str | None
+    #: True when the org's own admin may write this key (the closed allowlist; everything else is staff-only).
+    editavel_pela_org: bool = False
 
 
 class TextosOut(BaseModel):

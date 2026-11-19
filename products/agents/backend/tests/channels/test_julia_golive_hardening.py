@@ -559,18 +559,23 @@ def test_the_new_eval_cases_have_the_house_shape(slug):
 
 # ── owner decisions: platform-only edits, closed channel specs write, opt-out reported to SW ────────────
 
-class TestChannelSpecsWriteClosed:
-    def test_a_channel_put_is_403_edicao_restrita_plataforma_and_get_still_works(self, chan):
+class TestChannelSpecsWriteOpenedForOrgData:
+    """Owner 2026-11-18 reversed the closed write: the org's business data is editable through the channel, the rest is not."""
+
+    def test_an_allowlisted_key_is_written_and_a_platform_key_is_422(self, chan):
         from app.dependencies import SCOPE_CHANNEL_SPECS
 
-        chan.seed_agent(specs_declaradas=(("agencia", "Agência", "texto_curto"),))
+        chan.seed_agent(specs_declaradas=(
+            ("titulo_profissional", "Título", "texto_curto"), ("cnpj_oficial", "CNPJ", "cnpj"),
+        ))
+        ator = {"user_id": str(uuid4()), "nome": "Ana"}
         with chan.as_token(SCOPE_CHANNEL_SPECS):
-            put = chan.request("PUT", "/api/channels/agents/julia/specs", json={
-                "valores": {"agencia": "Aurora"}, "ator": {"user_id": str(uuid4()), "nome": "Ana"}})
+            ok = chan.request("PUT", "/api/channels/agents/julia/specs", json={"valores": {"titulo_profissional": "Corretor"}, "ator": ator})
+            no = chan.request("PUT", "/api/channels/agents/julia/specs", json={"valores": {"cnpj_oficial": "11.222.333/0001-81"}, "ator": ator})
             get = chan.request("GET", "/api/channels/agents/julia/specs")
-        assert put.status_code == 403 and put.json()["code"] == "edicao_restrita_plataforma"
-        assert "NoctusAI" in put.json()["detail"] and get.status_code == 200
-        assert chan.rt.studio.list_org_specs(chan.org_id, "julia") == []  # nothing was written
+        assert ok.status_code == 200 and no.status_code == 422 and no.json()["code"] == "spec_nao_editavel_pela_org"
+        assert get.status_code == 200
+        assert {s.chave for s in chan.rt.studio.list_org_specs(chan.org_id, "julia")} == {"titulo_profissional"}
 
 
 class TestOptOutIsReportedToSW:

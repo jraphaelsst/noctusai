@@ -130,10 +130,10 @@ def test_a_conditional_item_that_does_not_apply_is_refused(plat):
 
 
 def test_sw_refusal_is_reported_with_the_route_to_apply_by_hand(plat):
-    plat.sw.falhar["reengajamento"] = "canal_sw_nao_configurado"
+    plat.sw.falhar["reengajamento"] = "canal_sw_nao_provisionado"
     r = plat.post(f"{URL}/aplicar", json={"respostas": {"37": {"lembrete_min": 15}}})
     i = r.json()["itens"][0]
-    assert i["estado"] == "recusado" and i["codigo"] == "canal_sw_nao_configurado"
+    assert i["estado"] == "recusado" and i["codigo"] == "canal_sw_nao_provisionado"
     assert i["rota"] == "PUT /api/julia/reengajamento/config" and i["corpo"] == {"minutos_intervalo": 15}
 
 
@@ -149,6 +149,7 @@ def test_the_real_sw_port_applies_end_to_end_over_the_staff_channel(plat):
 
     import httpx
 
+    from app.onboarding.sw_canal import FakeSwCanal
     from app.onboarding.sw_settings import SwSettingsStaffClient
 
     seen: list[httpx.Request] = []
@@ -157,7 +158,7 @@ def test_the_real_sw_port_applies_end_to_end_over_the_staff_channel(plat):
         seen.append(req)
         return httpx.Response(200, json={"data": {"setting": "reengajamento"}})
 
-    real = SwSettingsStaffClient("http://sw.test", lambda: "noc_tok", transport=httpx.MockTransport(sw))
+    real = SwSettingsStaffClient("http://sw.test", FakeSwCanal("noc_tok"), transport=httpx.MockTransport(sw))
     plat.raw.app.dependency_overrides[get_sw_settings_dep] = lambda: real
     r = plat.post(f"{URL}/aplicar", json={"respostas": {"37": {"lembrete_min": 15}}})
     assert r.json()["itens"][0]["estado"] == "aplicado"
@@ -171,14 +172,15 @@ def test_the_real_sw_port_applies_end_to_end_over_the_staff_channel(plat):
 def test_the_real_sw_port_reports_typed_refusals(plat):
     import httpx
 
-    from app.onboarding.sw_settings import CANAL_NAO_CONFIGURADO, SW_INDISPONIVEL, SwSettingsStaffClient
+    from app.onboarding.sw_canal import FakeSwCanal
+    from app.onboarding.sw_settings import SW_INDISPONIVEL, SwSettingsStaffClient
 
     def porta(token, handler):
-        return SwSettingsStaffClient("http://sw.test", lambda: token, transport=httpx.MockTransport(handler))
+        return SwSettingsStaffClient("http://sw.test", FakeSwCanal(token), transport=httpx.MockTransport(handler))
 
     chamada = lambda c: c.aplicar(OTHER_ORG_ID, "pesquisa", None, {"pesquisa": True}, ator=DEFAULT_USER_ID)
-    assert chamada(porta(None, lambda r: httpx.Response(200))).codigo == CANAL_NAO_CONFIGURADO
-    assert chamada(SwSettingsStaffClient(None, lambda: "t")).codigo == CANAL_NAO_CONFIGURADO
+    assert chamada(porta(None, lambda r: httpx.Response(200))).codigo == "canal_sw_nao_provisionado"
+    assert chamada(SwSettingsStaffClient(None, FakeSwCanal("t"))).codigo == "sw_url_ausente"
     r = chamada(porta("t", lambda r: httpx.Response(422, json={"error": {"code": "setting_nao_permitida", "message": "fora"}})))
     assert (r.ok, r.codigo) == (False, "setting_nao_permitida")
     r = chamada(porta("t", lambda r: httpx.Response(403, json={"code": "scope_missing", "detail": "x"})))
