@@ -1,0 +1,9 @@
+{
+ "_nota": "Payload para noctus.agents.content kind=rascunho de `onboarding-imob`: executor claude_sdk (as ferramentas de grupo só rodam nele), sem web e sem base de conhecimento (a entrevista não pesquisa nada fora da conversa). Nunca publicar daqui.",
+ "configuracoes": {
+  "idioma": "pt-BR",
+  "max_turns": 30,
+  "tool_policy": {"web_search": false, "knowledge": false},
+  "notas": "Entrevistador de implantação (staff). Ferramentas do grupo onboarding; evals em onboarding-imob-evals-comportamento.json + suíte de mecanismo em tests/onboarding."
+ }
+}

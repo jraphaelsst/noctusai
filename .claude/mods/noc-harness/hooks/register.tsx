@@ -208,7 +208,21 @@ async function refreshFast($: EngineInterface): Promise<void> {
   await paintStatus($)
 }
 
-async function refreshFull($: EngineInterface): Promise<void> {
+// One full scan per session at a time: under load a scan outlasts the timer,
+// and overlapping scans fed the load that slowed them (2026-11-18, fans at max).
+// A trigger that lands while one is running joins it instead of starting another.
+let fullInFlight: Promise<void> | null = null
+
+function refreshFull($: EngineInterface): Promise<void> {
+  if (fullInFlight === null) {
+    fullInFlight = runFull($).finally(() => {
+      fullInFlight = null
+    })
+  }
+  return fullInFlight
+}
+
+async function runFull($: EngineInterface): Promise<void> {
   const got = await harnessStatus($, true)
   if (got.ok) {
     await update($, full, () => got.value)
@@ -251,7 +265,7 @@ export const register: Register = (on, given) => {
   wrapUpRan = false
   topics = null
   routed.clear()
-  const refreshMs = Math.max(15, Number(options.full_refresh_seconds ?? 60)) * 1000
+  const refreshMs = Math.max(15, Number(options.full_refresh_seconds ?? 180)) * 1000
 
   on('session.start', async ($, e, next) => {
     isOff = (await $.env.get('NOC_HARNESS_OFF')) === '1'

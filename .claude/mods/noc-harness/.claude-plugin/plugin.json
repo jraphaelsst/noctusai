@@ -76,8 +76,8 @@
     "full_refresh_seconds": {
       "type": "number",
       "title": "Full refresh (s)",
-      "description": "How often the pane/status full snapshot refreshes.",
-      "default": 60,
+      "description": "How often the pane/status full snapshot refreshes. Sessions share one scan per tree (2-minute cache), so a short interval mostly re-reads the cache.",
+      "default": 180,
       "min": 15,
       "max": 3600
     }

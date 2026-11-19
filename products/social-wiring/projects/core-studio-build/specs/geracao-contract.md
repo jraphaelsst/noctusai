@@ -855,7 +855,7 @@ All pages follow these rules:
 - **List** (`Roteiros.tsx`): "Meus roteiros" — "Edite suas headlines favoritas ou crie roteiros a partir delas."; **Criar roteiro** (modal with an empty headline); search "Pesquisar..."; "Excluir Selecionados"; columns ☐ · Data · Nome · H. Origem (links to `?hid=` when it comes from a headline) · Status · 👁 · 🗑; `?open=` auto-opens.
 - **Editar Roteiro** modal:
   - tabs **Roteiro** · **Fontes da Pesquisa** (hidden while `fontes` is NULL);
-  - Nome, Roteiro (markdown editor, **Copiar Roteiro**);
+  - Nome, Roteiro (markdown editor, **Copiar Roteiro**, **Versão Teleprompter** — copies only the spoken words: no beat titles, label lines or markdown emphasis; the button shows a tick + "Copiado!" for 3 s, then reverts);
   - "O que achou deste roteiro?" **Gostei / Não Gostei** → "Não gostou do roteiro?" reason + Enviar;
   - ⋯ **Reprocessar** ("Informação Adicional:");
   - footer Cancelar / **Atualizar** (409 → "O roteiro mudou; recarregue").
@@ -871,7 +871,7 @@ All pages follow these rules:
     - Criando ("…pode levar até 2 minutos", real `etapa`)
     - "Gerando perguntas estratégicas..." → questions form (Headline Base + "Responda as perguntas abaixo para personalizar seu roteiro", **Pular perguntas**, **Gerar Roteiro**)
     - Processando
-    - **Criado**: "Roteiro criado com sucesso!", tabs Roteiro / Fontes, Copiar Roteiro, Atualizar Roteiro (→ #37), and the Gostei/Não gostei block
+    - **Criado**: "Roteiro criado com sucesso!", tabs Roteiro / Fontes, Copiar Roteiro, Versão Teleprompter, Atualizar Roteiro (→ #37), and the Gostei/Não gostei block
     - Falha + Tentar novamente
   - Closing the modal mid-run is safe: the run continues and appears in Roteiros.
 

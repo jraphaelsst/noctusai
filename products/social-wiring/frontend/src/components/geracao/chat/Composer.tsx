@@ -68,7 +68,7 @@ export function Composer({
         value={valor}
         rows={3}
         maxLength={MENSAGEM_MAX}
-        placeholder="Escreva sua mensagem... (@ para mencionar estruturas, pesquisas, cérebros, virais e headlines)"
+        placeholder="Peça headlines ou roteiros... (@ para mencionar estruturas, pesquisas, cérebros, virais e headlines)"
         disabled={desabilitado}
         onChange={(e) => {
           const v = e.target.value;

@@ -264,3 +264,70 @@ class TestStaleS1Section:
         out = hs._section_auto_improvement()
         assert out["stale_s1_count"] == 7
         assert [r["target"] for r in out["stale_s1_oldest"]] == ["t6", "t5", "t4", "t3", "t2"]
+
+
+# ── shared full-mode cache: one scan per tree across sessions (2026-11-18) ──
+
+def _counting_compute(calls):
+    def compute():
+        calls.append(1)
+        return {"caches": [], "auto_improvement": None, "branch_pointers": None,
+                "worktrees": None, "dispatcher_pending": None}, [{"section": "x", "error": "note"}]
+    return compute
+
+
+def test_second_caller_within_ttl_reuses_the_scan(tmp_path):
+    calls = []
+    t = [1000.0]
+    first = hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: t[0])
+    t[0] += 30
+    second = hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: t[0])
+    assert len(calls) == 1
+    assert first[2] is None and second[2] == 30
+    assert second[0] == first[0] and second[1] == [{"section": "x", "error": "note"}]
+
+
+def test_expired_cache_is_rescanned(tmp_path):
+    calls = []
+    t = [1000.0]
+    hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: t[0])
+    t[0] += hs.FULL_CACHE_TTL_S + 1
+    again = hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: t[0])
+    assert len(calls) == 2 and again[2] is None
+
+
+def test_each_tree_gets_its_own_scan(tmp_path):
+    calls = []
+    hs._shared_full_sections(tmp_path, tmp_path / "a", _counting_compute(calls), now=lambda: 1000.0)
+    hs._shared_full_sections(tmp_path, tmp_path / "b", _counting_compute(calls), now=lambda: 1000.0)
+    assert len(calls) == 2
+
+
+def test_corrupt_cache_is_recomputed_and_reported(tmp_path):
+    calls = []
+    hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: 1000.0)
+    cache = next((tmp_path / ".claude" / "cache" / "harness-status").glob("full-*.json"))
+    cache.write_text("{not json")
+    got = hs._shared_full_sections(tmp_path, tmp_path / "tree", _counting_compute(calls), now=lambda: 1001.0)
+    assert len(calls) == 2
+    assert any(e["section"] == "full_cache" for e in got[1])
+
+
+def test_concurrent_callers_run_one_scan(tmp_path):
+    import threading
+    import time
+    calls = []
+
+    def slow():
+        calls.append(1)
+        time.sleep(0.3)
+        return {"caches": []}, []
+
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(
+        hs._shared_full_sections(tmp_path, tmp_path / "tree", slow))) for _ in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert len(calls) == 1 and len(results) == 4

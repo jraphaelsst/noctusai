@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.parse
+import uuid
 from typing import Callable, Optional
 from urllib.request import Request, urlopen  # patch target: `_kit.transport.urlopen`
 
@@ -99,23 +100,112 @@ def request_json(
       connectors that don't pass it.
     """
     tag = label or f"{method.upper()} {url}"
+    payload, _ = request_bytes(
+        method,
+        url,
+        auth_header=auth_header,
+        user_agent=user_agent,
+        params=params,
+        body=body,
+        accept="application/json",
+        timeout=timeout,
+        error_cls=error_cls,
+        label=tag,
+        on_http_error=on_http_error,
+    )
+    raw = payload.decode("utf-8", errors="replace")
+    if not raw:
+        return empty_result
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise error_cls(f"{tag} returned non-JSON output", status=502) from e
+
+
+def encode_multipart(
+    fields: Optional[dict] = None,
+    files: Optional[list[tuple[str, str, bytes, str]]] = None,
+) -> tuple[bytes, str]:
+    """Encode a `multipart/form-data` body. Returns `(body, content_type)`.
+
+    - `fields` — `{name: str}` text parts (`None` values dropped).
+    - `files`  — `[(field_name, filename, content_bytes, mime_type), ...]`;
+      a repeated `field_name` is how APIs take a list of files.
+    """
+    boundary = "noctus" + uuid.uuid4().hex
+    crlf = b"\r\n"
+    out = bytearray()
+    for name, value in (fields or {}).items():
+        if value is None:
+            continue
+        out += f"--{boundary}".encode() + crlf
+        out += f'Content-Disposition: form-data; name="{name}"'.encode() + crlf + crlf
+        out += str(value).encode("utf-8") + crlf
+    for name, filename, content, mime in files or []:
+        safe = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        out += f"--{boundary}".encode() + crlf
+        out += (
+            f'Content-Disposition: form-data; name="{name}"; filename="{safe}"'
+        ).encode() + crlf
+        out += f"Content-Type: {mime}".encode() + crlf + crlf
+        out += content + crlf
+    out += f"--{boundary}--".encode() + crlf
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def request_bytes(
+    method: str,
+    url: str,
+    *,
+    auth_header: Optional[tuple[str, str]] = None,
+    user_agent: str = DEFAULT_USER_AGENT,
+    params: Optional[dict] = None,
+    body: Optional[object] = None,
+    raw_body: Optional[tuple[bytes, str]] = None,
+    accept: str = "*/*",
+    timeout: float = 20.0,
+    error_cls: type = ConnectorHttpError,
+    label: str = "",
+    on_http_error: Optional[Callable[[int, str, str], Optional[Exception]]] = None,
+) -> tuple[bytes, dict]:
+    """Issue `method url`, return `(raw response bytes, lower-cased headers)`.
+
+    The binary sibling of `request_json` (audio/images/archives, or a JSON
+    call whose RESPONSE HEADERS matter). Same typed-error contract: ANY
+    HTTP/network/timeout failure raises `error_cls(message, status=...)`.
+
+    - `body` — JSON-encoded (like `request_json`); `raw_body=(bytes,
+      content_type)` sends a pre-encoded body (e.g. `encode_multipart`).
+      Pass at most one of the two.
+    - Error bodies are truncated to 500 chars and never include request data.
+    """
+    if body is not None and raw_body is not None:
+        raise ValueError("pass either body (JSON) or raw_body, not both")
+    tag = label or f"{method.upper()} {url}"
     if params:
         clean = {k: v for k, v in params.items() if v is not None}
         if clean:
             url = f"{url}?{urllib.parse.urlencode(clean)}"
 
     data: Optional[bytes] = None
-    headers = {"Accept": "application/json", "User-Agent": user_agent}
+    headers = {"Accept": accept, "User-Agent": user_agent}
     if auth_header is not None:
         headers[auth_header[0]] = auth_header[1]
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    elif raw_body is not None:
+        data = raw_body[0]
+        headers["Content-Type"] = raw_body[1]
 
     req = Request(url, data=data, headers=headers, method=method.upper())
     try:
         with urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            payload = resp.read()
+            resp_headers = {
+                str(k).lower(): str(v)
+                for k, v in (getattr(getattr(resp, "headers", None), "items", lambda: [])())
+            }
     except urllib.error.HTTPError as e:
         detail = ""
         try:
@@ -123,8 +213,6 @@ def request_json(
         except Exception:  # noqa: BLE001 — body read is best-effort context
             detail = ""
         if on_http_error is not None:
-            # Vendor hook wins when it returns an exception; `None` falls
-            # through to the default below (never silently swallows).
             vendor_exc = on_http_error(e.code, detail, tag)
             if vendor_exc is not None:
                 raise vendor_exc from e
@@ -136,13 +224,7 @@ def request_json(
         raise error_cls(f"{tag} — host unreachable: {e.reason}", status=502) from e
     except TimeoutError as e:
         raise error_cls(f"{tag} timed out after {timeout}s", status=502) from e
-
-    if not raw:
-        return empty_result
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise error_cls(f"{tag} returned non-JSON output", status=502) from e
+    return payload, resp_headers
 
 
 __all__ = [
@@ -151,4 +233,6 @@ __all__ = [
     "ConnectorHttpError",
     "normalize_base_url",
     "request_json",
+    "request_bytes",
+    "encode_multipart",
 ]

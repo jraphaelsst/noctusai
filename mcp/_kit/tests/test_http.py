@@ -163,3 +163,62 @@ def test_confirmation_required_message_shapes():
 
     m3 = confirmation_required_message("hostinger.vps.stop", noun="write/power action")
     assert "is a write/power action" in m3
+
+
+# ─── binary path: request_bytes + encode_multipart ───────────────────────
+
+
+class _HdrResp(_FakeResp):
+    def __init__(self, body: bytes, headers: dict):
+        super().__init__(body)
+        self.headers = type("H", (), {"items": lambda s: list(headers.items())})()
+
+
+def test_request_bytes_returns_raw_bytes_and_lowercased_headers():
+    cap: dict = {}
+
+    def fake(req, timeout=None):
+        cap["req"] = req
+        return _HdrResp(b"\xff\xfbAUDIO", {"Request-Id": "r1", "Content-Type": "audio/mpeg"})
+
+    with patch.object(http, "urlopen", fake):
+        data, hdrs = http.request_bytes(
+            "POST", "https://api.example.com/tts", auth_header=("xi-api-key", "k"),
+            body={"text": "oi"}, params={"fmt": "mp3", "x": None},
+        )
+    assert data == b"\xff\xfbAUDIO"
+    assert hdrs["request-id"] == "r1"
+    req = cap["req"]
+    assert req.full_url == "https://api.example.com/tts?fmt=mp3"
+    assert req.get_header("Accept") == "*/*"
+    assert req.get_header("Xi-api-key") == "k"
+    assert json.loads(req.data) == {"text": "oi"}
+
+
+def test_request_bytes_maps_http_error_to_typed_error_without_body_leak():
+    def fake(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 402, "x", {}, io.BytesIO(b"quota"))
+
+    with patch.object(http, "urlopen", fake):
+        with pytest.raises(_VendorErr) as ei:
+            http.request_bytes("GET", "https://a/b", error_cls=_VendorErr)
+    assert ei.value.status == 402
+
+
+def test_request_bytes_rejects_both_body_kinds():
+    with pytest.raises(ValueError):
+        http.request_bytes("POST", "https://a/b", body={}, raw_body=(b"x", "text/plain"))
+
+
+def test_encode_multipart_fields_and_repeated_files():
+    body, ctype = http.encode_multipart(
+        {"name": "v", "skip": None},
+        [("files", "a.mp3", b"AAA", "audio/mpeg"), ("files", 'b".mp3', b"BBB", "audio/mpeg")],
+    )
+    boundary = ctype.split("boundary=")[1]
+    assert ctype.startswith("multipart/form-data")
+    assert body.count(f"--{boundary}".encode()) == 4  # 3 parts + closing
+    assert b'name="name"' in body and b"skip" not in body
+    assert body.count(b'name="files"') == 2
+    assert b'filename="b_.mp3"' in body  # quote sanitised
+    assert body.endswith(f"--{boundary}--\r\n".encode())
