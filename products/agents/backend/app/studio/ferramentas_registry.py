@@ -99,6 +99,9 @@ FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     "kb_buscar", "kb_ler",
     # extraction tools (resumo / decisão) -- ``app.channels.extracao``
     "registrar_resumo", "registrar_escolha",
+    # Diretor de Criacao read tools (``app.criacao.ferramentas``; agents -> SW ``/api/criacao/ferramentas``)
+    "contexto_marca", "cerebros", "estruturas_buscar", "estrutura_detalhe", "pesquisas", "virais", "desempenho",
+    "voz_amostras", "treinamentos",
 }) | frozenset().union(*(g.ferramentas for g in GRUPOS_FERRAMENTAS.values()))
 
 
