@@ -15,7 +15,7 @@ from tools.noctus.dev import findings_ledger as gl
 from tools.noctus.dev import gate_alignment as ga
 
 NAME = "gate-walls"
-KINDS = ("wall", "demoted-expired", "matrix-pending")
+KINDS = ("wall", "demoted-expired", "matrix-pending", "refusal-class")
 
 
 def current_rows(root: Path) -> dict[str, dict]:

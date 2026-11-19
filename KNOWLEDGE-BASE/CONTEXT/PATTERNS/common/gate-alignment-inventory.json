@@ -2690,18 +2690,23 @@
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
   "keeper:check-refusal-classes-owned": {
-   "mechanism": "tool: noctus.dev.gate_alignment action=refusals (upserts one auto-improvement row per class + reports open_fix); refusal_recurrence() returned to every requester",
+   "mechanism": "tool: noctus.dev.gate_alignment file_missing_findings (the system opens the gate-walls finding itself when a class first crosses N>=3; refusal-class-policy.json declares intended classes); KB § PATTERNS/common/gate-methodology-sync.md (Refusal recurrence)",
    "owner": "tooling-engineer",
-   "placement": "warn",
-   "standard": "A refusal class that fired >=3x in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[class]) is an unowned recurring mistake (warn-first).",
+   "placement": "blocking",
+   "standard": "A refusal class that fired >=3x in 14 days with no owner (pointer / open|in-progress|accepted gate-walls row / NOC-REMEDIATE[class] / declared-intended) is an unowned recurring mistake. Pre-push blocks (owner directive 2026-11-19: the enqueue andon hard-refuses from 2026-11-21; debt must surface at the author's push, not at the queue).",
    "new": true,
    "declared": "2026-11-14",
    "source": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop); owner directive 2026-11-14; Tricorder (Sadowski et al.)",
    "shadow": {
     "since": "2026-11-14",
     "fires": 0,
-    "fix_rate": null
-   }
+    "fix_rate": null,
+    "promoted": "2026-11-19",
+    "promotion_reason": "owner directive 2026-11-19; measured backlog 78 classes (63 uncovered) before triage; construction auto-files, so the fix is automatic and the predicate is a pure ownership lookup"
+   },
+   "wired_in": [
+    "pre-push"
+   ]
   },
   "keeper:check-root-requirements-superset": {
    "severity": "high",
