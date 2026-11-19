@@ -14,6 +14,9 @@ The ``movimento`` timeline kind is :func:`esteira_timeline.gather_movimentos_est
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from noctusai_lib.domain.card_hub import (
     CardHubConfig,
     DocumentoPolicy,
@@ -41,6 +44,7 @@ __all__ = [
     "ROLE_POSTADO",
     "ROLE_PRONTO",
     "ROLE_ROTEIRO",
+    "carregar_etapas_padrao",
     "gerar_migration_card_hub",
 ]
 
@@ -61,17 +65,17 @@ ROLE_CANCELADO = "cancelado"
 
 BUCKET_ESTEIRA = "sw-esteira"
 
-#: By position; the entry stage is the first one.
-ESTEIRA_PADRAO: tuple[StageDefault, ...] = (
-    StageDefault("ideacao", "Ideação", "secondary"),
-    StageDefault("headline_roteiro", "Roteiro", "primary", ROLE_ROTEIRO),
-    StageDefault("criacao", "Criação", "warning", ROLE_CRIACAO),
-    StageDefault("edicao", "Edição", "warning", ROLE_EDICAO),
-    StageDefault("aprovacao_final", "Aprovação final", "warning", ROLE_APROVACAO_MIDIA),
-    StageDefault("pronto", "Pronto", "success", ROLE_PRONTO),
-    StageDefault("postado", "Postado", "success", ROLE_POSTADO),
-    StageDefault("bloqueado_cancelado", "Bloqueado/cancelado", "destructive", ROLE_CANCELADO),
-)
+ETAPAS_JSON = Path(__file__).parent / "data" / "esteira_etapas.json"
+
+
+def carregar_etapas_padrao(path: Path = ETAPAS_JSON) -> tuple[StageDefault, ...]:
+    """The default stage list, read from DATA (``data/esteira_etapas.json``): a stage list is a preset, never a
+    literal in code (keeper ``check_stage_list_not_in_code``). By position; the entry stage is the first one."""
+    rows = json.loads(path.read_text(encoding="utf-8"))["etapas"]
+    return tuple(StageDefault(**row) for row in rows)
+
+
+ESTEIRA_PADRAO: tuple[StageDefault, ...] = carregar_etapas_padrao()
 
 PIPELINE_ESTEIRA = PipelineConfig(
     pipeline="esteira",

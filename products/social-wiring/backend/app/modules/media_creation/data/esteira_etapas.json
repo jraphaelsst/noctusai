@@ -1,0 +1,13 @@
+{
+  "_doc": "Default stage list of the Esteira (criacao-pipeline-contract 1). DATA, not code: esteira_config.py loads it into StageDefault rows; code keys only on `papel`. Order = board order; the first stage is the entry stage.",
+  "etapas": [
+    {"slug": "ideacao", "label": "Ideação", "cor": "secondary", "papel": null},
+    {"slug": "headline_roteiro", "label": "Roteiro", "cor": "primary", "papel": "roteiro"},
+    {"slug": "criacao", "label": "Criação", "cor": "warning", "papel": "criacao"},
+    {"slug": "edicao", "label": "Edição", "cor": "warning", "papel": "edicao"},
+    {"slug": "aprovacao_final", "label": "Aprovação final", "cor": "warning", "papel": "aprovacao_midia"},
+    {"slug": "pronto", "label": "Pronto", "cor": "success", "papel": "pronto"},
+    {"slug": "postado", "label": "Postado", "cor": "success", "papel": "postado"},
+    {"slug": "bloqueado_cancelado", "label": "Bloqueado/cancelado", "cor": "destructive", "papel": "cancelado"}
+  ]
+}

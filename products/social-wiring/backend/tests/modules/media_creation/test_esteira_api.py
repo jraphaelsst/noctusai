@@ -53,6 +53,13 @@ def _aprovar(ec, roteiro_id, versao=1, decisao="approved"):
              created_at=f"2026-11-14T10:00:0{n}+00:00")
 
 
+def _aprovar_headline(ec, headline_id, decisao="approved"):
+    """Seed the approvals organ's rows for the HEADLINE (criacao-pipeline-contract 1): submitted and decided at versao 1."""
+    for n, ev in enumerate(("submitted", decisao)):
+        _ins(ec, "apr_events", org_id=ORG, subject_kind="headline", subject_id=headline_id, versao=1, event=ev,
+             created_at=f"2026-11-14T10:00:0{n}+00:00")
+
+
 def _stages(ec) -> dict:
     r = ec.get(f"{BASE}/etapas")
     assert r.status_code == 200, r.text
@@ -121,19 +128,19 @@ class TestBoard:
         assert r.status_code == 200, r.text
         data = r.json()["data"]
         assert [c["stage"]["slug"] for c in data["colunas"]] == [
-            "ideacao", "headline_roteiro", "gravacao", "edicao", "pronto", "postado", "bloqueado_cancelado",
+            "ideacao", "headline_roteiro", "criacao", "edicao", "aprovacao_final", "pronto", "postado", "bloqueado_cancelado",
         ]
         assert data["orfaos"] == 0
         n = len(ec.mock_supabase.from_("pipeline_stages").select("*").execute().data)
         ec.get(f"{BASE}/board")
-        assert len(ec.mock_supabase.from_("pipeline_stages").select("*").execute().data) == n == 7
+        assert len(ec.mock_supabase.from_("pipeline_stages").select("*").execute().data) == n == 8
 
     def test_not_reseeded_once_the_org_configured_its_stages(self, ec):
         st = _stages(ec)
-        assert ec.patch(f"{BASE}/etapas/{st['edicao']['id']}", json={"ativo": False}).status_code == 200
+        assert ec.patch(f"{BASE}/etapas/{st['ideacao']['id']}", json={"ativo": False}).status_code == 200
         cols = ec.get(f"{BASE}/board").json()["data"]["colunas"]
-        assert "edicao" not in [c["stage"]["slug"] for c in cols] and len(cols) == 6
-        assert len(ec.mock_supabase.from_("pipeline_stages").select("*").execute().data) == 7
+        assert "ideacao" not in [c["stage"]["slug"] for c in cols] and len(cols) == 7
+        assert len(ec.mock_supabase.from_("pipeline_stages").select("*").execute().data) == 8
 
     def test_groups_filters_and_search(self, ec):
         st = _stages(ec)
@@ -223,7 +230,7 @@ class TestCreate:
 
     def test_post_in_gated_stage_requires_pendencias(self, ec):
         st = _stages(ec)
-        r = ec.post(f"{BASE}/posts", json={"marca_id": MARCA, "titulo": "x", "etapa_id": st["gravacao"]["id"]})
+        r = ec.post(f"{BASE}/posts", json={"marca_id": MARCA, "titulo": "x", "etapa_id": st["criacao"]["id"]})
         assert r.status_code == 409 and _detail(r)["code"] == "pendencias"
 
     def test_unknown_field_rejected(self, ec):
@@ -365,6 +372,7 @@ class TestReadUpdateDelete:
 class TestMove:
     def _ready(self, ec):
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         _aprovar(ec, ro["id"])
         p = _post(ec, headline_id=h["id"])
@@ -382,36 +390,39 @@ class TestMove:
     def test_roteiro_incompleto(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, status="processando")
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
-        r = _mover(ec, p["id"], st["gravacao"]["id"])
+        r = _mover(ec, p["id"], st["criacao"]["id"])
         assert r.status_code == 409 and _detail(r)["faltando"] == ["roteiro_incompleto"]
 
     def test_roteiro_completo_sem_aprovacao_nao_passa_o_gate(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
-        r = _mover(ec, p["id"], st["gravacao"]["id"])
+        r = _mover(ec, p["id"], st["criacao"]["id"])
         assert r.status_code == 409 and _detail(r)["faltando"] == ["roteiro_nao_aprovado"]
 
     def test_roteiro_reprovado_ou_editado_depois_de_aprovar_nao_passa(self, ec):
         st = _stages(ec)
         h = _headline(ec)
+        _aprovar_headline(ec, h["id"])
         ro = _roteiro(ec, headline_id=h["id"])
         _aprovar(ec, ro["id"], decisao="rejected")
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
-        assert _detail(_mover(ec, p["id"], st["gravacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
+        assert _detail(_mover(ec, p["id"], st["criacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
         # approved at versao 1, then edited (versao 2, nobody approved it): invalidated
         ro2 = _roteiro(ec, headline_id=None)
         _aprovar(ec, ro2["id"])
         ec.mock_supabase.from_("cs_roteiros").update({"versao": 2}).eq("id", ro2["id"]).execute()
         p2 = _post(ec, titulo="Outro")
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro2["id"], "headline_id": h["id"]}).eq("id", p2["id"]).execute()
-        assert _detail(_mover(ec, p2["id"], st["gravacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
+        assert _detail(_mover(ec, p2["id"], st["criacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
 
     def test_forward_skip_allowed_when_ready_and_history_written(self, ec):
         st = _stages(ec)
@@ -472,8 +483,9 @@ class TestMove:
     def test_inactive_stage_is_409_and_foreign_stage_404(self, ec):
         st = _stages(ec)
         p = _post(ec)
-        assert ec.patch(f"{BASE}/etapas/{st['edicao']['id']}", json={"ativo": False}).status_code == 200
-        r = _mover(ec, p["id"], st["edicao"]["id"])
+        extra = ec.post(f"{BASE}/etapas", json={"slug": "extra", "label": "Extra"}).json()["data"]
+        assert ec.patch(f"{BASE}/etapas/{extra['id']}", json={"ativo": False}).status_code == 200
+        r = _mover(ec, p["id"], extra["id"])
         assert r.status_code == 409 and _detail(r)["code"] == "etapa_invalida"
         assert _mover(ec, p["id"], _id()).status_code == 404
 
@@ -490,8 +502,8 @@ class TestMove:
 
     def test_renamed_role_stage_keeps_the_gate(self, ec):
         st = _stages(ec)
-        assert ec.patch(f"{BASE}/etapas/{st['gravacao']['id']}", json={"label": "Captação"}).status_code == 200
-        r = _mover(ec, _post(ec)["id"], st["gravacao"]["id"])
+        assert ec.patch(f"{BASE}/etapas/{st['criacao']['id']}", json={"label": "Captação"}).status_code == 200
+        r = _mover(ec, _post(ec)["id"], st["criacao"]["id"])
         assert r.status_code == 409 and _detail(r)["code"] == "pendencias"
 
     def test_move_returns_full_card(self, ec):
@@ -661,5 +673,5 @@ class TestTimelineGatherer:
         assert r.status_code == 200, r.text
         items = [i for i in r.json()["items"] if i["kind"] == "movimento"]
         assert len(items) == 1
-        assert items[0]["de_etapa"] == "Ideação" and items[0]["para_etapa"] == "Headline + roteiro"
+        assert items[0]["de_etapa"] == "Ideação" and items[0]["para_etapa"] == "Roteiro"
         assert items[0]["ocorrido_em"]
