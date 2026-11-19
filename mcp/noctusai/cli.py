@@ -411,6 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-tailwind-v4-class-names", action="store_true", help="Keeper (2026-11-09, Tailwind 4 + lucide 1.x): no v3-only names that changed what they render (`shadow-sm` -> use `shadow-xs`, `outline-none` -> use `outline-hidden`) and no `Facebook`/`Instagram`/`Youtube` import from lucide-react (gone in 1.x; use @noctusai/lib/brand-icons) in seed/lib, seed/framework and ACTIVE products' frontend/src. Comment lines skipped. Escape: `noc-allow: tailwind-v3-class — why` on the line. WARN-first shadow. Severity high. KB § PATTERNS/frontend/frontend.md.")
     parser.add_argument("--check-worker-idle-polling", action="store_true", help="Keeper: a job worker's idle poll is a per-tick RPC. Refuses Worker(max_idle_interval_seconds < 120 or == poll_interval), DEFAULT_MAX_IDLE_INTERVAL_SECONDS < 300, a fixed short sleep or an unbounded .select( inside run_forever / claim_gate*. Prod saw 56k claim_next_job/24h at a 30s cap (W1-C 2026-11-12). Escape: `# poll-ok: <reason>`. Severity high. KB § PATTERNS/backend/polling-request-budget.md.")
     parser.add_argument("--check-supply-chain-pin", action="store_true", help="Keeper: every third-party GitHub Action is pinned to a full commit SHA and every prod-surface compose image (deploy/{fleet,services,legacy,tunnel}) to a digest or an x.y[.z] version tag - never :latest / a bare major / no tag (tj-actions 2025, trivy-action 2026-03: a mutable tag is a re-pointable supply chain). Escape for images: `# pin-ok: <reason>`. Severity high. KB § PATTERNS/devops/ci-security-gates.md.")
+    parser.add_argument("--check-applied-md-ledger-parity", action="store_true", help="Keeper: every `## NNN — ... — [NOT] APPLIED` heading in products/*/backend/migrations/APPLIED.md must agree with migrations-applied.json (the ledger is the source of truth; noctus.dev.record_applied_migrations rewrites the headings). Severity high. KB § PATTERNS/backend/migrate-product-mcp-tool.md.")
     parser.add_argument("--check-override-is-range", action="store_true", help="Keeper: every npm `overrides` entry must be a RANGE (^/~/>=), never an exact version. An exact override wins over every peer range and direct dep, can never be upgraded by npm install, and is invisible in the dependency list — while adding NO reproducibility, because package-lock.json already pins the resolution for npm ci. The seed copies overrides into 12 products, so one pin freezes the fleet (postcss, ws, react-router, 2026-08-11). Opt-out: a `pin-ok`/`deliberate-freeze` rationale comment. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -2847,6 +2848,16 @@ def main():
             print(f"  {GREEN}\u2713 supply-chain-pin: clean (every Action SHA-pinned, every prod image pinned).{RESET}")
             sys.exit(0)
         print(f"  {RED}\u2717 {len(issues)} unpinned supply-chain ref(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
+    elif args.check_applied_md_ledger_parity:
+        from tools.noctus.dev.compliance import check_applied_md_ledger_parity
+        issues = check_applied_md_ledger_parity()
+        if not issues:
+            print(f"  {GREEN}\u2713 applied-md-ledger-parity: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} APPLIED.md heading(s) disagree with the ledger:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
         sys.exit(1)

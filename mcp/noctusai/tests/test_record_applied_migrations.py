@@ -97,3 +97,25 @@ def test_a_persistent_conflict_is_reported_after_the_bounded_attempts(tmp_path):
     assert res["status"] == "error"
     assert calls.count("integrate") == 3
     assert "after 3 attempt(s)" in res["error"] and "kept for manual integrate" in res["error"]
+
+
+def test_recording_rewrites_applied_md_heading_in_the_same_commit(tmp_path):
+    primary = tmp_path / "primary"
+    be = primary / ".claude/worktrees/applied-record-x-3/products/x/backend"
+    (be / "migrations").mkdir(parents=True)
+    (be / "migrations-applied.json").write_text("{\"applied\": {}}")
+    md = be / "migrations" / "APPLIED.md"
+    md.write_text("## 367 — pub — NOT APPLIED\n\nbody\n")
+    staged: list = []
+
+    def vcs(wt, *a):
+        staged.append(a)
+        return 0, "abc", ""
+
+    res = record_applied_migrations(
+        "x", {"367_pub.sql": "ab" * 32}, task_branch_fn=lambda **kw: _fake_tb(primary, [])(**kw),
+        git_fn=vcs, primary_root=str(primary), slug_suffix="3")
+    assert res["status"] == "recorded", res
+    assert res["applied_md_synced"] == [367]
+    assert "## 367 — pub — APPLIED (recorded in migrations-applied.json)" in md.read_text()
+    assert any(a[:2] == ("add", "--") and any(p.endswith("APPLIED.md") for p in a) for a in staged)

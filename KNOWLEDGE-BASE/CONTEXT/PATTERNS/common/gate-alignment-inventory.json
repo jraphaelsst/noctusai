@@ -559,6 +559,15 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-applied-md-ledger-parity": {
+   "mechanism": "write-path: mcp/noctusai/tools/noctus/dev/record_applied_migrations.py",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-19",
+   "source": "KB § PATTERNS/backend/migrate-product-mcp-tool.md"
+  },
   "keeper:check-async-handler-sync-db": {
    "severity": "",
    "kind": "keeper",
@@ -3955,6 +3964,18 @@
    "branch": "feat/sec-infra-hardening-v2",
    "gates": [
     "keeper:check-supply-chain-pin"
+   ]
+  },
+  {
+   "id": "D45",
+   "decision": "hand-maintained lists drift: derive, don't sync by hand (CLAUDE.md §1)",
+   "home": "KB § PATTERNS/backend/migrate-product-mcp-tool.md",
+   "construction": "write-path: mcp/noctusai/tools/noctus/dev/record_applied_migrations.py",
+   "gate": "keeper:check-applied-md-ledger-parity",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "branch": "pending:keeper:check-applied-md-ledger-parity",
+   "gates": [
+    "keeper:check-applied-md-ledger-parity"
    ]
   }
  ]

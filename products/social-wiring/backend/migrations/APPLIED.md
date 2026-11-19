@@ -591,103 +591,103 @@ Authored 2026-10-13 (owner decision "no leftovers from Core"). Drops `cs_roteiro
 
 Authored 2026-10-13 (owner direction: route each document/field to the measured best model, conciliate only doubtful reads, learn from outcomes). New table, one row per critical field of a routed identity read: model, trust-gate verdict + reasons, fallback ran, agreement, outcome, cost, and the later human resolution. Fingerprints only (24-bit), never values. RLS mirrors 138 as converted by 211 (own-org SELECT via current_org_id_for('social_wiring'), service_role ALL). Additive + idempotent; the writer (`card_hub.leitura_resultados`) logs and continues while the table is absent, so apply order vs image is free — apply BEFORE relying on the recalibration export.
 
-## 255 — status_pagina: CoreStudio pages to producao — NOT APPLIED
+## 257 — status_pagina: CoreStudio pages to producao — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-14 (owner decision: Esteira + the media-creation pages leave 'desenvolvimento'). Moves 11 rows still in 'desenvolvimento' to 'producao' (dashboard, chat, cerebro, esteira, headlines-gerar/-sugeridas/-favoritas, perfil, pesquisa, pesquisa-extrair, roteiros). Keeps biblioteca + minha-biblioteca (Biblioteca ingestion is an open owner topic) and treinamentos (no lesson has a video yet). Idempotent; requires 241. Apply order vs image is free (data-only, the nav reads it at request time).
 
-## 256 — cs_research_variables.corestudio_id → referencia_id — NOT APPLIED
+## 256 — cs_research_variables.corestudio_id → referencia_id — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-14 (owner decision "no leftovers from Core"). Pure rename, guarded on the old name (idempotent). No runtime code selects the column, so apply order vs image is free. 217 stays immutable; `test_pesquisa` compares 217 against the seed rendered with the pre-rename name.
 
-## 258 — lais_agente_roteamento (Julia routing fields + snapshot table) — NOT APPLIED
+## 258 — lais_agente_roteamento (Julia routing fields + snapshot table) — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-14 (Lais slice W1, contract `projects/julia/specs/julia-agent-contract.md` §5 / §10.1 H3 / §11.1 / §11.4). Adds `whatsapp_connections.agente_leads_ativo|agente_leads_key|agente_leads_ativado_em|agente_handoff_notificar_user_id`, `whatsapp_chats.agente_pausado|agente_conversation_id`, the snapshot table `lais_agente_chats_preexistentes` (PK `(connection_id, chat_id)`, RLS own-org select + service_role) and two CHECKs on `whatsapp_connections` (`agente_leads_ativo` ⇒ non-empty `authorized_numbers`; ⇒ `ativado_em` + `key`). Additive + idempotent (replayed twice on PGlite by pre-commit). Apply BEFORE deploying the image that reads these columns: the stores read them defensively (an un-migrated row is "Julia off"), but the new `/api/lais/agente` routes write them. 255 (the privacy notice) is independent. Julia stays OFF until the owner switches a connection on — and the switch needs the agents side (A2) live.
 
-## 259 — status_pagina: Lais › Agente (`lais_agente`) — NOT APPLIED
+## 259 — status_pagina: Lais › Agente (`lais_agente`) — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-14 (Lais slice W2). One `status_pagina` row (`lais_agente`) copying the status of `whatsapp_chat` at apply time (same rule as 252), so the new `/lais/agente` nav item shows. Idempotent (`ON CONFLICT DO NOTHING`), no CHECK/UNIQUE/trigger. Apply with (or before) the image that ships the page; until then the nav item is simply hidden (the route itself still works by URL).
 
-## 265 — condomínios master list — NOT APPLIED
+## 265 — condomínios master list — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-14. Adds `condominios`, `condominio_aliases` (unique `(org_id, alias_normalizado)`), append-only `condominio_eventos` (trigger refuses UPDATE/DELETE), the `condominio_imoveis` resolution view (`security_invoker`; manual `imovel_dados.empreendimento_manual` wins over the Vista mirror) and the `status_pagina` row `condominios` = `producao`. RLS: own-org SELECT + service_role; no authenticated writes (the API writes through the admin client). Additive + idempotent; nothing on the Vista mirror is written. Apply BEFORE deploying the image that mounts `/api/condominios`; until applied the page's calls 500 (tables absent) and the nav item is hidden (no status_pagina row). After applying, an admin clicks "Gerar sugestões" once.
 
-## 297 — data-subject requests registered for a human — NOT APPLIED
+## 297 — data-subject requests registered for a human — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-21. `julia_solicitacoes_titular` (org, lead `contato_id`, chat, LGPD `tipo`, `trecho_lead` <= 500, `recebida_em`, `prazo_em`, `status` aberta|em_analise|atendida|negada|cancelada, `decidido_por/em`, `motivo_decisao`, admin-notice status/error) — backend-only (RLS service_role, REVOKE anon/authenticated) — plus the `status_pagina` row `julia_opt_outs` (copies `julia_leads`). Replaces the removed keyword auto-erase: Julia registers a request through `POST /api/julia/ferramentas/solicitacao-titular`; an admin decides. Idempotent, forward-only. Apply BEFORE deploying the image that mounts `/api/julia/opt-outs` and the tool route; until applied the Opt-outs page's request tab and the tool 500 (table absent) and the nav item is hidden (no status_pagina row).
 
-## 299 — participação decision (descartado_*) + obrigacoes_vendedor_local — NOT APPLIED
+## 299 — participação decision (descartado_*) + obrigacoes_vendedor_local — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-21 (contract scoring, deal 857). Adds `cliente_empresa_participacoes.descartado_por|descartado_em` (the Empresas section's "Não é do vendedor" — survives a Crednet re-read; `confirmado_*` already existed since 167) and `atendimento_negociacao_termos.obrigacoes_vendedor_local TEXT NOT NULL DEFAULT 'onus'` (vocabulary `onus|certidoes` enforced by the PUT body + service + generator gate, no DB CHECK). Additive + idempotent. Default `onus` keeps every existing contract byte-identical. Apply BEFORE deploying the image that mounts `PATCH /api/clientes/{cliente_id}/empresas/{empresa_id}/participacao` and writes the new termos key (an un-migrated DB 500s those writes).
 
-## 302 — certidao_resultados.emitida_em_origem — NOT APPLIED
+## 302 — certidao_resultados.emitida_em_origem — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-22. Adds `certidao_resultados.emitida_em_origem TEXT` (NULL = printed/registry/typed; `metadados_pdf` = date inferred from the PDF CreationDate when a CENPROT/Serasa consulta text carries no date). Additive + idempotent. Apply BEFORE deploying the image that reads/writes it (`RESULTADO_COLUNAS_SEM_TEXTO` selects it; an un-migrated DB 500s the partes read).
 
-## 303 — natureza_transmissao_ampla — NOT APPLIED
+## 303 — natureza_transmissao_ampla — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-22. Widens two CHECK vocabularies: `matricula_ato_detalhes.natureza` (+ `adjudicacao`, `integralizacao`, previously lumped under `outro`) and `imovel_dados.ultima_transferencia_manual_natureza` (+ `doacao`, `partilha`, `adjudicacao`, `integralizacao`). Additive, idempotent. Apply BEFORE deploying the image whose reader types those natures (an un-migrated DB rejects the detalhes insert of an adjudicação/integralização act).
 
-## 304 — repair_cancelado_manual_humano — NOT APPLIED
+## 304 — repair_cancelado_manual_humano — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-23. Data repair: manual-origin consultas' human-filled resultados that `cancelar_processamento` had flipped to `erro` / "Cancelado manualmente pelo usuário." go back to `pendente` (erro_mensagem NULL). Scoped to manual, non-excluded consultas/resultados with evidence; recomputes nothing. Idempotent. Readers already treat such rows as `pendente`, so applying is not a deploy prerequisite; apply to clear the 23 damaged prod rows.
 
-## 305 — natureza_cessao_direitos — NOT APPLIED
+## 305 — natureza_cessao_direitos — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-23. Widens `matricula_ato_detalhes.natureza`'s CHECK with `cessao_direitos` (a compromissário's cession of promise rights, previously `outro`; NOT a transfer of ownership). Additive, idempotent. Apply BEFORE deploying the image whose reader types that nature (an un-migrated DB rejects the detalhes write of such an act).
 
-## 306 — imovel_campos_manuais — NOT APPLIED
+## 306 — imovel_campos_manuais — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-24 (owner directive: no imóvel field is upload-only). Adds `imovel_dados.descricao_imovel_texto` (+ `_confirmado_por/_em`, the typed IMÓVEL: description that wins in the contract), `imovel_dados.ultima_transferencia_manual_transmitentes TEXT[]` (typed sellers; widens the 152 `_confirmado` CHECK to count a non-empty list, refuses names next to `sem_registro`), and the new table `imovel_certidoes_manuais` (CND IPTU / condomínio / matrícula certidão typed with no file; RLS select-own-org + service_role). Additive, idempotent. Apply BEFORE deploying the image that reads it: `documentos_service.certidoes` (imóvel page + contract loader) queries `imovel_certidoes_manuais`, so an un-migrated DB fails that read.
 
-## 307 — certidao_consulta_manual_sem_documento — NOT APPLIED
+## 307 — certidao_consulta_manual_sem_documento — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-24 (F86). `certidao_consultas.documento` DROP NOT NULL + CHECK `origem='manual' OR documento non-empty` — a manual cell holder (certidão PDF upload) may be created for a party without CPF/CNPJ; an automatic consulta still requires it. Forward-safe, idempotent (every existing row satisfies the CHECK). Apply BEFORE deploying the image whose `garantir_celula` accepts a party without document (an un-migrated DB 500s that insert instead of the old 422).
 
-## 308 — contrato_especificacoes — NOT APPLIED
+## 308 — contrato_especificacoes — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-10-24 (owner direction: contract specifications are selectable and scope the readiness). Adds `atendimento_contratos.especificacoes TEXT[]` + `especificacoes_versao INTEGER` (both NULL = legacy mode, readiness follows the derived switches). No CHECK — the vocabulary is the versioned code catalogue `contrato_gerador/especificacoes.py`, validated on write. Additive, idempotent. Apply BEFORE deploying the image that mounts `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/especificacoes` (an un-migrated DB 500s that write; reads tolerate the absent columns via `row.get`).
 
-## 314 — julia_catalogo_fonte — NOT APPLIED
+## 314 — julia_catalogo_fonte — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-03 (julia-v3, CONTRACT 12.7). New table `julia_catalogo_config(org_id PK, fonte 'vista'|'espelho' DEFAULT 'espelho', updated_by, updated_at)`: which catalog Julia's listing tools read per org. RLS service-role only (julia_* lockdown, 289). A missing row = `espelho`, so applying it changes nothing until `PUT /api/julia/catalogo-fonte` flips an org. Apply BEFORE deploying the image: the tools read the config row on every call (an un-migrated DB 500s the three listing tools). After deploy, the operator sets the One org to `vista`.
 
-## 315 — imovel_notas — NOT APPLIED
+## 315 — imovel_notas — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-03 (owner direction: mirror + owned overlay with CRUD on what is ours). New table `social_wiring.imovel_notas` (internal notes per imóvel, FK to `imovel_registry`, RLS own-org select + service_role). Additive, idempotent. Apply BEFORE deploying the image that mounts `GET/POST /api/imoveis/{codigo}/notas` and `PATCH/DELETE .../notas/{nota_id}` (an un-migrated DB 500s those routes; no other route reads the table).
 
-## 316 — imoveis_sync_execucoes — NOT APPLIED
+## 316 — imoveis_sync_execucoes — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-03 (Vista outage fallback). New table `imoveis_sync_execucoes`: one row per Vista imóveis refresh run (path listar|detalhes, status, counts, call counts), service-role only. Additive, idempotent. Apply BEFORE deploying the image: the scheduled refresh and `POST /api/imoveis/sync` write/read it (an un-migrated DB 500s the sync endpoints).
 
-## 317 — vista_divergencias — NOT APPLIED
+## 317 — vista_divergencias — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-04 (TRANSITIONAL, removable). `imovel_campo_conflitos.notas JSONB` (the drift note) + `vista_divergencias_config(org_id, ativa, destino_user_id)` (per-org flag `divergencia_vista_ativa`, missing row = OFF; the One org seeded ON). Additive, idempotent. Apply BEFORE deploying the image: the sync reads the flag row (an un-migrated DB logs the failure and skips divergences — the sync itself is unaffected).
 
-## 318 — julia_linha_roteamento — NOT APPLIED
+## 318 — julia_linha_roteamento — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-04 (CONTRACT julia-line SW-A). `conversation_messages.origem` (lead|julia|humano|interno, NULLABLE, no backfill), `whatsapp_chats.categoria` (lead|equipe, default `lead`), and DROP of CHECK `whatsapp_connections_agente_exige_autorizados` (Julia no longer needs `authorized_numbers`). Additive/idempotent. Apply BEFORE deploying the image: the webhook writes `origem` / `categoria` (an un-migrated DB fails the inbound insert, which is logged and processed anyway, but the staff/echo rules need the columns).
 
-## 319 — credentials_hide_encrypted_tokens — NOT APPLIED
+## 319 — credentials_hide_encrypted_tokens — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-04 (Julia-line S8, owner: the platform-delivered agents token must be unreachable from the browser). Revokes the table-wide SELECT on `social_wiring.credentials` from anon/authenticated and re-grants only the non-secret columns, so `encrypted_tokens` is service-role only. Idempotent; no schema change. Safe before or after the image (the backend reads through the service-role client).
 
-## 321 — whatsapp_connections_session_unique_hide_secrets — NOT APPLIED
+## 321 — whatsapp_connections_session_unique_hide_secrets — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-04 (Julia go-live hardening). `UNIQUE (base_url, session_name) WHERE transporte='waha'` on `social_wiring.whatsapp_connections` (one WAHA session = one line across orgs; the create route answers 409 `sessao_ja_vinculada`) and REVOKE of the table-wide SELECT from anon/authenticated with a column-level re-grant that leaves out `webhook_token` and `encrypted_api_key` (service_role only). **OPS before applying:** the migration aborts loudly if two WAHA lines already share a session; check first with `SELECT base_url, session_name, count(*) FROM social_wiring.whatsapp_connections WHERE transporte='waha' GROUP BY 1,2 HAVING count(*)>1;` and resolve by hand (nothing is merged silently). Apply BEFORE deploying the image (the create route relies on the index as its race backstop; without it the route-level check still holds). Idempotent.
 
-## 323 — julia_permitidos — NOT APPLIED
+## 323 — julia_permitidos — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-05 (owner: "add the allowlist with a switch on/off, so I can set my own number so she only replies to me at first"). Adds `social_wiring.julia_permitidos` (per-org allowlist, UNIQUE (org_id, numero), service-role-only RLS) and `julia_protecao_config.permitidos_ativo boolean NOT NULL DEFAULT false`. Additive and idempotent; safe before or after the image (the previous image ignores both). Apply BEFORE the image that reads them: without the table, a switch that is ON fails CLOSED (no number is Julia's).
 
-## 345 — imobshot_card_transition_log — NOT APPLIED
+## 345 — imobshot_card_transition_log — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-15 (EOA debt: 344's hand-written `imobshot_eventos`). Renders the seed `transition_log` for the card (`imobshot_card_events` + the `imobshot_card_*` RPCs + the shared `transition_log_erasures`), copies every `imobshot_eventos` row into it (same id / timestamps / actor / detail; an unmappable row or a count mismatch ABORTS the migration, nothing copied), re-points 344's three service-only functions at the primitive (same names and signatures) and makes `imobshot_eventos` read-only (NOT dropped: a later contract migration drops it one release after 345 is verified in prod, `NOC-REMEDIATE[imobshot-eventos-contract]`). **Apply AFTER 344 and BEFORE the image that reads them** (344 is itself not applied in prod yet: apply 344 then 345 in order; the previous image has no ImobShotAI code, so there is no N-1 hazard). 344 is untouched. Forward-only, idempotent.
 
-## 346 — imobshot_eventos_contract — NOT APPLIED
+## 346 — imobshot_eventos_contract — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-15. CONTRACT step of the 344/345 expand-migrate-contract: drops the legacy `imobshot_eventos` table, its trigger and `imobshot_eventos_append_only()`. A guard RAISES (nothing dropped) if any legacy row id is not already in `imobshot_card_events`. **Apply AFTER 345 (applied and verified in prod), any time before or with the next SW image**; no code reads the legacy table. 344/345 untouched. Forward-only, idempotent.
 
-## 349 — imovel_historico_vista_escrita — NOT APPLIED
+## 349 — imovel_historico_vista_escrita — APPLIED (recorded in migrations-applied.json)
 
 Authored 2026-11-15 (re-cut v3 of the 2026-11-04 Vista sync-and-history work; the WhatsApp digest and its `destino_user_id` are KEPT, owner option 1). ADDs `vista_escrita_ativa boolean NOT NULL DEFAULT false` (the owner's switch to edit Vista), and creates the append-only `imovel_historico` (UPDATE/DELETE revoked + seed GUC carve-out guard trigger; DELETE only for a future LGPD erasure that sets `social_wiring.imovel_historico_expurgo`). Apply BEFORE deploying the image: the sync writes `imovel_historico` and the config reads `vista_escrita_ativa`. Idempotent.
 

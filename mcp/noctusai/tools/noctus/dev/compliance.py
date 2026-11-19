@@ -5982,6 +5982,38 @@ def check_override_is_range(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_applied_md_ledger_parity` — `migrations/APPLIED.md` carries a status per
+# `## NNN` heading while `migrations-applied.json` (written by the recorder) is
+# the real applied ledger. Two hand-kept records of one fact drifted (SW 367,
+# 2026-11-19; 31 more headings found on first run). The recorder now rewrites the
+# headings in the same commit as the ledger; this keeper is the backstop for a
+# hand edit or a ledger change that bypassed the recorder. Predicate lives in
+# `applied_md.parity_findings`. KB § PATTERNS/backend/migrate-product-mcp-tool.md.
+# ---------------------------------------------------------------------------
+def check_applied_md_ledger_parity(repo_root: Path | None = None) -> list[dict]:
+    from . import applied_md as _am
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for md in sorted(root.glob("products/*/backend/migrations/APPLIED.md")):
+        backend = md.parent.parent
+        names = _am.read_ledger_names(backend)
+        if names is None:
+            continue
+        rel = str(md.relative_to(root))
+        for n, msg in _am.parity_findings(md.read_text(encoding="utf-8"), names):
+            issues.append({
+                "product": backend.parent.name,
+                "file": rel,
+                "issue": (f"{msg}. The ledger is the source of truth: run "
+                          f"`noctus.dev.record_applied_migrations` (it rewrites the headings) or fix the "
+                          f"heading to match `migrations-applied.json`."),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_no_vendor_study_in_git` — vendor-derived reverse-engineering material
 # (captures, saved pages/bundles, screenshots of their app, their data exports)
 # lives ONLY in `~/Documents/repository/NoctusAI/_private-studies/<target>/`,
@@ -20605,6 +20637,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    all_issues.extend(check_applied_md_ledger_parity())
     all_issues.extend(check_supply_chain_pin())
     # 2026-11-12 (W1-C) — a worker idle poll is a per-tick RPC; fixed/short idle = 56k calls/day.
     all_issues.extend(check_worker_idle_polling())
