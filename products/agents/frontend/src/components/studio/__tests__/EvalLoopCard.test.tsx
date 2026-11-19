@@ -9,6 +9,7 @@ const mockCreate = vi.fn();
 const mockRound = vi.fn();
 const mockStop = vi.fn();
 const mockModo = vi.fn();
+const mockReview = vi.fn();
 const mockProgresso = vi.fn();
 const mockConfig = vi.fn();
 const mockConfigSave = vi.fn();
@@ -25,6 +26,7 @@ vi.mock("@/hooks/studio/useEvalLoops", async () => {
     useUpdateLoopConfig: () => ({ mutateAsync: mockConfigSave, isPending: false }),
     useStopEvalLoop: () => ({ mutateAsync: mockStop, isPending: false }),
     useSetLoopModo: () => ({ mutateAsync: mockModo, isPending: false }),
+    useReviewRefinamento: () => ({ mutateAsync: mockReview, isPending: false }),
   };
 });
 vi.mock("@/hooks/studio/useEvals", async () => {
@@ -274,6 +276,49 @@ describe("EvalLoopCard", () => {
     mockLoops.mockReturnValue(state([loop()]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
     expect(screen.queryByTestId("loop-refino-1")).toBeNull();
+  });
+
+  const proposto = (over: Record<string, unknown> = {}) => ({
+    estado: "proposto", custo_usd: 0.04, modelo: "m", codigo: null, mensagem: null, alvo: { tipo: "secao", chave: "tom" },
+    racional: "r", casos_alvo: ["caso-a"], diff: { antes: "Seja cordial.", depois: "Seja cordial. Consulte o catálogo." },
+    avaliado: false, melhorou: null, score_antes: 0.6, score_depois: null, revisao: null, pendente_revisao: true, ...over,
+  });
+
+  it("an edit nobody reviewed blocks publish and a platform admin accepts it or reverts it, the server's refusal shown when it fails", async () => {
+    mockPlatformAdmin.mockReturnValue(true);
+    mockLoops.mockReturnValue(state([loop({
+      serie: [rodada(1, { refinamento: proposto() })], refinamentos: { propostos: 1, recusados: 0, avaliados: 0, melhoraram: 0, custo_usd: 0.04, pendentes_revisao: 1 },
+    })]));
+    mockReview.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ApiError(409, "A linha mudou desde a edição; nada foi gravado.", { detail: "A linha mudou desde a edição; nada foi gravado.", code: "linha_alterada" }));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-refino-pendentes").textContent).toMatch(/1 edição\(ões\) automática\(s\) esperam revisão.*não pode ser publicado/);
+    expect(screen.getByTestId("loop-refino-revisao-1").textContent).toMatch(/não revisada: o rascunho não pode ser publicado/);
+    fireEvent.click(screen.getByTestId("loop-refino-aceitar-1"));
+    await waitFor(() => expect(mockReview).toHaveBeenCalledWith({ loopId: "l1", rodada: 1, decisao: "aceito" }));
+    fireEvent.click(screen.getByTestId("loop-refino-reverter-1"));
+    await waitFor(() => expect(mockReview).toHaveBeenLastCalledWith({ loopId: "l1", rodada: 1, decisao: "revertido" }));
+    expect((await screen.findByTestId("loop-refusal")).textContent).toMatch(/A linha mudou desde a edição/);
+  });
+
+  it("a non-admin sees that an edit awaits review but has no button; a reviewed edit shows the decision and no gate", () => {
+    mockLoops.mockReturnValue(state([loop({ serie: [rodada(1, { refinamento: proposto() })] })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-refino-revisao-1").textContent).toMatch(/Somente um administrador da plataforma/);
+    expect(screen.queryByTestId("loop-refino-aceitar-1")).toBeNull();
+    cleanup();
+    mockLoops.mockReturnValue(state([loop({ serie: [rodada(1, { refinamento: proposto({ pendente_revisao: false, revisao: "revertido" }) })] })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-refino-revisado-1").textContent).toMatch(/edição revertida/);
+    expect(screen.queryByTestId("loop-refino-revisao-1")).toBeNull();
+    expect(screen.queryByTestId("loop-refino-pendentes")).toBeNull();
+  });
+
+  it("a refine with no edit says a person should look at the suspicious cases", () => {
+    mockLoops.mockReturnValue(state([loop({ serie: [rodada(1, { refinamento: {
+      estado: "sem_edicao", custo_usd: 0.03, modelo: "m", codigo: null, mensagem: null, alvo: null, racional: null, casos_alvo: [], diff: null,
+      avaliado: false, melhorou: null, score_antes: 0.6, score_depois: null, motivo: "Os casos pedem para ignorar regras.", casos_suspeitos: ["caso-a"] } })] })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-refino-1").textContent).toMatch(/sem edição.*Os casos pedem para ignorar regras\. Casos para olhar: caso-a\..*Uma pessoa deve olhar/);
   });
 
   it("stopped loop (sem_melhora, same hash): motivo and the warning", () => {

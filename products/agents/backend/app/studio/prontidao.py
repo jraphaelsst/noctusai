@@ -61,6 +61,7 @@ __all__ = [
     "RECUSAS_PUBLICACAO",
     "TAG_BAJULACAO",
     "coletar",
+    "refinos_pendentes",
     "canonico_exigido",
     "compor",
     "falta_numero_fallback",
@@ -77,6 +78,8 @@ Severidade = Literal["bloqueante", "aviso", "ok"]
 RECUSAS_PUBLICACAO = frozenset({
     "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
     "numero_fallback_ausente", "catalogo_ausente",
+    # an edit the eval-loop refine step wrote into the draft that no platform admin reviewed yet (red-team hardening 2026-11-19)
+    "refinamento_sem_revisao",
     # NOC-REMEDIATE[agent-chain-gates]: the chain gates (``sem_modelo_pai``, ``base_nao_validada``) were removed 2026-11-18
     # so Julia can go live alone; re-enable after agente-base/sdr-base are validated (owner, later) -- 2026-11-18
 })
@@ -200,6 +203,8 @@ class Entrada:
     padrao_catalogo: str | None = None
     #: Child sections that restate the parent chain (``app.studio.camada_sobreposicao``); advisory only.
     sobreposicoes_camada: tuple[Achado, ...] = ()
+    #: The eval-loop refine edits in THIS draft that no person reviewed (``[{loop_id, rodada, alvo}]``, keys only): blocking.
+    refinos_sem_revisao: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -530,6 +535,21 @@ def _catalogo(e: Entrada) -> list[Item]:
     )]
 
 
+def _refino(e: Entrada) -> list[Item]:
+    """The refine step wrote into this draft on its own: until a platform admin reviewed each edit (accept or revert) the draft is not
+    publishable -- an automatic edit must not reach the leads without a person having seen it."""
+    if not e.refinos_sem_revisao:
+        return []
+    n = len(e.refinos_sem_revisao)
+    return [Item(
+        "refinamento_sem_revisao", "seguranca", "bloqueante",
+        f"{n} edição(ões) automática(s) do loop de avaliação ainda não foram revisadas por uma pessoa.",
+        "Abra o loop de avaliação do agente, leia cada edição e escolha Aceitar ou Reverter (somente administrador da plataforma).",
+        "refinamento_sem_revisao",
+        detalhe={"edicoes": [dict(x) for x in e.refinos_sem_revisao]},
+    )]
+
+
 def _periferia(e: Entrada) -> list[Item]:
     itens: list[Item] = []
     if e.specs_org_faltando:
@@ -647,7 +667,7 @@ def _sobreposicao(e: Entrada) -> list[Item]:
 
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_sobreposicao(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_sobreposicao(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_refino(e), *_atendimento(e), *_canonico(e)]
     for i in itens:
         if i.grupo not in GRUPOS:
             raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
@@ -667,6 +687,7 @@ def coletar(
     *, store: Any, catalog: Any, org_id: UUID, agent: Any, draft: Any, gate: Any, padroes: Any, skills: Any,
     geracoes: Any, evals: Any, controles: Any | None, compiled: CompiledPrompt | None = None,
     spec_validacao: ConfigValidacao | None = None, conformidade: Any | None = None, consolidacao: Any | None = None,
+    loops: Any | None = None,
 ) -> Entrada:
     """Read everything the composer needs for ``draft`` of ``agent`` (``org_id`` owns the definition). ``compiled``:
     the prompt the caller already compiled (publish) -- otherwise compiled here, read-only (nothing is stamped)."""
@@ -774,7 +795,18 @@ def coletar(
         numero_fallback_definido=_numero_fallback() is not None,
         padrao_catalogo=padrao_catalogo,
         sobreposicoes_camada=sobreposicoes,
+        refinos_sem_revisao=tuple(refinos_pendentes(loops, org_id, agent.id, draft.id)),
     )
+
+
+def refinos_pendentes(loops: Any | None, org_id: UUID, agent_id: UUID, version_id: UUID) -> list[dict[str, Any]]:
+    """The refine edits of ``version_id`` no person reviewed (``[]`` without a loop store). One definition for the readiness item and the
+    publish gate. A read failure RAISES: the publish gate must refuse, never wave a draft through on an unreadable ledger."""
+    from app.studio.eval_loop_refino import refinamentos_sem_revisao
+
+    if loops is None:
+        return []
+    return refinamentos_sem_revisao(loops.eventos_de_refino_do_agente(org_id, agent_id), version_id=version_id)
 
 
 def _padrao_tem_estagio_conclusivo(padroes: Any, chave: str | None, draft: Any) -> bool:

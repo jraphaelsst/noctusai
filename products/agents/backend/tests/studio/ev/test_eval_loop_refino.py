@@ -28,6 +28,7 @@ from app.studio.eval_loop_refinador import (
 from app.studio.eval_loop_refino import (
     CasoFalhando, LinhasDoAgente, RefinoRecusado, SaidaRefino, SecaoLinha, deve_refinar, trecho_do_diff, validar_proposta,
 )
+from app.studio.eval_loop_refino_protegido import protegidas_para_rpc
 from app.studio.eval_loop_refino_service import RefinoService
 from app.studio.eval_loop_service import EvalLoopService, RunResumo
 from noctusai_lib.integrations.prompt_registry import FakePromptRegistry, PromptEntry
@@ -52,7 +53,8 @@ LINHAS = LinhasDoAgente(
     version_id=uuid4(), compiled_hash="h", secoes=(
         SecaoLinha("tom", "Tom", TOM, True), SecaoLinha("regras", "Regras", REGRAS, True, ("discordar-com-respeito",)),
         SecaoLinha("antiga", "Antiga", "Texto desativado de uma seção antiga.", False)),
-    textos=(("compilador.titulo_ferramentas", "Ferramentas disponíveis"),), ferramentas=(("handoff", "Passa a conversa para uma pessoa.", True),))
+    textos=(("compilador.titulo_ferramentas", "Ferramentas disponíveis"),), ferramentas=(
+        ("handoff", "Passa a conversa para uma pessoa.", True), ("kb_buscar", "Busca trechos na base de conhecimento.", True)))
 
 
 # ── the validator: what the model may NOT make the server write ───────────────────────────────────────────────
@@ -92,8 +94,8 @@ def test_what_the_validator_refuses(quando, esperado):
 
 
 def test_a_tool_row_edit_changes_the_description_only_and_a_new_tool_is_not_a_target():
-    ok = validar_proposta(saida("ferramenta", "handoff", "Passa a conversa para uma pessoa quando o lead pedir um humano."), LINHAS, CASOS)
-    assert (ok.tipo, ok.chave) == ("ferramenta", "handoff")
+    ok = validar_proposta(saida("ferramenta", "kb_buscar", "Busca trechos da base de conhecimento relacionados à pergunta do lead."), LINHAS, CASOS)
+    assert (ok.tipo, ok.chave) == ("ferramenta", "kb_buscar")
     assert _recusa(saida("ferramenta", "ferramenta_nova", "Faz algo novo com permissão nova.")) == "linha_inexistente"
 
 
@@ -123,9 +125,9 @@ def _hash(defs, vid):
 
 
 class Mundo:
-    def __init__(self, *, refinador=None, modo="automatico", orcamento=10.0, rodadas=6, casos=CASOS):
+    def __init__(self, *, refinador=None, modo="automatico", orcamento=10.0, rodadas=6, casos=CASOS, escopo="org"):
         self.defs = FakeStudioDefinitionStore()
-        self.agent = self.defs.seed_agent(ORG, "agente-x", nome="X", conteudo_modo="linhas")
+        self.agent = self.defs.seed_agent(ORG, "agente-x", nome="X", conteudo_modo="linhas", definition_scope=escopo)
         self.draft = self.defs.create_draft(ORG, self.agent.id, None, OWNER)
         self.defs.replace_sections(ORG, self.draft.id, [
             SectionInput(chave="tom", titulo="Tom", ordem=10, conteudo=TOM),
@@ -229,7 +231,9 @@ def test_a_round_below_target_is_refined_then_the_next_round_runs_on_the_new_has
     assert r1["estado"] == "proposto" and r1["avaliado"] and r1["melhorou"] is True and (r1["score_antes"], r1["score_depois"]) == (0.5, 0.8)
     assert r1["diff"]["depois"].endswith("consulte o catálogo.") and r1["alvo"] == {"tipo": "secao", "chave": "tom"}
     # round 2 (0.8, still below target) was refined too: the Fake had no second answer -> a recorded, free refusal
-    assert estado["refinamentos"] == {"propostos": 1, "recusados": 1, "avaliados": 1, "melhoraram": 1, "custo_usd": 0.01}
+    assert estado["refinamentos"] == {"propostos": 1, "recusados": 1, "sem_edicao": 0, "avaliados": 1, "melhoraram": 1,
+                                      "pendentes_revisao": 1, "custo_usd": 0.01}
+    assert r1["pendente_revisao"] is True and r1["revisao"] is None  # the edit waits for a person (publish is blocked meanwhile)
     LoopOut(**estado)  # the read model satisfies the HTTP contract
 
 
@@ -292,7 +296,7 @@ def test_a_manual_loop_and_a_loop_that_reached_the_target_are_not_refined():
 
 
 def test_two_rounds_without_gain_stop_the_loop_and_revert_nothing_the_edits_stay_in_the_draft():
-    m = Mundo(refinador=FakeRefinador([saida(), saida(novo=TOM + " Antes de citar preço, consulte o catálogo. Depois confirme o bairro.")]))
+    m = Mundo(refinador=FakeRefinador([saida(), saida("texto", "compilador.titulo_ferramentas", "Ferramentas disponíveis agora")]))
     m.avancar()                         # round 1
     m.terminar(m.abertas[0][0], 0.5)
     m.avancar()                         # refine 1 + round 2
@@ -302,7 +306,8 @@ def test_two_rounds_without_gain_stop_the_loop_and_revert_nothing_the_edits_stay
     m.avancar()                         # round 3 closes: 2 consecutive rounds without gain -> stop
     assert m.rec().motivo_parada == "sem_melhora" and m.rec().status == "parado"
     assert len(m.eventos("refinamento_proposto")) == 2
-    assert m.secao("tom").endswith("confirme o bairro.")  # nothing reverted
+    assert m.secao("tom").endswith("consulte o catálogo.")  # nothing reverted
+    assert next(t.conteudo for t in m.defs.list_textos(ORG, m.draft.id)) == "Ferramentas disponíveis agora"
     avs = [e["detalhe"]["melhorou"] for e in m.eventos("refinamento_avaliado")]
     assert avs == [False, False]
 
@@ -458,7 +463,7 @@ def test_the_real_store_is_one_rpc_with_the_row_cas_arguments():
     assert fn == "aplicar_refinamento_loop" and p == {
         "p_org_id": str(ORG), "p_loop_id": str(loop), "p_rodada_seq": 2, "p_evento": "refinamento_proposto", "p_detalhe": {"k": 1},
         "p_custo_usd": 0.1235, "p_version_id": str(vid), "p_tipo": "texto", "p_chave": "c", "p_antes": "a", "p_depois": "b",
-        "p_expected_hash": "H"}
+        "p_expected_hash": "H", "p_protegidas": protegidas_para_rpc()}
     assert "p_version_id" not in q and q["p_evento"] == "refinamento_recusado"
 
 

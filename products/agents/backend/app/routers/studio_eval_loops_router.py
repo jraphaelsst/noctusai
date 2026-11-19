@@ -17,11 +17,14 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.dependencies import require_evals_run_access, require_evals_run_cancel, require_platform_admin
 from app.routers.studio_agents_router import (
+    _refresh_draft_hash,
     get_eval_loop_config_store_dep,
     get_eval_store_dep,
+    get_knowledge_catalog_dep,
     get_loop_service_dep,
     get_loop_store_dep,
     get_mecanismo_store_dep,
+    get_refino_store_dep,
     get_studio_definition_store_dep,
     actor_id,
     guard_um_por_usuario,
@@ -39,11 +42,13 @@ from app.schemas.studio_eval_loops import (
     LoopModoRequest,
     LoopOut,
     LoopStopRequest,
+    RefinamentoRevisaoRequest,
 )
 from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.stores.eval_loop_config import ConfigRegistrada
 from app.studio.eval_loop_config import EvalLoopConfig, resolver_criacao
 from app.studio.eval_loop_refino import EVENTOS_REFINO
+from app.studio.eval_loop_revisao import RevisaoRecusada, revisar_refinamento
 from app.studio.eval_loop_service import EvalLoopService
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -174,6 +179,41 @@ def list_loop_eventos(
     return LoopEventosOut(items=[LoopEventoOut(
         evento=e["evento"], rodada_seq=e.get("rodada_seq"), run_id=e.get("run_id"), detalhe=e.get("detalhe") or {},
         created_at=e.get("created_at")) for e in svc.eventos(ctx.org_id, agent.id, loop_id)])
+
+
+@router.post("/{key}/evals/loops/{loop_id}/refinamentos/{rodada}/revisao", response_model=LoopOut)
+def post_refinamento_revisao(
+    key: str,
+    loop_id: UUID,
+    rodada: int,
+    payload: RefinamentoRevisaoRequest,
+    ctx: AuthContext = Depends(require_platform_admin),
+    defs=Depends(get_studio_definition_store_dep),
+    loops=Depends(get_loop_store_dep),
+    refino=Depends(get_refino_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+    svc=Depends(get_loop_service_dep),
+) -> LoopOut:
+    """The human review of the edit the refine step wrote into the draft after round ``rodada``: ``aceito`` (keep it) or ``revertido`` (put
+    the row back through the same compare-and-set path). Until it is recorded the draft cannot be published (409
+    ``refinamento_sem_revisao``). A PLATFORM ADMIN only: a product token (publish / evals-run / content-write) answers 403 and can never
+    clear the gate. 404 ``loop_not_found`` / ``refino_nao_encontrado``; 409 ``refino_ja_revisado`` / ``rascunho_diferente`` /
+    ``reversao_indisponivel`` / ``conflito_de_versao`` / ``linha_alterada``."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+
+    def carimbar(draft_id: UUID) -> str:
+        _draft, compiled = _refresh_draft_hash(defs, catalog, ctx.org_id, agent, draft_id)
+        return compiled.hash
+
+    try:
+        revisar_refinamento(
+            loops=loops, defs=defs, refino=refino, org_id=ctx.org_id, agent=agent, loop_id=loop_id, rodada=rodada,
+            decisao=payload.decisao, ator=actor_id(ctx), carimbar_hash=carimbar)
+    except RevisaoRecusada as exc:
+        raise http_error(exc.status, exc.code, exc.mensagem) from exc
+    except StudioConflict as exc:
+        raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
+    return LoopOut(**svc.estado(ctx.org_id, agent.id, loop_id))
 
 
 config_router = APIRouter(prefix="/api/studio/plataforma", tags=["studio-eval-loops"], include_in_schema=False)

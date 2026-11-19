@@ -57,7 +57,9 @@ products/agents/backend/app/
   evaluated through `padrao_do_turno(sem_padrao_ok=True)` (the NULL standard: no qualification tools, no scoring) — a
   production channel turn still refuses it. An automatic loop is driven by `app/studio/eval_loop_driver.py` (resumes at startup
   from the DB) and, between rounds, runs the refine step (`eval_loop_refino*.py`, migration 092: ONE bounded draft-row edit through a
-  validator, cost counted in the loop budget, an event per decision); live progress is `GET .../runs/{id}/progresso`
+  validator, cost counted in the loop budget, an event per decision; migration 093 hardening: protective rows and base layers
+  never edited, caps, a recorded "no edit", and a platform-admin review of every edit before the draft can be published);
+  live progress is `GET .../runs/{id}/progresso`
   (`app/studio/eval_progresso.py`), polled by the UI.
 - Julia v3 controls (migration 056): `stores/plataforma_controles.py` (`agents.plataforma_controles`, service-role only,
   one row per agent key) is the PLATFORM kill, toggled by `GET|PUT /api/studio/plataforma/agentes/{key}/controle`

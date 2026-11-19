@@ -372,7 +372,7 @@ export type EvalLoopModo = "automatico" | "manual";
  * (`proposto`) or nothing written (`recusado`, with `codigo` + `mensagem`). `diff` is the changed window of the row; the
  * full before/after texts are in the loop events. `melhorou` is set once the next round closed (`avaliado`). */
 export interface EvalLoopRefinamento {
-  estado: "proposto" | "recusado";
+  estado: "proposto" | "recusado" | "sem_edicao";
   custo_usd: number;
   modelo: string | null;
   codigo: string | null;
@@ -385,11 +385,23 @@ export interface EvalLoopRefinamento {
   melhorou: boolean | null;
   score_antes: number | null;
   score_depois: number | null;
+  /** `sem_edicao`: why the refiner proposed nothing, and which failing cases look wrong or hostile (a person should look). */
+  motivo?: string | null;
+  casos_suspeitos?: string[];
+  /** An edit sits in the draft UNREVIEWED until a platform admin accepts or reverts it; while `pendente_revisao` the draft cannot be
+   * published (409 `refinamento_sem_revisao`). */
+  revisao?: EvalLoopRefinoDecisao | null;
+  pendente_revisao?: boolean;
 }
+
+/** The human review of one refine edit: keep it, or put the row back as it was. */
+export type EvalLoopRefinoDecisao = "aceito" | "revertido";
 
 export interface EvalLoopRefinamentosResumo {
   propostos: number;
   recusados: number;
+  sem_edicao?: number;
+  pendentes_revisao?: number;
   avaliados: number;
   melhoraram: number;
   custo_usd: number;
