@@ -146,6 +146,16 @@ A long job (transcription, CoreStudio geração, photo editing, video edits) use
 
 **Also:** `get_shared_realtime_bus(redis_url, label=…)` is the process-wide bus cache (third copy of the shape — whatsapp, meta leads, job progress); the two older product copies should migrate to it.
 
+## Pipeline stream — a kanban board kept live (2026-11-19)
+
+The same bus carries board changes so cards move by themselves (CoreStudio criação: criação -> edição -> aprovação final) with no per-tab poll.
+
+**Backend** (`noctusai_lib.domain.pipeline`): `move_card` takes an optional `publish` hook and emits, best-effort and after the commit, `pipeline.card_moved` `{card_id, from_stage_id, to_stage_id, motivo, actor, at}` on scope `pipeline:{org}:{pipeline}`; a product emits `pipeline.card_state` `{card_id, state}` for a sub-state change that is not a move (e.g. a job's phase). `create_pipeline_stream_router(cfg)` mounts the SSE endpoint over `create_sse_router` (org tier, org from the auth context, never the URL). The DB row stays the truth; a dropped publish never fails the move.
+
+**Frontend** (`@noctusai/lib`): `usePipelineStream(pipelineId, { url, getAuthToken, queryKeys, getCardId?, withStage?, withState?, getColumnId?, enabled?, fallbackAfterMs?, pollMs? })` merges each frame into the exact cache entries listed in `queryKeys` with `setQueryData` (`applyPipelineEvent`: an array of cards, `{ cards }`, or the column-grouped `{ cards }[]` a `PipelineBoard` caches, where a move re-homes the card and fixes `total`/`exibidos`). An entry not loaded yet is left alone (never invent a board), a card the entry does not hold is not fabricated, every listed entry is filled. With the stream not open for `fallbackAfterMs` (8 s) it invalidates `queryKeys` every `pollMs` (5 s); on (re)open it invalidates once to close the gap before the resume cursor. Render per-card live state through the declared `statusSlot` of `KanbanBoard` / `PipelineBoard`, not by forking the card face.
+
+**Per-card progress** is the job-progress channel above (one stream per RUNNING card, `useJobProgress`), not this one: the pipeline stream says WHERE a card is and its coarse state; the job stream says what the worker is doing right now.
+
 ## Testing
 
 `FakeRealtimeBus` needs no Redis and is full-parity — use it directly in

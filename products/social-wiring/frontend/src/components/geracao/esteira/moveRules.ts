@@ -13,13 +13,18 @@ import type { MoveIntentContext, PipelineStage } from "@noctusai/lib/components"
 
 import type { PapelEsteira } from "@/types/esteira";
 
-export const PAPEL_GRAVACAO: PapelEsteira = "gravacao";
+export const PAPEL_CRIACAO: PapelEsteira = "criacao";
 export const PAPEL_POSTADO: PapelEsteira = "postado";
 export const PAPEL_CANCELADO: PapelEsteira = "cancelado";
 
 /** Role → label shown in the stage editor (§6.1). */
 export const ESTEIRA_ROLE_LABELS: Record<PapelEsteira, string> = {
-  gravacao: "Início da produção",
+  roteiro: "Roteiro",
+  criacao: "Criação",
+  gravacao: "Criação",
+  edicao: "Edição",
+  aprovacao_midia: "Aprovação final",
+  pronto: "Pronto",
   postado: "Publicado",
   cancelado: "Encerrado",
 };
@@ -73,7 +78,7 @@ export function ehPendencias(erro: unknown): boolean {
 }
 
 export const MENSAGEM_PENDENCIAS =
-  "Para entrar em Gravação o post precisa de headline e roteiro concluído.";
+  "Para entrar em Criação o post precisa de headline e roteiro aprovados.";
 
 /** `instagram.com` links only (the optional permalink asked on `postado`). */
 export function permalinkValido(url: string): boolean {

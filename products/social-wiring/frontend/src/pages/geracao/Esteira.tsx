@@ -8,9 +8,11 @@
  * `PostCardDialog` (FE-2) is mounted here, driven by `?post=`; closing removes the param.
  */
 import { useEffect, useState } from "react";
-import { Users } from "lucide-react";
+import { Settings2, Users } from "lucide-react";
+import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { useSearchParams } from "react-router-dom";
 
+import { CotaCriacaoDialog } from "@/components/geracao/esteira/CotaCriacaoDialog";
 import { EquipeDialog } from "@/components/geracao/esteira/EquipeDialog";
 import { EsteiraBoard } from "@/components/geracao/esteira/EsteiraBoard";
 import { PostCardDialog } from "@/components/geracao/esteira/PostCardDialog";
@@ -54,6 +56,8 @@ export default function Esteira({ onOpenPost }: EsteiraPageProps = {}) {
   const [busca, setBusca] = useState(buscaUrl);
   const [equipeAberta, setEquipeAberta] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
+  const [cotaAberta, setCotaAberta] = useState(false);
+  const ehAdmin = useIsOrgAdmin();
 
   useEffect(() => {
     if (busca === buscaUrl) return;
@@ -146,6 +150,12 @@ export default function Esteira({ onOpenPost }: EsteiraPageProps = {}) {
             <Users className="mr-1 h-4 w-4" />
             Equipe
           </Button>
+          {ehAdmin && (
+            <Button size="sm" variant="outline" onClick={() => setCotaAberta(true)}>
+              <Settings2 className="mr-1 h-4 w-4" />
+              Limite de custo
+            </Button>
+          )}
           <Button size="sm" disabled={marcas.length === 0} onClick={() => setNovoAberto(true)}>
             Novo post
           </Button>
@@ -159,6 +169,7 @@ export default function Esteira({ onOpenPost }: EsteiraPageProps = {}) {
       )}
 
       {postAberto && <PostCardDialog postId={postAberto} onClose={() => setParam("post", null)} />}
+      {ehAdmin && <CotaCriacaoDialog open={cotaAberta} onClose={() => setCotaAberta(false)} />}
       <EquipeDialog open={equipeAberta} onClose={() => setEquipeAberta(false)} />
       <NovoPostDialog
         open={novoAberto}
