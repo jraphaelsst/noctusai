@@ -75,10 +75,11 @@ describe("LimitesDiariosSection", () => {
   });
 
   it("saves only the edited rows and writes the answer into the screen", async () => {
-    api.get.mockResolvedValue(
-      lista(item(), item({ chave: "legendas_dia_usuario", rotulo: "Legendas por pessoa", valor: 40, padrao: 40, maximo: 400 })),
-    );
-    api.put.mockResolvedValue(lista(item({ valor: 60, personalizado: true }), item({ chave: "legendas_dia_usuario", rotulo: "Legendas por pessoa", valor: 40, padrao: 40, maximo: 400 })));
+    const legendas = item({ chave: "legendas_dia_usuario", rotulo: "Legendas por pessoa", valor: 40, padrao: 40, maximo: 400 });
+    const salvo = lista(item({ valor: 60, personalizado: true }), legendas);
+    // The server's state after the PUT is what any later GET (the settle refetch) returns.
+    api.get.mockResolvedValueOnce(lista(item(), legendas)).mockResolvedValue(salvo);
+    api.put.mockResolvedValue(salvo);
     renderSection();
     await rtl.screen.findByText("Roteiros por pessoa");
     expect(salvar().disabled).toBe(true);
@@ -87,7 +88,7 @@ describe("LimitesDiariosSection", () => {
     rtl.fireEvent.click(salvar());
     await rtl.waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/settings/limites-geracao", { limites: { roteiros_dia_usuario: 60 } }));
     await rtl.waitFor(() => expect(toast.success).toHaveBeenCalled());
-    expect(input().value).toBe("60");
+    await rtl.waitFor(() => expect(input().value).toBe("60"));
     expect(rtl.screen.queryByTestId("limites-nao-salvo")).toBeNull();
     expect(rtl.screen.getByTestId("limite-roteiros_dia_usuario-restaurar")).toBeTruthy();
   });
@@ -115,7 +116,7 @@ describe("LimitesDiariosSection", () => {
   });
 
   it("Restaurar padrão sends null for that limit", async () => {
-    api.get.mockResolvedValue(lista(item({ valor: 50, personalizado: true })));
+    api.get.mockResolvedValueOnce(lista(item({ valor: 50, personalizado: true }))).mockResolvedValue(lista(item()));
     api.put.mockResolvedValue(lista(item()));
     renderSection();
     rtl.fireEvent.click(await rtl.screen.findByTestId("limite-roteiros_dia_usuario-restaurar"));
