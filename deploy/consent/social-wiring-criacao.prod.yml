@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-11-23
+consent_ref: 'products/social-wiring/projects/core-studio-build/specs/criacao-pipeline-contract.md#5'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize social-wiring-criacao to be published to production."
+  prompt_source: typed
+  tier: performative
+  evidence_rank: canonical-exact/typed
+  candidates_considered: 1
+  session_id: b13229e2-2272-4be9-8faf-e8b75635a9a5
+  transcript_sha256: e8f252bd2bf09de07da9c7038e8ff9c0e2fe076928d76131bd33c362fd633264
+  recorded_at: 2026-11-23T18:19:03+00:00
