@@ -56,6 +56,35 @@ def table(client: Any, name: str):
     return client.table(name)
 
 
+def with_key_columns(select: str, *keys: str) -> str:
+    """``select`` guaranteed to project every column in ``keys`` -- the pager's sort and dedupe key.
+
+    A narrowed select that drops the key is invisible at the call site and fatal at runtime: the pager's
+    progress guard raises on the first returned row. It only fires once a row comes back, so an empty table
+    hides it (prod 2026-11-23: the Esteira board read ``apr_events`` without ``id``; every board load 500'd
+    as soon as the first approval was recorded). ``*`` already carries every column; an embedded resource
+    (``dono(id,nome)``) is one top-level token, never split.
+    """
+    if select.strip() == "*":
+        return select
+    depth, tokens, cur = 0, [], ""
+    for ch in select:
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            tokens.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    tokens.append(cur)
+    # an aliased column ``alias:col`` is present under its alias; that is the key the row carries
+    present = {t.strip().partition(":")[0].strip() for t in tokens}
+    if "*" in present:
+        return select
+    missing = [k for k in dict.fromkeys(keys) if k not in present]
+    return ",".join([select, *missing]) if missing else select
+
+
 def batched(items: list, size: int = IN_FILTER_BATCH) -> Iterator[list]:
     """Yield ``items`` in chunks of ``size`` — see :data:`IN_FILTER_BATCH`."""
     for i in range(0, len(items), size):
@@ -89,9 +118,10 @@ def paged_rows(
     ``# nosec`` would teach the next person to reach for suppression first.
     """
     eq_filters = eq_filters or {}
+    projection = with_key_columns(select, order_col, id_key)
 
     def fetch_page(start: int, end: int):
-        query = table(client, table_name).select(select).eq("org_id", str(org_id))
+        query = table(client, table_name).select(projection).eq("org_id", str(org_id))
         for key, value in eq_filters.items():
             query = query.eq(key, value)
         if refine is not None:
@@ -128,13 +158,14 @@ def in_batched_rows(
     """
     if not ids:
         return []
+    projection = with_key_columns(select, order_col)
     out: list[dict] = []
     for batch in batched(sorted(set(ids))):
 
         def fetch_page(start: int, end: int, _batch=batch):
             return (
                 table(client, table_name)
-                .select(select)
+                .select(projection)
                 .eq("org_id", str(org_id))
                 .in_(in_col, _batch)
                 .order(order_col)

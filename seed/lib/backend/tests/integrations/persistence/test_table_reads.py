@@ -17,6 +17,51 @@ def _db(rows):
     return db
 
 
+class _ProjectingTable:
+    """PostgREST's real top-level projection: a row carries ONLY the selected columns. ``MockSupabaseClient``
+    returns whole rows for a top-level select (embeds only are projected), which is why a narrowed select that
+    dropped the pager's key passed every suite and 500'd in prod."""
+
+    def __init__(self, rows):
+        self._rows, self._cols, self._f = rows, None, []
+
+    def select(self, cols):
+        self._cols = [c.strip() for c in cols.split(",")]
+        return self
+
+    def eq(self, k, v):
+        self._f.append(lambda r: str(r.get(k)) == str(v))
+        return self
+
+    def in_(self, k, vs):
+        self._f.append(lambda r: str(r.get(k)) in {str(v) for v in vs})
+        return self
+
+    def is_(self, k, v):
+        return self
+
+    def order(self, col):
+        self._order = col
+        return self
+
+    def range(self, start, end):
+        hit = sorted((r for r in self._rows if all(f(r) for f in self._f)), key=lambda r: str(r.get(self._order)))
+        hit = hit[start:end + 1]
+        self.data = hit if self._cols == ["*"] else [{c: r.get(c) for c in self._cols} for r in hit]
+        return self
+
+    def execute(self):
+        return self
+
+
+class _ProjectingDb:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def table(self, name):
+        return _ProjectingTable(self._rows)
+
+
 class TestBatched:
     def test_chunks_at_the_url_safe_size(self):
         chunks = list(tr.batched(list(range(450))))
@@ -49,6 +94,10 @@ class TestPagedRows:
         got = tr.paged_rows(_db(rows), "t", ORG, order_col="tag_id", id_key="tag_id")
         assert len(got) == 1200
 
+    def test_a_narrowed_select_still_carries_the_pager_key(self):
+        rows = [{"id": f"{i:05d}", "org_id": ORG, "nome": "n"} for i in range(1200)]
+        assert len(tr.paged_rows(_ProjectingDb(rows), "t", ORG, select="nome")) == 1200
+
 
 class TestInBatchedRows:
     def test_batches_and_pages(self):
@@ -58,6 +107,31 @@ class TestInBatchedRows:
 
     def test_no_ids_no_query(self):
         assert tr.in_batched_rows(None, "t", ORG, "id", []) == []
+
+    def test_a_narrowed_select_still_carries_the_pager_key(self):
+        # prod 2026-11-23: the Esteira board selected four columns off apr_events without `id`; the pager's
+        # dedupe guard raised on the first returned row and every /esteira/board call was a 500.
+        rows = [{"id": f"{i:05d}", "org_id": ORG, "subject_id": "s", "event": "approved", "note": "x"} for i in range(3)]
+        got = tr.in_batched_rows(_ProjectingDb(rows), "t", ORG, "subject_id", ["s"], select="subject_id,event")
+        assert len(got) == 3
+
+    def test_a_narrowed_select_on_a_keyless_table_carries_its_order_col(self):
+        rows = [{"atendimento_id": f"{i:04d}", "org_id": ORG, "lado": "c"} for i in range(3)]
+        got = tr.in_batched_rows(_ProjectingDb(rows), "t", ORG, "atendimento_id", [r["atendimento_id"] for r in rows],
+                                 select="lado", order_col="atendimento_id")
+        assert len(got) == 3
+
+
+class TestWithKeyColumns:
+    def test_star_and_present_keys_are_untouched(self):
+        assert tr.with_key_columns("*", "id") == "*"
+        assert tr.with_key_columns("id, nome", "id") == "id, nome"
+
+    def test_a_missing_key_is_appended_once(self):
+        assert tr.with_key_columns("nome", "id", "id") == "nome,id"
+
+    def test_an_embedded_resource_is_not_split(self):
+        assert tr.with_key_columns("nome,dono(id,nome)", "id") == "nome,dono(id,nome),id"
 
 
 class TestActors:

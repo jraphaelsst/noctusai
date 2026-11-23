@@ -44,9 +44,10 @@ several.
 from __future__ import annotations
 
 from typing import Any, Iterator, Optional
-from uuid import UUID
 
-from noctusai_lib.integrations.persistence import iter_paged_rows
+# The paged/batched reads are the SEED's (one definition): the fork here drifted into the 2026-11-23 Esteira 500,
+# where a narrowed select dropped the pager's key. The seed's copy projects the key itself (``with_key_columns``).
+from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows, with_key_columns  # noqa: F401
 
 from app.dependencies import get_core_client
 
@@ -68,111 +69,6 @@ def batched(items: list, size: int = IN_FILTER_BATCH) -> Iterator[list]:
     """Yield `items` in chunks of `size` — see `IN_FILTER_BATCH`."""
     for i in range(0, len(items), size):
         yield items[i : i + size]
-
-
-def paged_rows(
-    client: Any,
-    table_name: str,
-    org_id: UUID,
-    *,
-    eq_filters: Optional[dict] = None,
-    order_col: str = "id",
-    id_key: str = "id",
-    refine: Optional[Any] = None,
-    select: str = "*",
-) -> list[dict]:
-    """Every row of `table_name` for `org_id` (+ `eq_filters`), paged past
-    PostgREST's row cap via the seed's shared pager.
-
-    `refine`, when given, is `fn(query) -> query` applied AFTER the eq
-    filters and BEFORE `.order()` — for filter shapes `eq_filters` cannot
-    express (e.g. `.is_("deleted_at", "null")`).
-
-    `select` overrides the default `"*"` for a read that needs embedded
-    resources (a PostgREST join).
-
-    Named `refine`, NOT `extra`: bandit's B610 flags any call to something
-    named `extra(...)` as Django's `QuerySet.extra()`, a genuine SQL
-    -injection vector. This is a plain Python callable over a PostgREST
-    query builder — no SQL string exists here — but the check matches on the
-    NAME, so the old name failed the SAST gate on every run. Renaming is the
-    honest fix; a `# nosec` would have silenced a scanner that was doing its
-    job badly rather than removing the collision, and teaches the next person
-    to reach for suppression first.
-    """
-    eq_filters = eq_filters or {}
-
-    def fetch_page(start: int, end: int):
-        query = table(client, table_name).select(select).eq("org_id", str(org_id))
-        for key, value in eq_filters.items():
-            query = query.eq(key, value)
-        if refine is not None:
-            query = refine(query)
-        return query.order(order_col).range(start, end).execute().data
-
-    return list(
-        iter_paged_rows(
-            fetch_page,
-            page_size=PAGE_SIZE,
-            id_key=id_key,
-            label=f"{table_name} for org_id={org_id}",
-        )
-    )
-
-
-def in_batched_rows(
-    client: Any,
-    table_name: str,
-    org_id: UUID,
-    in_col: str,
-    ids: list[str],
-    *,
-    select: str = "*",
-    order_col: str = "id",
-) -> list[dict]:
-    """Every row of `table_name` matching `in_col IN ids`, batched (URL-length
-    safety) AND paged (row-cap safety) — composes both hazards above.
-
-    `select` narrows the projection, same knob `paged_rows` carries. Worth
-    reaching for when the caller needs two columns off a wide table: the
-    default `*` drags every column of every matched row across the wire.
-
-    `order_col` exists because the pager needs a STABLE sort and `id` is only
-    the usual name for it, not a universal one — `atendimento_negociacao` is
-    keyed on `atendimento_id` and has no `id` column at all. Paging without a
-    deterministic order silently repeats and skips rows across pages, so this
-    has to be right rather than merely present; the schema-aware test mock
-    refuses an unknown column, which is what caught it.
-    """
-    if not ids:
-        return []
-    out: list[dict] = []
-    for batch in batched(sorted(set(ids))):
-
-        def fetch_page(start: int, end: int, _batch=batch):
-            return (
-                table(client, table_name)
-                .select(select)
-                .eq("org_id", str(org_id))
-                .in_(in_col, _batch)
-                .order(order_col)
-                .range(start, end)
-                .execute()
-                .data
-            )
-
-        out.extend(
-            iter_paged_rows(
-                fetch_page,
-                page_size=PAGE_SIZE,
-                # The sort column IS the dedupe key — the pager's
-                # progress guard needs a per-row identity, and the only
-                # column guaranteed present is the one we ordered by.
-                id_key=order_col,
-                label=f"{table_name}.{in_col} batch for org_id={org_id}",
-            )
-        )
-    return out
 
 
 def resolve_actors(ids: set) -> dict[str, dict]:
