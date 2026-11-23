@@ -1011,7 +1011,13 @@ def _loop_actions(
     api = _Api(base, token, transport)
     try:
         if pre_version:
-            draft = api.call("GET", f"{a}/draft")
+            # The draft is a CONTENT read: a studio:evals-run token is refused there (403 scope_missing, 2026-11-23),
+            # so it goes with the content token; only the eval route itself uses the evals token.
+            leitura = _Api(base, _token(), transport)
+            try:
+                draft = leitura.call("GET", f"{a}/draft")
+            finally:
+                leitura.close()
             body["version_id"] = (draft or {}).get("id")
             if not body["version_id"]:
                 raise ContentError("rascunho_ausente", "O agente nao tem rascunho (version_id indeterminado).")
