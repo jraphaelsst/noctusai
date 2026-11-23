@@ -1,6 +1,6 @@
 consented_by: joaoraphaelsst@gmail.com
 consented_on: 2026-11-23
-consent_ref: 'products/social-wiring/projects/core-studio-build/specs/criacao-pipeline-contract.md#5'
+consent_ref: 'project-history/roadmaps/criacao-pipeline-2026-11.md#M0: owner consent to publish social-wiring-criacao (the media worker)'
 dev_validated: true
 recorded_by: agent
 authorization:
@@ -10,5 +10,5 @@ authorization:
   evidence_rank: canonical-exact/typed
   candidates_considered: 1
   session_id: b13229e2-2272-4be9-8faf-e8b75635a9a5
-  transcript_sha256: e8f252bd2bf09de07da9c7038e8ff9c0e2fe076928d76131bd33c362fd633264
-  recorded_at: 2026-11-23T18:19:03+00:00
+  transcript_sha256: c4faa8915d0ff7f457998ba46ac39c3f4111db208b5cb5c7d972957ca10df5de
+  recorded_at: 2026-11-23T18:23:54+00:00
