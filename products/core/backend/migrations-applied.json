@@ -39,6 +39,7 @@
     "120_rename_monica_to_nosnolimiar.sql": "44aa7463ca099f4b4d221aa084a37758b9687e23ff4376e38eae413a73380426",
     "121_owner_number_one_source.sql": "7f3f5da4d9c9c54ced6583f4b729f3f548b628f5dcf8fd3eb409bc60258512c1",
     "122_seed_fotos_rotular.sql": "e38d81c517c98b8c167d400732dccc7601966139bb9b05d46a908710e139bdf8",
-    "123_transcription_api_no_quotas.sql": "7f1641c497c5cec7f87d4da943ad19fd115778d1c5c3b972f1bcd2f8130e50ff"
+    "123_transcription_api_no_quotas.sql": "7f1641c497c5cec7f87d4da943ad19fd115778d1c5c3b972f1bcd2f8130e50ff",
+    "124_seed_eval_loop_refinar.sql": "4947d9045b3ba9e6a41e38223591c7209e60c89510c585a3994f5b33bb41b2f5"
   }
 }
