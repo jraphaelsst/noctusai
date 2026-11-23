@@ -20,6 +20,7 @@ if str(MCP_ROOT) not in sys.path:
 from tools.noctus.agents import content as C  # noqa: E402
 
 TOKEN = "pk_content_secret_value"
+EVALS_ONLY = "pk_evals_scope_only"
 
 
 class FakeAgents:
@@ -79,7 +80,11 @@ def _handler(state: FakeAgents):
             if n:
                 body = json.loads(self.rfile.read(n))
             state.log.append((method, self.path, body, self.headers.get("Authorization")))
-            if self.headers.get("Authorization") != f"Bearer {TOKEN}":
+            auth = self.headers.get("Authorization")
+            if auth == f"Bearer {EVALS_ONLY}":  # a studio:evals-run token: eval routes only, never a content read
+                if "/evals/" not in self.path and "mecanismo-runs" not in self.path:
+                    return self._send(403, {"code": "scope_missing", "detail": "Missing scope(s): studio:content-write"})
+            elif auth != f"Bearer {TOKEN}":
                 return self._err(401, "unauthorized")
             if self.path == "/boom":
                 return self._err(500, "boom", f"falhou com {TOKEN}")
@@ -974,6 +979,16 @@ class TestEvalLoopActions:
         out = C.content("medir", agent="julia", base_url=srv.url, payload_path=private("m.json", {"suite": "comportamento"}),
                         confirm=True)
         assert out["status"] == "started" and srv.log[-1][2] == {"version_id": srv.draft_id}
+
+    def test_behaviour_run_reads_the_draft_with_the_content_token(self, srv, private, monkeypatch):
+        # 2026-11-23: with an evals token configured, GET /draft went with it and died 403 scope_missing.
+        monkeypatch.setenv(C.ENV_EVALS_TOKEN, EVALS_ONLY)
+        out = C.content("medir", agent="julia", base_url=srv.url, payload_path=private("m.json", {"suite": "comportamento"}),
+                        confirm=True)
+        assert out["status"] == "started"
+        assert [(p, a) for _m, p, _b, a in srv.log] == [
+            ("/api/studio/agents/julia/draft", f"Bearer {TOKEN}"),
+            ("/api/studio/agents/julia/evals/runs", f"Bearer {EVALS_ONLY}")]
 
     def test_medir_refuses_a_loop_id(self, srv, private):
         out = C.content("medir", agent="julia", base_url=srv.url, confirm=True,
