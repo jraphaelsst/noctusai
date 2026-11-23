@@ -318,6 +318,10 @@ services:
     image: ghcr.io/jraphaelsst/noctus-social-wiring:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-social-wiring-criacao
     command: ["python", "-m", "app.modules.media_creation.criacao_worker"]
+    # The image's WORKDIR is /app (the monorepo root); the API finds the `app` package via uvicorn's
+    # `--app-dir products/social-wiring/backend`. `python -m` has no such flag, so the worker runs FROM the backend dir
+    # (2026-11-23 first deploy crashlooped with `No module named 'app'` without this).
+    working_dir: /app/products/social-wiring/backend
     networks:
       - noctus-net
     # No HTTP surface, so no curl healthcheck; liveness is the job lease (a dead worker's lease expires and the
