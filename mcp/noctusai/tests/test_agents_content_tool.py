@@ -123,7 +123,7 @@ def _handler(state: FakeAgents):
             if m == "POST" and path.endswith(f"/evals/loops/{lid}/stop"):
                 return self._send(200, {"id": lid, "status": "parado", "motivo_parada": "parado_manualmente"})
             if m == "POST" and path.endswith("/evals/runs"):
-                if b["loop_id"] == "33333333-3333-4333-8333-333333333333":
+                if b.get("loop_id") == "33333333-3333-4333-8333-333333333333":
                     return self._send(409, {"detail": {"code": "rodada_em_aberto", "detail": "ha uma rodada aberta"}})
                 return self._send(202, {"id": "44444444-4444-4444-8444-444444444444", "status": "executando"})
             if m == "POST" and "/draft/mecanismo-runs" in path:
@@ -961,6 +961,24 @@ class TestEvalLoopActions:
         out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl, chave=LID, confirm=True)
         assert srv.log[-1][1] == f"/api/studio/agents/julia/draft/mecanismo-runs?loop_id={LID}"
         assert out["resultado"]["run_id"].startswith("5555")
+
+    def test_medir_mecanismo_is_one_run_outside_any_loop(self, srv, private):
+        # 2026-11-23: the harness probe before a loop had no tool path (rodada forced a loop_id the server does not need).
+        pl = private("m.json", {"suite": "mecanismo"})
+        assert C.content("medir", agent="julia", base_url=srv.url, payload_path=pl)["status"] == "planned" and srv.log == []
+        out = C.content("medir", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "started" and srv.log[-1][1] == "/api/studio/agents/julia/draft/mecanismo-runs"
+        assert out["resultado"]["q"] == ""
+
+    def test_medir_comportamento_posts_the_draft_version_without_loop(self, srv, private):
+        out = C.content("medir", agent="julia", base_url=srv.url, payload_path=private("m.json", {"suite": "comportamento"}),
+                        confirm=True)
+        assert out["status"] == "started" and srv.log[-1][2] == {"version_id": srv.draft_id}
+
+    def test_medir_refuses_a_loop_id(self, srv, private):
+        out = C.content("medir", agent="julia", base_url=srv.url, confirm=True,
+                        payload_path=private("m.json", {"suite": "mecanismo", "loop_id": LID}))
+        assert out["status"] == "error" and out["codigo"] == "payload_invalido" and srv.log == []
 
     def test_gate_refusals_surface_code_and_detail_verbatim(self, srv, private):
         pl = private("r.json", {"suite": "comportamento", "loop_id": "33333333-3333-4333-8333-333333333333", "version_id": srv.draft_id})
