@@ -70,6 +70,7 @@
     "090_sw_canal_eventos.sql": "4072d6c0c22fae95b4b6f21c6832d9320a1129d74e52fe503d5f403566c90e16",
     "091_haiku_5_5_model.sql": "b5d3a660564bb3aa1c1ed08732a054b7dcdebdeb94442e190ba4df3391de4977",
     "092_eval_loop_refino.sql": "ecd839c15a4d57246d2e10a189f70fce0d87a2073993894c03bf6a808a2278bc",
-    "093_eval_loop_refino_endurecimento.sql": "a21604b31ecf0bbf7aa4ef019c15d826cbf3068a32cbce5133c364e57f69f080"
+    "093_eval_loop_refino_endurecimento.sql": "a21604b31ecf0bbf7aa4ef019c15d826cbf3068a32cbce5133c364e57f69f080",
+    "094_eval_loop_refino_camada_base_escopo.sql": "d3fb98470ec8ce08e314dcccb0c5e794d3f332e4c0c0718f2d1fbb44baedd41f"
   }
 }
