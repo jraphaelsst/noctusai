@@ -125,7 +125,7 @@ class FakeRefinoStore:
         if v.agent_id != loop.agent_id:
             raise StudioConflict("versao_de_outro_agente")
         agent = self._defs.get_agent_by_id(loop.agent_id)
-        if agent.definition_scope == "plataforma" or any(a.pai_agent_id == agent.id for a in self._defs.list_agents(org_id)):
+        if any(a.pai_agent_id == agent.id for a in self._defs.list_agents(org_id)):
             raise StudioConflict("camada_base")
         regras: tuple[str, ...] = ()
         if e.tipo == "secao":

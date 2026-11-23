@@ -465,7 +465,7 @@ MENSAGENS_REFINO: dict[str, str] = {
     "sem_casos": "Não foi possível ler os casos que falharam na rodada.",
     "pii_nos_casos": "Os casos da rodada trazem dado pessoal; não foram enviados ao modelo (fixtures são sintéticas).",
     "orcamento_insuficiente": "O orçamento que sobra ao loop é pequeno demais para refinar.",
-    "camada_base": "Este agente é uma camada base (definição da plataforma ou modelo de outros agentes): uma edição automática o mudaria "
+    "camada_base": "Este agente é uma camada base (modelo de outros agentes): uma edição automática o mudaria "
                    "para todos os que herdam dele. O refinamento automático não roda aqui.",
     "limite_de_refinos": f"O loop já fez {MAX_REFINOS_POR_LOOP} edições automáticas: o limite por loop foi atingido; as próximas são com uma pessoa.",
     "linha_ja_refinada": "Esta linha já foi editada neste loop: uma edição por linha em cada loop.",

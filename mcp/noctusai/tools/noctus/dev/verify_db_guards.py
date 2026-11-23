@@ -6708,7 +6708,7 @@ _AGENTS_EVAL_LOOP_REFINO_PROBES: tuple[GuardProbe, ...] = (
 # The RPC is called through `"agents".fn(...)` -- quoted on purpose: `_julia_v2_probe` pre-checks every `agents.<name>` it finds in the
 # SQL as a TABLE (`to_regclass`), and a function name there would read as a missing fixture.
 #
-# NOC-REMEDIATE[eval-refino-camada-base-probe]: the `camada_base` refusal (platform-scope definition / the parent of another agent) has no
+# NOC-REMEDIATE[eval-refino-camada-base-probe]: the `camada_base` refusal (the parent of another agent) has no
 # probe yet -- it needs the borrowed platform org + a template chain (073 triggers) inside the rolled-back transaction; the app-level
 # pins (tests/studio/ev/test_eval_loop_refino_endurecimento.py) and the Fake store mirror it meanwhile -- 2026-11-19
 

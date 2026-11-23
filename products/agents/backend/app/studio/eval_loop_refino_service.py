@@ -119,8 +119,7 @@ class RefinoService:
             return await recusar("agente_sem_linhas")
         if agent.definition_scope == "instancia" or agent.definition_mode != "studio" or agent.conteudo_modo != "linhas":
             return await recusar("agente_sem_linhas")
-        if agent.definition_scope == "plataforma":
-            return await recusar("camada_base")
+        # a base layer = the parent of another agent (an edit there reaches every inheritor); platform scope alone is NOT one
         irmaos = await t(lambda: self._defs.list_agents(rec.org_id))
         if any(a.pai_agent_id == agent.id for a in irmaos):
             return await recusar("camada_base")

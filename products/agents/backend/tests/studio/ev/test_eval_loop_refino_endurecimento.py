@@ -184,14 +184,14 @@ def test_a_no_edit_is_recorded_for_a_person_charged_and_the_refine_of_that_round
 # ── 2 · base layers are refused before the model call ─────────────────────────────────────────────────────────
 
 
-def test_a_loop_on_a_platform_scope_agent_is_refused_before_the_call():
+def test_a_loop_on_a_platform_scope_agent_without_children_is_not_a_base_layer():
+    """Every Studio-authored agent is platform-scope; scope alone must not refuse the refine (the parent-of-another rule does)."""
     m = Mundo(escopo="plataforma")
     m.avancar()
     m.terminar(m.abertas[0][0], 0.5)
     m.avancar()
-    assert m.refinador.chamadas == []
-    rec, = m.eventos("refinamento_recusado")
-    assert rec["detalhe"]["codigo"] == "camada_base" and rec["detalhe"]["custo_usd"] == 0.0 and m.secao("tom") == TOM
+    assert m.refinador.chamadas != []
+    assert not [r for r in m.eventos("refinamento_recusado") if r["detalhe"].get("codigo") == "camada_base"]
 
 
 def test_an_agent_that_is_the_parent_of_another_is_refused_before_the_call():
@@ -284,6 +284,8 @@ def test_the_store_refuses_a_version_of_another_agent_a_protected_row_a_base_lay
     assert e.value.code == "linha_protegida"
     assert m.secao("regras") and m.defs.list_ferramentas(ORG, m.draft.id)[0].descricao == "Passa a conversa para uma pessoa."
     base = Mundo(escopo="plataforma")
+    filho = base.defs.seed_agent(ORG, "filho", nome="Filho", conteudo_modo="linhas")
+    base.defs._agents[(ORG, "filho")] = replace(filho, pai_agent_id=base.agent.id)
     with pytest.raises(StudioConflict) as e:
         base.refino_store.registrar(ORG, base.loop.id, 1, evento="refinamento_proposto", detalhe={}, custo_usd=0.0,
                                     escrita=_escrita(base, "secao", "tom", TOM, TOM + " Nova."))

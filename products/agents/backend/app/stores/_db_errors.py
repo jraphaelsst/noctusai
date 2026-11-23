@@ -87,7 +87,7 @@ MENSAGENS_CONFLITO: dict[str, str] = {
     "linha_alterada": "A linha do rascunho mudou enquanto o refinamento era proposto; nada foi gravado.",
     "refino_ja_registrado": "Esta rodada já tem uma decisão de refinamento.",
     "linha_protegida": "A linha carrega obrigações da plataforma e não é editada automaticamente.",
-    "camada_base": "Este agente é uma camada base (plataforma ou modelo de outros agentes): o refinamento automático não roda aqui.",
+    "camada_base": "Este agente é uma camada base (modelo de outros agentes): o refinamento automático não roda aqui.",
     "versao_de_outro_agente": "O rascunho a editar não pertence ao agente do loop; nada foi gravado.",
     "limite_de_refinos": "O loop já fez o máximo de edições automáticas.",
     "linha_ja_refinada": "Esta linha já foi editada neste loop.",
