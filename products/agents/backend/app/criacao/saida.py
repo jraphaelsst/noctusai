@@ -140,6 +140,99 @@ def urls_das_ferramentas(resultados: Iterable[tuple[str, Mapping[str, Any]]]) ->
     return achadas
 
 
+# ── the proposals (headline lines / roteiro sections), as SW's ``propostas.py`` reads them ──────────────────
+#: A REDUCED mirror of SW's grammar (``products/social-wiring/.../services/propostas.py``): enough to COUNT what SW would
+#: accept and to hold every cited code to the turn's tool answers. SW stays the only parser that writes anything.
+MAX_HEADLINE_PALAVRAS = 12
+_CITACAO_RE = re.compile(r"\(\s*estrutura\s*#\s*(\d+(?:\s*\+\s*#\s*\d+)*)\s*\)", re.IGNORECASE)
+_HEADLINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*\S)\s*$")
+_ROTEIRO_CAB_RE = re.compile(r"^\s*###\s+roteiro\s+(\d+)\s*:\s*(.*\S)\s*$", re.IGNORECASE)
+_TAG_FINAL_RE = re.compile(r"\s*\(\s*[^()]{3,40}?\s*\)\s*[.!?]?\s*$")
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]")
+
+
+@dataclass(frozen=True)
+class Proposta:
+    tipo: str  # "headline" | "roteiro"
+    numero: int
+    texto: str  # the headline without citation/tag, or the roteiro title
+    codigos: tuple[int, ...]
+
+
+def propostas_do_texto(texto: str) -> list[Proposta]:
+    """Every cited headline line and every ``### Roteiro n:`` header, in order. Lines inside a roteiro body and the
+    ``### Estruturas usadas`` list are not headlines (as in SW)."""
+    out: list[Proposta] = []
+    em_roteiro = ignorar = False
+    for linha in (texto or "").split("\n"):
+        cab = _ROTEIRO_CAB_RE.match(linha)
+        if cab:
+            em_roteiro = True
+            codigos = tuple(int(c) for m in _CITACAO_RE.finditer(cab.group(2)) for c in re.findall(r"\d+", m.group(1)))
+            out.append(Proposta("roteiro", int(cab.group(1)), _CITACAO_RE.sub("", cab.group(2)).strip(), codigos))
+            continue
+        if _CABECALHO_RE.match(linha):
+            titulo = _sem_acento(linha.strip("# ").strip())
+            if titulo in ("texto na tela", "legenda") and em_roteiro:
+                continue
+            em_roteiro = False
+            ignorar = titulo.startswith("estruturas usadas")
+            continue
+        if em_roteiro or ignorar:
+            continue
+        m = _HEADLINE_RE.match(linha)
+        if not m or not _CITACAO_RE.search(m.group(2)):
+            continue
+        codigos = tuple(int(c) for c_m in _CITACAO_RE.finditer(m.group(2)) for c in re.findall(r"\d+", c_m.group(1)))
+        limpa = re.sub(r"\*\*|__", "", _CITACAO_RE.sub("", m.group(2))).strip()
+        limpa = _TAG_FINAL_RE.sub("", limpa).strip().strip('"“”').strip()
+        out.append(Proposta("headline", int(m.group(1)), limpa, codigos))
+    return out
+
+
+def codigos_das_ferramentas(resultados: Iterable[tuple[str, Mapping[str, Any]]]) -> set[int]:
+    """Every estrutura code ``estruturas_buscar`` / ``estrutura_detalhe`` returned in the turn: the only citable codes."""
+    achados: set[int] = set()
+    for nome, p in resultados:
+        if nome == "estruturas_buscar":
+            itens = p.get("estruturas") or []
+        elif nome == "estrutura_detalhe":
+            itens = [p]
+        else:
+            continue
+        for e in itens:
+            if isinstance(e, Mapping) and isinstance(e.get("codigo"), int):
+                achados.add(e["codigo"])
+    return achados
+
+
+def checar_propostas(
+    texto: str, resultados: Sequence[tuple[str, Mapping[str, Any]]], *, tipo: str = "qualquer",
+    minimo: int = 1, maximo: int | None = None,
+) -> list[str]:
+    """``tipo`` options between ``minimo`` and ``maximo``; each cites only codes a tool returned; a headline has 1..12
+    words and no ``[...]``; options of the other kind are not counted (``qualquer`` counts both)."""
+    citaveis = codigos_das_ferramentas(resultados)
+    props = [p for p in propostas_do_texto(texto) if tipo == "qualquer" or p.tipo == tipo]
+    falhas = []
+    if len(props) < minimo:
+        falhas.append(f"propostas:{len(props)}<{minimo}")
+    if maximo is not None and len(props) > maximo:
+        falhas.append(f"propostas:{len(props)}>{maximo}")
+    for p in props:
+        rotulo = f"{p.tipo}{p.numero}"
+        if not p.codigos:
+            falhas.append(f"{rotulo}:sem_citacao")
+        for c in p.codigos:
+            if c not in citaveis:
+                falhas.append(f"{rotulo}:codigo_inventado:{c}")
+        if _PLACEHOLDER_RE.search(p.texto):
+            falhas.append(f"{rotulo}:placeholder")
+        if p.tipo == "headline" and not 1 <= len(p.texto.split()) <= MAX_HEADLINE_PALAVRAS:
+            falhas.append(f"{rotulo}:palavras:{len(p.texto.split())}")
+    return falhas
+
+
 # ── the checks (each returns the failure CODES; empty = pass) ─────────────────────────────────────────────
 
 def checar_publicacao(pub: Publicacao) -> list[str]:
@@ -265,7 +358,8 @@ def avaliar_saida(
 
 
 __all__ = [
-    "HASHTAGS_EXATAS", "OBJETIVOS", "Publicacao", "avaliar_saida", "checar_cta_proibido", "checar_fontes",
+    "HASHTAGS_EXATAS", "MAX_HEADLINE_PALAVRAS", "OBJETIVOS", "Proposta", "Publicacao", "checar_propostas",
+    "codigos_das_ferramentas", "propostas_do_texto", "avaliar_saida", "checar_cta_proibido", "checar_fontes",
     "checar_humanizacao", "checar_nomes", "checar_publicacao", "checar_voz", "corpos_de_roteiro",
     "extrair_publicacoes", "hashtags_de", "urls_das_ferramentas", "voz_disponivel",
 ]

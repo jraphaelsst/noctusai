@@ -149,6 +149,11 @@ class TurnOutcome:
     #: a follow-up turn only: what the controls decided (``RETOMADA_STATUS``) and the flavour it ran as
     retomada_status: str | None = None
     retomada_tier: str | None = None
+    #: an ``app``-channel turn only (the Diretor de Criacao): the WHOLE reply as the agent wrote it (the bubbles split it on
+    #: blank lines, which a block parser must not see) and every tool answer of the turn, ``(tool name, payload)`` in order
+    #: -- the only legitimate source of a cited source or estrutura code (``app.criacao.saida``)
+    texto: str = ""
+    resultados_ferramentas: tuple[tuple[str, dict[str, Any]], ...] = ()
 
 
 @runtime_checkable

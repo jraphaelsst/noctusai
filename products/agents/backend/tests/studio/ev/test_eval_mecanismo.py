@@ -111,6 +111,7 @@ def test_assert_names_are_the_contract_set():
         "skill_aberta_antes_de", "acoes_incluem", "acoes_proibidas", "handoff_motivo", "sem_handoff",
         "violacoes_incluem", "bolhas_sem_padrao", "bolhas_max_chars", "sem_links_externos", "sem_pii",
         "sem_resposta", "participante_estado", "solicitacao_titular", "retomada_status", "retomada_tier_usado",
+        "saida_criacao", "propostas_criacao", "texto_sem_termos",
     }
 
 

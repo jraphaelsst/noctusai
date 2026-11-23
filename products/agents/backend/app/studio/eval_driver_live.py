@@ -36,6 +36,7 @@ from app.channels import turno as turno_mod
 from app.channels.controles import LeadIdentidade, aplicar_controles
 from app.channels.tool_registry import make_channel_tools_factory
 from app.config import settings
+from app.criacao.canais import CANAL_APP, agente_aceita_canal_app
 from app.notifications import FakeNotificationSink, eval_scope
 from app.qualificacao.ident_store import FakeIdentificacaoStore
 from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
@@ -43,7 +44,8 @@ from app.qualificacao.lead_store import FakeLeadQualificacaoStore
 from app.qualificacao.models import EventoImovel, Registro
 from app.qualificacao.service import QualificacaoService
 from app.schemas.channels import ChannelContexto
-from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, LlmToolset, make_budget_guard
+from app.runtime.llm_runtime import LlmToolRuntime, LlmTurnLimiter, LlmToolset, make_budget_guard, service_principal_id
+from app.runtime.types import TurnContext
 from app.stores.agent_controles import FakeAgentControleStore
 from app.stores.conformidade import FakeConformidadeStore
 from app.stores.conversations import FakeConversationStore
@@ -81,9 +83,35 @@ class FixtureSwClient:
     answer shapes as the real ``/api/julia/ferramentas/{nome}`` (CONTRACT 8.3): ``{"data": [...]}`` /
     ``{"data": {...}}``, ``{"erro": ...}`` when unavailable. Records every call (``chamadas``)."""
 
-    def __init__(self, catalogo: tuple[Mapping[str, Any], ...] = ()) -> None:
+    def __init__(self, catalogo: tuple[Mapping[str, Any], ...] = (), criacao: Mapping[str, Any] | None = None) -> None:
         self._catalogo = [dict(i) for i in catalogo]
+        #: the Diretor de Criacao's tenant (``roteiro.fixture.criacao``): ``{tool name: the SW payload it answers}``
+        self._criacao = dict(criacao or {})
         self.chamadas: list[tuple[str, dict[str, Any]]] = []
+
+    def criacao_tools_available(self, org_id: UUID) -> bool:
+        return True
+
+    async def criacao_ferramenta(self, org_id: UUID, nome: str, args: dict[str, Any]) -> dict[str, Any]:
+        """The SW ``/api/criacao/ferramentas/{nome}`` answer of the synthetic tenant. A tool the fixture does not set
+        answers its EMPTY real shape (``criacao_ferramentas_service``), so a tenant is described only by what it has;
+        ``estrutura_detalhe`` is looked up in the fixture's ``estruturas_buscar`` (the library is one)."""
+        self.chamadas.append((nome, dict(args)))
+        if nome == "estrutura_detalhe":
+            if "estrutura_detalhe" in self._criacao:
+                return json.loads(json.dumps(self._criacao["estrutura_detalhe"]))
+            todas = (self._criacao.get("estruturas_buscar") or {}).get("estruturas") or []
+            achada = next((e for e in todas if e.get("codigo") == args.get("codigo")), None)
+            return json.loads(json.dumps(achada)) if achada is not None else {"erro": "estrutura_nao_encontrada"}
+        if nome in self._criacao:
+            resposta = json.loads(json.dumps(self._criacao[nome]))
+        elif nome in _CRIACAO_VAZIO:
+            resposta = json.loads(json.dumps(_CRIACAO_VAZIO[nome]))
+        else:
+            return {"erro": "ferramenta_desconhecida"}
+        if nome == "contexto_marca":
+            resposta["marca_id"] = args.get("marca_id")  # SW echoes the brand it found for the token's org
+        return resposta
 
     def julia_tools_available(self, org_id: UUID) -> bool:
         return True
@@ -107,6 +135,22 @@ class FixtureSwClient:
             alvo = str(args.get("nome") or "").casefold()
             return {"data": [i for i in self._catalogo if alvo and alvo in str(i.get("empreendimento") or "").casefold()]}
         return {"erro": "ferramenta_desconhecida"}
+
+
+#: The EMPTY answer of each criacao tool, in the real shape (``products/social-wiring/.../criacao_ferramentas_service.py``).
+_CRIACAO_VAZIO: dict[str, dict[str, Any]] = {
+    "contexto_marca": {"perfil": {"bio": "", "apresentacao_magnetica": "", "ctas": "", "nichos": [], "profissoes": []},
+                       "brand_kit": None, "memorias": []},
+    "cerebros": {"cerebros": [], "vazios": []},
+    "estruturas_buscar": {"estruturas": [], "total_candidatas": 0, "ranking": "texto_simples"},
+    "pesquisas": {"pesquisas": []},
+    "virais": {"virais": []},
+    "desempenho": {"janela_dias": 30, "posts_publicados": [], "conta": None,
+                   "metricas_por_post": {"disponivel": False, "motivo": "sem_tabela_de_metricas_por_post"},
+                   "avisos": ["sem_snapshots_da_conta_na_janela"]},
+    "voz_amostras": {"amostras": [], "motivo": "sem_transcricoes_da_marca"},
+    "treinamentos": {"treinamentos": []},
+}
 
 
 # ── the call journal ────────────────────────────────────────────────────────
@@ -205,6 +249,8 @@ class _Mundo:
     turnos: int = 0
     #: What social-wiring would send with each turn (``estado.origem`` -> the campaign property); ``None`` = no origin.
     contexto: ChannelContexto | None = None
+    #: the ``app``-channel conversation (the Diretor de Criacao): a plain ``chat`` row, created on the first turn
+    conversa_app: Any = None
 
 
 class LiveEvalTurnDriver:
@@ -296,7 +342,7 @@ class LiveEvalTurnDriver:
         leads = FakeLeadQualificacaoStore()
         ident = IdentificacaoService(FakeIdentificacaoStore(), IdentCipher(Fernet.generate_key()))
         qual = QualificacaoService(self._padroes, leads, identificacao=ident)
-        sw = FixtureSwClient(thread.catalogo)
+        sw = FixtureSwClient(thread.catalogo, criacao=thread.fixture.get("criacao"))
         # the generic offer tools read the SAME synthetic catalogue (the eval world never builds a real adapter)
         catalogo = FixtureCatalogo(thread.catalogo)
         diario = _Diario()
@@ -374,6 +420,8 @@ class LiveEvalTurnDriver:
         if self._mundo is None:
             self._mundo = self._montar(thread)
         m = self._mundo
+        if agente_aceita_canal_app(m.agent.key):
+            return await self._executar_turno_app(m, mensagem_lead)
         agora = datetime.now(timezone.utc)
         m.diario.limpar()
         # The roteiro carries TOKENS where the lead types identity data (fixtures never hold a CPF/email, Meta 4.7);
@@ -419,6 +467,59 @@ class LiveEvalTurnDriver:
         finally:
             await slot.release()
         return self._outcome(m, th, res)
+
+    async def _executar_turno_app(self, m: _Mundo, texto: str) -> TurnOutcome:
+        """One ``app``-channel turn (the Diretor de Criacao): the SAME steps as ``app.criacao.canal_app`` minus what an
+        eval world has no use for (token, idempotency ledger, brand-ownership read): the draft compiled, the criacao
+        toolset over the fixture tenant, the runtime with the real model. None of the lead pipeline runs (no lead, no
+        qualification, no hand-off) -- exactly as in production."""
+        from app.criacao.ferramentas import CriacaoTurno
+
+        m.diario.limpar()
+        marca_id = UUID(int=1)
+        if m.conversa_app is None:
+            m.conversa_app = m.conversations.create_channel(
+                m.org_id, m.agent.id, CANAL_APP, {"connection_id": str(marca_id), "chat_id": m.lead_externo}, None,
+                version_id=m.version_id, tipo="chat")
+        conv = m.conversa_app
+        m.messages.add(m.org_id, conv.id, "user", texto)
+        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
+        if self._modelo or self._temperatura is not None:
+            prep = replace(prep, spec=replace(
+                prep.spec, model=self._modelo or prep.spec.model,
+                temperature=prep.spec.temperature if self._temperatura is None else self._temperatura))
+        conteudo = prep.compiled.conteudo
+        if conteudo is None:
+            raise turno_mod.TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.")
+        await m.runtime.preflight(prep.spec.provider, m.org_id)
+        slot = m.runtime.try_reserve()
+        if slot is None:
+            raise turno_mod.TurnoRecusado(429, "capacidade", "Capacidade esgotada.")
+        turno = CriacaoTurno(org_id=m.org_id, marca_id=marca_id, sw=m.sw, conteudo=conteudo)
+        ctx = TurnContext(
+            org_id=m.org_id, conversation_id=conv.id, requested_by=service_principal_id(m.agent.id),
+            instance_id="eval", sdk_session_id=None, julia=turno,
+            resposta_fallback=conteudo.texto("runtime.resposta_fallback").strip())
+        textos: list[str] = []
+        custo: float | None = None
+        try:
+            async for event in m.runtime.run_turn(prep.spec, ctx, "", None, slot=slot):
+                kind, evt = event["event"], event.get("payload") or {}
+                if kind == "message.new":
+                    textos.append(evt.get("texto", ""))
+                elif kind == "session.status":
+                    custo = evt.get("custo_usd")
+        finally:
+            await slot.release()
+        texto_final = "\n\n".join(t for t in textos if t and t.strip())
+        if texto_final.strip():
+            m.messages.add(m.org_id, conv.id, "assistant", texto_final, agent_id=m.agent.id)
+        m.turnos += 1
+        return TurnOutcome(
+            bolhas=tuple(_bolhas(texto_final)), ferramentas=tuple(m.diario.chamadas), estado=Estado(),
+            custo_usd=custo, texto=texto_final, resultados_ferramentas=tuple(turno.resultados),
+            valores_terceiros=m.sinteticos.terceiros(),
+        )
 
     def _outcome(self, m: _Mundo, th: Any, res: Any, **extra: Any) -> TurnOutcome:
         m.turnos += 1
