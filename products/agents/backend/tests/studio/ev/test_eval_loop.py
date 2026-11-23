@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.studio.eval_loop import (
-    LoopDef, Rodada, avaliar_rodada, checar_admissao, checkpoints_atingidos, melhorou, partes_alteradas, serie_de_scores,
+    CANCELADAS_SEGUIDAS_MAX, LoopDef, Rodada, avaliar_rodada, checar_admissao, checkpoints_atingidos, melhorou, partes_alteradas, serie_de_scores,
 )
 
 
@@ -165,3 +165,39 @@ def test_helpers():
     assert serie_de_scores([_r(2, 0.7), _r(1, 0.5), _r(3, None, status="falhou")]) == [0.5, 0.7]
     assert partes_alteradas({"a": "1", "b": "2"}, {"a": "1", "b": "3", "c": "9"}) == ["b", "c"]
     assert partes_alteradas(None, {"a": "1"}) is None
+
+
+class TestCancelledRoundsAreNotPlannedRounds:
+    def test_a_cancelled_round_does_not_exhaust_the_planned_rounds(self):
+        loop = _loop(rodadas_planejadas=2)
+        d = _fechar(loop, [_r(1, 0.5)], 2, None, status="cancelada", custo_usd=0.0)
+        assert d.parada is None and d.checkpoint is None
+        d = _fechar(loop, [_r(1, None, status="cancelada", custo=0.0)], 2, 0.5)
+        assert d.parada is None  # one counted round of two
+
+    def test_admission_rebooks_after_a_cancelled_round(self):
+        loop = _loop(rodadas_planejadas=1)
+        rs = [_r(1, None, status="cancelada", custo=0.0)]
+        assert checar_admissao(loop, rs, compiled_hash="h0", limite_passes_consolidacao=1) is None
+        rs = rs + [_r(2, 0.5)]
+        assert checar_admissao(loop, rs, compiled_hash="h0", limite_passes_consolidacao=1).code == "rodadas_esgotadas"
+
+    def test_g4_ignores_cancelled_rounds(self):
+        rs = [_r(1, 0.5), _r(2, None, status="cancelada"), _r(3, 0.5)]
+        d = _fechar(_loop(), rs, 4, None, status="cancelada")
+        assert d.sem_melhora_seguidas == 1 and d.parada is None
+
+    def test_consecutive_cancellations_stop_with_erro(self):
+        ant = [_r(i, None, status="cancelada") for i in range(1, CANCELADAS_SEGUIDAS_MAX)]
+        d = _fechar(_loop(), ant, CANCELADAS_SEGUIDAS_MAX, None, status="cancelada")
+        assert d.parada.motivo == "erro" and d.parada.detalhe["canceladas_seguidas"] == CANCELADAS_SEGUIDAS_MAX
+        assert "canceladas" in d.parada.detalhe["mensagem"]
+
+    def test_a_scored_round_between_resets_the_cancellation_streak(self):
+        ant = [_r(1, None, status="cancelada"), _r(2, 0.5), _r(3, None, status="cancelada")]
+        assert _fechar(_loop(), ant, 4, None, status="cancelada").parada is None
+
+    def test_checkpoints_count_only_planned_rounds(self):
+        loop = _loop(rodadas_planejadas=5)
+        rs = [_r(1, None, status="cancelada")] + [_r(i, 0.1 * i) for i in range(2, 6)]
+        assert checkpoints_atingidos(loop, rs)[0]["atingido"] is False

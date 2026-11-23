@@ -21,7 +21,7 @@ from app.stores.studio_eval_loops import LoopRecord, LoopStore
 from app.studio.eval_loop_refino import EVENTOS_REFINO, refinamentos_do_estado, resumo_de_refinamentos
 from app.studio.eval_loop import (
     EPS, MAX_FALHAS_NA_MENSAGEM, Decisao, Recusa, Rodada, avaliar_rodada, checar_admissao, checkpoints_atingidos, ordenar,
-    serie_de_scores,
+    rodadas_contadas, serie_de_scores,
 )
 
 logger = logging.getLogger(__name__)
@@ -233,7 +233,8 @@ class EvalLoopService:
             return None
         self._evento(org_id, rec.id, "rodada_com_erro" if erro else "rodada_fechada", run_id=resumo.run_id, rodada_seq=rodada.seq,
                      detalhe={"status": resumo.status, "score": resumo.score, "custo_usd": resumo.custo_usd,
-                              "falhas": len(resumo.falhas), "erros": len(resumo.erros), **({"erro": erro} if erro else {})})
+                              "falhas": len(resumo.falhas), "erros": len(resumo.erros),
+                              "conta_na_rodada": not (resumo.status == "cancelada" and resumo.score is None), **({"erro": erro} if erro else {})})
         self._avaliar_refino(org_id, rec, rodada.seq, resumo, rodada.compiled_hash)
         if decisao.parada is not None:
             self._evento(org_id, rec.id, "loop_parado", run_id=resumo.run_id, rodada_seq=rodada.seq,
@@ -353,7 +354,7 @@ class EvalLoopService:
         return {
             "id": rec.id, "agente_chave": rec.agente_chave, "suite": rec.suite, "status": rec.status,
             "motivo_parada": rec.motivo_parada, "detalhe_parada": rec.detalhe_parada,
-            "rodadas_planejadas": rec.rodadas_planejadas, "rodadas_feitas": sum(1 for r in rs if not r.aberta),
+            "rodadas_planejadas": rec.rodadas_planejadas, "rodadas_feitas": len(rodadas_contadas(rs)),
             "alvo": rec.alvo, "piso": rec.piso, "orcamento_usd": rec.orcamento_usd, "gasto_usd": rec.gasto_usd,
             "restante_usd": d.restante_usd, "melhor_score": melhor, "score_atual": serie[-1] if serie else None,
             "acima_do_piso": (melhor >= rec.piso) if melhor is not None else None,
@@ -384,7 +385,7 @@ class EvalLoopService:
             "loop_id": str(rec.id), "agente_chave": rec.agente_chave, "suite": rec.suite,
             "serie": serie_de_scores(rs), "hashes": [r.compiled_hash for r in rs],
             "casos_falhando": list(resumo.falhas), "gasto_usd": rec.gasto_usd, "orcamento_usd": rec.orcamento_usd,
-            "rodadas_feitas": len(rs), "rodadas_planejadas": rec.rodadas_planejadas,
+            "rodadas_feitas": len(rodadas_contadas(rs)), "rodadas_planejadas": rec.rodadas_planejadas,
             "overcalls": [{"rodada": r.seq, "custo_usd": r.custo_usd} for r in rs if r.overcall],
             "detalhe": rec.detalhe_parada,
         }
