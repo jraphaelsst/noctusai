@@ -14,6 +14,11 @@ A LOOP refines one suite of one agent over planned rounds. A ROUND is one run st
 is neither an improvement nor an overcall. A round with no score (the run failed before measuring: harness error,
 cancelled, spec refused) is NEUTRAL for G4/G5 but its cost still counts for G7.
 
+A CANCELLED round (the run ended ``cancelada`` with nothing measured: an infrastructure restart, the owner) does NOT count toward
+the planned rounds (G2/G4 stop rule ``rodadas_esgotadas``, admission, checkpoints, ``rodadas_feitas``): it stays in the series as
+a row (and a ``rodada_fechada`` event with ``conta_na_rodada=false``), and the driver re-books on the same hash. To keep that from
+looping forever, :data:`CANCELADAS_SEGUIDAS_MAX` consecutive cancelled rounds stop the loop with the motivo ``erro``.
+
 A round whose run ERRORED (``erro`` / ``falhou`` with nothing measured) is not a neutral shrug: it STOPS the loop with the
 motivo ``erro`` (+ the code/message in ``detalhe_parada``), so a broken agent or harness is seen at once and never burns the
 budget round after round. A cancelled round stays neutral (the owner did it). ``parcial_com_erros`` is scored over the cases
@@ -27,15 +32,17 @@ from typing import Any
 from uuid import UUID
 
 __all__ = [
-    "CHECKPOINTS", "EPS", "MAX_FALHAS_NA_MENSAGEM", "SEM_MELHORA_MAX", "Recusa", "Rodada", "LoopDef", "Decisao", "Parada",
+    "CANCELADAS_SEGUIDAS_MAX", "CHECKPOINTS", "EPS", "MAX_FALHAS_NA_MENSAGEM", "SEM_MELHORA_MAX", "Recusa", "Rodada", "LoopDef", "Decisao", "Parada",
     "MOTIVOS_PARADA", "avaliar_rodada", "checar_admissao", "melhorou", "checkpoints_atingidos", "serie_de_scores",
-    "partes_alteradas", "ordenar",
+    "partes_alteradas", "ordenar", "conta_na_rodada", "rodadas_contadas",
 ]
 
 #: G2: the rounds at which the owner is shown progress (only those <= the planned rounds apply).
 CHECKPOINTS = (5, 10, 15)
 #: G4: this many consecutive scored rounds without improvement stop the loop.
 SEM_MELHORA_MAX = 2
+#: consecutive cancelled rounds (not counted toward the planned rounds) that stop the loop with ``erro``.
+CANCELADAS_SEGUIDAS_MAX = 3
 #: float noise: a score within EPS of the best is NOT an improvement.
 EPS = 1e-9
 #: how many still-failing cases a stop message names (the rest are counted).
@@ -64,6 +71,11 @@ class Rodada:
     @property
     def aberta(self) -> bool:
         return self.status == "executando"
+
+    @property
+    def cancelada_sem_medida(self) -> bool:
+        """Closed ``cancelada`` with nothing measured: an interrupted round, not a planned one."""
+        return self.status == "cancelada" and self.score is None
 
     @property
     def pontuada(self) -> bool:
@@ -114,6 +126,25 @@ class Decisao:
     checkpoint: int | None = None
 
 
+def conta_na_rodada(r: Rodada) -> bool:
+    """Whether a round uses one of the loop's planned rounds: closed, and not an interrupted (cancelled, unscored) one."""
+    return not r.aberta and not r.cancelada_sem_medida
+
+
+def rodadas_contadas(rodadas: Sequence[Rodada]) -> list[Rodada]:
+    return [r for r in ordenar(rodadas) if conta_na_rodada(r)]
+
+
+def _canceladas_seguidas(fechadas: Sequence[Rodada]) -> int:
+    """Trailing run of interrupted rounds at the end of the closed rounds (by seq)."""
+    n = 0
+    for r in reversed(ordenar(fechadas)):
+        if not r.cancelada_sem_medida:
+            break
+        n += 1
+    return n
+
+
 def ordenar(rodadas: Sequence[Rodada]) -> list[Rodada]:
     return sorted(rodadas, key=lambda r: r.seq)
 
@@ -154,7 +185,7 @@ def partes_alteradas(antes: Mapping[str, str] | None, depois: Mapping[str, str] 
 
 def checkpoints_atingidos(loop: LoopDef, rodadas: Sequence[Rodada]) -> list[dict[str, Any]]:
     """G2: for each checkpoint <= the planned rounds, whether it was reached and the score/spend at that round."""
-    fechadas = [r for r in ordenar(rodadas) if not r.aberta]
+    fechadas = rodadas_contadas(rodadas)
     out = []
     for cp in CHECKPOINTS:
         if cp > loop.rodadas_planejadas:
@@ -185,7 +216,9 @@ def avaliar_rodada(loop: LoopDef, anteriores: Sequence[Rodada], *, seq: int, sta
         novos_scores = serie_de_scores(fechadas) + [score]
         seguidas = _seguidas_sem_melhora(novos_scores)
 
-    n_fechadas = len(fechadas) + 1
+    esta_cancelada = status == "cancelada" and score is None
+    n_fechadas = len(rodadas_contadas(fechadas)) + (0 if esta_cancelada else 1)
+    canceladas = (_canceladas_seguidas(fechadas) + 1) if esta_cancelada else 0
     parada = None
     if score is not None and score >= loop.alvo - EPS:
         parada = Parada("alvo_atingido", "concluido", {"score": score, "alvo": loop.alvo})
@@ -193,6 +226,11 @@ def avaliar_rodada(loop: LoopDef, anteriores: Sequence[Rodada], *, seq: int, sta
         parada = Parada("orcamento_atingido", "parado", {"gasto_usd": gasto, "orcamento_usd": loop.orcamento_usd})
     elif score is None and status in ("erro", "falhou"):
         parada = Parada("erro", "parado", {"rodada": seq, "status": status, **dict(erro or {})})
+    elif canceladas >= CANCELADAS_SEGUIDAS_MAX:
+        parada = Parada("erro", "parado", {
+            "rodada": seq, "status": status, "canceladas_seguidas": canceladas,
+            "mensagem": f"{canceladas} rodadas seguidas foram canceladas antes de medir o agente (reinício do serviço ou "
+                        "cancelamento manual). O loop foi parado para não repetir sem medir; confira a infraestrutura e inicie de novo."})
     elif seguidas >= SEM_MELHORA_MAX:
         ultimas = [r for r in fechadas if r.pontuada][-1:]  # the previous scored round, to say what changed since
         mudou = partes_alteradas(ultimas[0].partes, partes) if ultimas else None
@@ -201,9 +239,10 @@ def avaliar_rodada(loop: LoopDef, anteriores: Sequence[Rodada], *, seq: int, sta
             "hash_atual": compiled_hash, "conteudo_mudou": (ultimas[0].compiled_hash != compiled_hash) if ultimas else None,
             "partes_alteradas": mudou,
         })
-    elif n_fechadas >= loop.rodadas_planejadas:
+    elif not esta_cancelada and n_fechadas >= loop.rodadas_planejadas:
         parada = Parada("rodadas_esgotadas", "concluido", {"rodadas": n_fechadas})
-    checkpoint = next((cp for cp in CHECKPOINTS if cp == n_fechadas and cp <= loop.rodadas_planejadas), None)
+    checkpoint = None if esta_cancelada else next(
+        (cp for cp in CHECKPOINTS if cp == n_fechadas and cp <= loop.rodadas_planejadas), None)
     return Decisao(melhorou=flag_melhorou, overcall=overcall, sem_melhora_seguidas=seguidas, gasto_usd=gasto,
                    parada=parada, checkpoint=checkpoint)
 
@@ -222,9 +261,9 @@ def checar_admissao(loop: LoopDef, rodadas: Sequence[Rodada], *, compiled_hash: 
     if loop.gasto_usd >= loop.orcamento_usd - EPS:
         return Recusa("orcamento_do_loop_atingido",
                       f"O orçamento do loop (US$ {loop.orcamento_usd:.2f}) foi atingido. A decisão de continuar é do dono.")
-    if len(rs) >= loop.rodadas_planejadas:
+    if len(rodadas_contadas(rs)) >= loop.rodadas_planejadas:
         return Recusa("rodadas_esgotadas", f"As {loop.rodadas_planejadas} rodadas planejadas do loop acabaram.")
-    mesmas = [r for r in rs if r.compiled_hash == compiled_hash and not r.aberta]
+    mesmas = [r for r in rs if r.compiled_hash == compiled_hash and conta_na_rodada(r)]  # an interrupted round measured nothing
     if mesmas:
         ultima = mesmas[-1]
         if ultima.falhas:
