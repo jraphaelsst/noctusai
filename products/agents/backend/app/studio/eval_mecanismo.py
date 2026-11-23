@@ -102,7 +102,12 @@ ASSERT_NAMES = (
     "solicitacao_titular",
     "retomada_status",
     "retomada_tier_usado",
+    "saida_criacao",
+    "propostas_criacao",
+    "texto_sem_termos",
 )
+#: the ``tipo`` values ``propostas_criacao`` accepts (``app.criacao.saida.checar_propostas``)
+TIPOS_PROPOSTA = ("headline", "roteiro", "qualquer")
 #: the participant states ``participante_estado`` may name (``thread_participantes.estado`` CHECK).
 PARTICIPANTE_ESTADOS = ("ativo", "pausado", "concluido", "encerrado", "transferido")
 #: the tool whose call records a data-subject request; its ``tipo`` argument is what ``solicitacao_titular`` checks.
@@ -217,6 +222,12 @@ def validar_asserts(asserts: Any, *, onde: str = "asserts") -> None:
         elif nome == "retomada_tier_usado":
             if valor not in RETOMADA_TIERS:
                 raise AssertInvalido(f"retomada_tier_usado: um de {', '.join(RETOMADA_TIERS)}")
+        elif nome == "saida_criacao":
+            _validar_saida_criacao(valor)
+        elif nome == "propostas_criacao":
+            _validar_propostas_criacao(valor)
+        elif nome == "texto_sem_termos":
+            _lista_str(nome, valor)
         elif nome == "skill_aberta_antes_de":
             itens = valor if isinstance(valor, list) else [valor]
             if not itens or not all(
@@ -225,6 +236,35 @@ def validar_asserts(asserts: Any, *, onde: str = "asserts") -> None:
                 for i in itens
             ):
                 raise AssertInvalido("skill_aberta_antes_de: {skill, ferramenta} ou lista")
+
+
+def _validar_saida_criacao(valor: Any) -> None:
+    """``true`` or ``{cta_proibidos?: [..], nomes_proibidos?: [..], ignorar?: [..]}`` (``ignorar`` = check-code prefixes the
+    case does not hold the reply to, e.g. ``roteiro1:frases_curtas``). Closed shape."""
+    if valor is True:
+        return
+    if not isinstance(valor, dict) or not valor:
+        raise AssertInvalido("saida_criacao: true ou {cta_proibidos?, nomes_proibidos?, ignorar?}")
+    extra = set(valor) - {"cta_proibidos", "nomes_proibidos", "ignorar"}
+    if extra:
+        raise AssertInvalido(f"saida_criacao: campos desconhecidos {sorted(extra)}")
+    for chave, lista in valor.items():
+        _lista_str(f"saida_criacao.{chave}", lista)
+
+
+def _validar_propostas_criacao(valor: Any) -> None:
+    """``{tipo: headline|roteiro|qualquer, min?: int >= 0, max?: int >= min}``. Closed shape."""
+    if not isinstance(valor, dict) or valor.get("tipo") not in TIPOS_PROPOSTA:
+        raise AssertInvalido(f"propostas_criacao: {{tipo: um de {', '.join(TIPOS_PROPOSTA)}, min?, max?}}")
+    extra = set(valor) - {"tipo", "min", "max"}
+    if extra:
+        raise AssertInvalido(f"propostas_criacao: campos desconhecidos {sorted(extra)}")
+    for chave in ("min", "max"):
+        n = valor.get(chave)
+        if chave in valor and (isinstance(n, bool) or not isinstance(n, int) or n < 0):
+            raise AssertInvalido(f"propostas_criacao.{chave}: inteiro >= 0")
+    if "min" in valor and "max" in valor and valor["max"] < valor["min"]:
+        raise AssertInvalido("propostas_criacao: max < min")
 
 
 def validar_roteiro(roteiro: Any) -> None:
@@ -412,6 +452,10 @@ class Traco:
     #: the last follow-up turn's control decision and flavour (``None`` = no follow-up ran)
     retomada_status: str | None = None
     retomada_tier: str | None = None
+    #: ``app``-channel turns (the Diretor de Criacao): the LAST turn's whole reply -- a turn's ``esperar`` is evaluated
+    #: right after it is absorbed, so this is that turn's reply -- and every tool answer of the execution so far
+    ultimo_texto: str = ""
+    resultados_ferramentas: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def absorver(self, o: TurnOutcome) -> None:
         self.bolhas.extend(o.bolhas)
@@ -430,6 +474,8 @@ class Traco:
             self.retomada_status = o.retomada_status
         if o.retomada_tier is not None:
             self.retomada_tier = o.retomada_tier
+        self.ultimo_texto = o.texto or "\n\n".join(o.bolhas)
+        self.resultados_ferramentas.extend(o.resultados_ferramentas)
 
 
 # ── deterministic detectors over the bubbles ─────────────────────────────────────────────────────────────
@@ -593,6 +639,32 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
         elif nome == "participante_estado":
             if t.participante_estado != valor:
                 falha(nome, f"esperado:{valor}|obtido:{t.participante_estado or 'desconhecido'}")
+        elif nome == "saida_criacao":
+            from app.criacao.saida import avaliar_saida
+
+            cfg = valor if isinstance(valor, dict) else {}
+            ignorar = tuple(cfg.get("ignorar") or ())
+            for codigo in avaliar_saida(
+                t.ultimo_texto, t.resultados_ferramentas,
+                cta_proibidos=tuple(cfg.get("cta_proibidos") or ()), nomes_proibidos=tuple(cfg.get("nomes_proibidos") or ()),
+            ):
+                if not any(codigo.startswith(p) for p in ignorar):
+                    falha(nome, codigo)
+        elif nome == "propostas_criacao":
+            from app.criacao.saida import checar_propostas
+
+            for codigo in checar_propostas(
+                t.ultimo_texto, t.resultados_ferramentas, tipo=valor["tipo"], minimo=valor.get("min", 1),
+                maximo=valor.get("max"),
+            ):
+                falha(nome, codigo)
+        elif nome == "texto_sem_termos":
+            from noctusai_lib.primitives.accents import fold_accents
+
+            alvo = fold_accents("\n".join([t.ultimo_texto, *t.bolhas])).casefold()
+            for i, termo in enumerate(valor):
+                if fold_accents(termo).casefold() in alvo:
+                    falha(nome, f"termo{i + 1}")
         elif nome == "solicitacao_titular":
             tipos = [c.args.get("tipo") for c in t.ferramentas if c.nome == FERRAMENTA_SOLICITACAO_TITULAR]
             if not tipos:
