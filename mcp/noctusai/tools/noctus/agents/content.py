@@ -132,7 +132,9 @@ LIFECYCLE_ACTIONS = (
     "prontidao", "atualizar_skills",
 )
 #: The eval refinement loop (contract: products/agents/docs/eval-loop-gate-contract.md): one route each.
-LOOP_ACTIONS = ("loop_iniciar", "loops", "loop", "loop_parar", "rodada", "run")
+#: ``medir`` = ONE measure-only run outside any loop (the server takes ``loop_id`` as optional): the harness probe that
+#: proves a suite really executes BEFORE a loop is opened on it (2026-11-23).
+LOOP_ACTIONS = ("loop_iniciar", "loops", "loop", "loop_parar", "rodada", "medir", "run")
 _SUITES = ("comportamento", "mecanismo")
 _UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 _DEFINICAO_CAMPOS = (
@@ -972,20 +974,27 @@ def _loop_actions(
         if suite not in _SUITES:
             raise ContentError("payload_invalido", f"suite deve ser {'|'.join(_SUITES)}.")
         method, path = "GET", f"{a}/evals/runs/{chave}" if suite == "comportamento" else f"{a}/mecanismo-runs/{chave}"
-    else:  # rodada
-        body = _only(_load_payload(payload_path), ("suite", "loop_id", "version_id", "rodar_tudo"), "rodada")
+    else:  # rodada | medir
+        body = _only(_load_payload(payload_path), ("suite", "loop_id", "version_id", "rodar_tudo"), action)
         loop_id = body.get("loop_id") or chave
-        if body.get("suite") not in _SUITES or not (isinstance(loop_id, str) and _UUID_RE.match(loop_id)):
+        if action == "medir":
+            if loop_id:
+                raise ContentError("payload_invalido", "medir roda FORA de loop: sem 'loop_id' (use rodada para um loop).")
+            if body.get("suite") not in _SUITES:
+                raise ContentError("payload_invalido", f"medir precisa de 'suite' ({'|'.join(_SUITES)}).")
+            loop_id = None
+        elif body.get("suite") not in _SUITES or not (isinstance(loop_id, str) and _UUID_RE.match(loop_id)):
             raise ContentError("payload_invalido", "rodada precisa de 'suite' e 'loop_id' (uuid; ou chave=<loop_id>).")
         if body["suite"] == "mecanismo":
-            qs = f"loop_id={loop_id}" + ("&rodar_tudo=true" if body.get("rodar_tudo") else "")
-            method, path, body = "POST", f"{a}/draft/mecanismo-runs?{qs}", None
+            params = ([f"loop_id={loop_id}"] if loop_id else []) + (["rodar_tudo=true"] if body.get("rodar_tudo") else [])
+            qs = "&".join(params)
+            method, path, body = "POST", f"{a}/draft/mecanismo-runs" + (f"?{qs}" if qs else ""), None
         else:
             vid = body.get("version_id")
             if vid is not None and not (isinstance(vid, str) and _UUID_RE.match(vid)):
                 raise ContentError("payload_invalido", "version_id deve ser um uuid (omita para usar o rascunho atual).")
             pre_version = vid is None
-            body = {"version_id": vid, "loop_id": loop_id}
+            body = {"version_id": vid, "loop_id": loop_id} if loop_id else {"version_id": vid}
             method, path = "POST", f"{a}/evals/runs"
     reading = method == "GET"
     base = _base_url(base_url)
@@ -1020,7 +1029,7 @@ def _loop_actions(
         api.close()
     if reading:
         return {"status": "ok", **head, "dry_run": False, "resultado": result}
-    return {"status": "started" if action == "rodada" else "done", **head, "dry_run": False, "resultado": result}
+    return {"status": "started" if action in ("rodada", "medir") else "done", **head, "dry_run": False, "resultado": result}
 
 
 def _lifecycle(
@@ -1176,7 +1185,7 @@ def register(server) -> None:
             "an exemplar agent key}: AI-generated first DRAFT, background, never publishes) | geracao (chave = run id, "
             "empty = list: progress, cost, lacunas, gerado vs editado) | prontidao (reads what the draft still owes before "
             "publish: blocking items + advisories + pronto_para_publicar) | atualizar_skills (re-pin every library skill "
-            "of the draft to its newest published version; dry-run lists what would move) | Eval refinement loop (platform admin / studio:evals-run token; NOCTUS_AGENTS_EVALS_TOKEN preferred, else the content token; server refusals come back verbatim under `servidor`): loop_iniciar (payload {suite: comportamento|mecanismo, rodadas_planejadas?, orcamento_usd? (omitted -> platform loop config)}) | loops (optional payload {suite?, status?}) | loop (chave=loop_id) | loop_parar (chave=loop_id, payload {motivo?}) | rodada (payload {suite, loop_id | chave=loop_id, version_id? (default: current draft), rodar_tudo?}: books + starts the next round) | run (chave=run_id, payload {suite?}: results incl. saida/notas_juiz/veredito); writes dry-run unless confirm=True | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
+            "of the draft to its newest published version; dry-run lists what would move) | Eval refinement loop (platform admin / studio:evals-run token; NOCTUS_AGENTS_EVALS_TOKEN preferred, else the content token; server refusals come back verbatim under `servidor`): loop_iniciar (payload {suite: comportamento|mecanismo, rodadas_planejadas?, orcamento_usd? (omitted -> platform loop config)}) | loops (optional payload {suite?, status?}) | loop (chave=loop_id) | loop_parar (chave=loop_id, payload {motivo?}) | rodada (payload {suite, loop_id | chave=loop_id, version_id? (default: current draft), rodar_tudo?}: books + starts the next round) | medir (payload {suite, version_id?, rodar_tudo?}: ONE measure-only run outside any loop, the harness probe before a loop) | run (chave=run_id, payload {suite?}: results incl. saida/notas_juiz/veredito); writes dry-run unless confirm=True | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
             "refuses published/in-use/on agents) - writes are dry-run unless confirm=True. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
