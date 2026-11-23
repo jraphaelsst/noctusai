@@ -305,6 +305,35 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── social-wiring-criacao — the CoreStudio media worker (no port; a separate process of the SAME image) ─
+  # Owner consent 2026-11-23 ("i approve adding the criação media worker to production"; deploy/consent/
+  # social-wiring-criacao.prod.yml). Claims only `media.step` jobs from the jobs ledger, ONE at a time, and runs
+  # TTS (ElevenLabs, org key via the credential chain, refused without the marca's voice consent) -> motion render
+  # (ffmpeg + ImageMagick, in the media base image) -> upload to the private post-media bucket; every paid step is
+  # pre-flighted against the org's monthly quota (cs_criacao_cotas). Never publishes. Never inside the API process,
+  # so a render cannot starve a request. Restart-safe: the leased job is re-claimed and resumed.
+  # Contract: products/social-wiring/projects/core-studio-build/specs/criacao-pipeline-contract.md §5.
+  social-wiring-criacao:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-social-wiring:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-social-wiring-criacao
+    command: ["python", "-m", "app.modules.media_creation.criacao_worker"]
+    networks:
+      - noctus-net
+    # No HTTP surface, so no curl healthcheck; liveness is the job lease (a dead worker's lease expires and the
+    # job is re-claimed). The image's own HEALTHCHECK (if any) targets the API port and would mark this unhealthy.
+    healthcheck:
+      disable: true
+    # SIGTERM lets the current step finish (the worker's own stop handler) before compose kills it.
+    stop_grace_period: 60s
+    # Hard caps: renders are CPU-bound and share the VPS with every product -> products win contention 4:1,
+    # and this is an early OOM victim (the API containers stay up).
+    cpus: "1.5"
+    cpu_shares: 256
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    oom_score_adj: 800
+
   # ── orbity 8010 — agency operating-system (absorbed from sistema-orbity) ─
   orbity:
     <<: *prod-defaults
