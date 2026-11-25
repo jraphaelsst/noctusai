@@ -77,7 +77,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 **Specialist subagents** (`.claude/agents/`): `architect` · `security` · `agents-security` · `compliance-reviewer` · `legal-advisor` · `accountant` · `product-designer` · `product-manager` · `product-architect` · `product-analyst` (advisors) · `backend-engineer` · `frontend-engineer` · `devops-engineer` · `integrations-engineer` · `ai-engineer` · `test-engineer` · `tooling-engineer` · `product-engineer` (executors) · `skill-scout` · `ops-steward` · `reverse-engineer` · `diretor-de-edicao` · `councillor` · `council-chair`. **Tech-lead = the orchestrator** (owns git/merge/deploy; no agent file). → `KB § 06-AGENTS.md` · `KB § PATTERNS/architect/dev-team.md`.
 
-**Procedure skills** (`.claude/skills/`, phrase-triggered): `noc-contextualize` · `noc-new-product` · `noc-new-agent` · `noc-absorb-product` · `noc-ship` · `noc-steward` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `noc-dep-update` · `noc-cache-writes` · `noc-fast-responses` · `noc-perf-probe` · `noc-refs-sheet` · `noc-learn-refine` · `noc-reverse-engineer` · `noc-ig-analysis` · `noc-daily-ops` · `noc-questionnaire` · `noc-council` · `noc-research` · `noc-security-audit` · `noc-tax-params` · `noc-iterate` · `ui-ux-rules` · `edicao-video-preparo-de-midia` `edicao-video-corte-e-legenda` `edicao-video-legenda-por-palavra` `edicao-video-inserts-e-broll` `edicao-video-checagem-de-gancho` `edicao-video-zona-segura` `edicao-video-audio` `edicao-video-escolha-de-estilo` `edicao-video-referencia-para-preset` · `skill-creator`.
+**Procedure skills** (`.claude/skills/`, phrase-triggered): `noc-contextualize` · `noc-new-product` · `noc-new-agent` · `noc-absorb-product` · `noc-ship` · `noc-steward` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `noc-dep-update` · `noc-cache-writes` · `noc-fast-responses` · `noc-perf-probe` · `noc-refs-sheet` · `noc-learn-refine` · `noc-reverse-engineer` · `noc-ig-analysis` · `noc-daily-ops` · `noc-questionnaire` · `noc-council` · `noc-research` · `noc-security-audit` · `noc-tax-params` · `noc-iterate` · `click-path-audit` · `loop-design-check` · `agent-architecture-audit` · `ui-ux-rules` · `edicao-video-preparo-de-midia` `edicao-video-corte-e-legenda` `edicao-video-legenda-por-palavra` `edicao-video-inserts-e-broll` `edicao-video-checagem-de-gancho` `edicao-video-zona-segura` `edicao-video-audio` `edicao-video-escolha-de-estilo` `edicao-video-referencia-para-preset` · `skill-creator`.
 
 **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/gc` (methodology GC) · `/vector-status` (cache health) · `/baselines` (kb + code ratification status) · `/codification-radar` (promotion candidates) · `/cost-report` (vector costs) · `/verify-pass` (verify pass) · `/refresh-caches` (all-cache refresh).
 
@@ -89,14 +89,14 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 ---
 
-## 3 · When to read what (residual — most workflows auto-route via `.claude/skills/noc-*`)
+## 3 · When to read what (residual; skills auto-route)
 
 | Situation | First stop |
 |---|---|
 | Fresh session / orientation | skill `noc-contextualize` |
 | Writing backend / frontend code | `CLAUDE/backend.md` / `CLAUDE/frontend.md` + matching `KB § PATTERNS/` |
 | Create/scaffold/absorb a product · deploy/ship · branch/dispatch · self-branch · wiring audit · container debug · cleanup | the matching `noc-*` skill (auto-triggers) |
-| Need a specialist opinion mid-flight (design / security / compliance) | dispatch agent `architect` / `security` / `compliance-reviewer` (read-only advisors) |
+| Specialist opinion mid-flight (design / security / compliance) | dispatch agent `architect` / `security` / `compliance-reviewer` (read-only advisors) |
 | Starting/closing a project; touching `*-PROJECT.md` | `CLAUDE/projects.md` + `KB § PATTERNS/architect/project-execution.md` |
 | Migration · auth wiring · OAuth/integration · LGPD · anything else | `KB § INDEX.md` → the relevant pattern/integration |
 

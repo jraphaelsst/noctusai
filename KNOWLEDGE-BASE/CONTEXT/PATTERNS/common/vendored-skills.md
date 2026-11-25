@@ -108,8 +108,22 @@ From the Agent Skills specification and Anthropic's authoring best practices, pl
 |---|---|---|---|---|---|---|
 | *(2026-11-05 inventory: 0 of the 29 skills under `.claude/skills/` were vendored; all authored in-home, the oldest batch `290515e66` 2026-05-25)* | — | — | — | — | skill-scout · 2026-11-05 | — |
 | `ui-ux-rules` | github.com/nextlevelbuilder/ui-ux-pro-max-skill/tree/4f2dbb67e64969a9a30ab00742f2d55d66ddec2b/.claude/skills/ui-ux-pro-max (`references/quick-reference.md` only) | MIT (repo root; no LICENSE at the skill path) | n/a | VENDOR-PARTIAL — rejected parts: `scripts/` + `data/` (§3 items 10–11: 3.5 MB, daily upstream commits, needs Bash the designer lacks), `--persist` (item 9: forks the seed tokens), `references/pro-rules.md` (native-mobile scope) | skill-scout (noc-1, noc-iterate round 1) · 2026-11-08 | upstream SHA moved and `quick-reference.md` changed ∨ license changed ∨ 12 months |
+| `click-path-audit` | github.com/affaan-m/ECC/tree/4adeee6732a12d1540f49a4d50a38ce8c97f9a53/skills/click-path-audit | MIT (repo root `LICENSE`, Affaan Mustafa; no LICENSE at the skill path; upstream metadata `origin: community`) | n/a | VENDOR (adapted: noc voice, ECC/superpowers cross-refs and the upstream app's agent split removed, KB depth + guardrails added) | skill-scout (ecc-scout) · 2026-11-25 | upstream SHA moved and the skill changed ∨ license changed ∨ 12 months |
+| `loop-design-check` | github.com/affaan-m/ECC/tree/4adeee6732a12d1540f49a4d50a38ce8c97f9a53/skills/loop-design-check | MIT (repo root) | n/a | VENDOR (adapted: house-law guardrails, mechanism cross-refs repointed to `noc-steward` / `noc-iterate`) | skill-scout (ecc-scout) · 2026-11-25 | same |
+| `agent-architecture-audit` | github.com/affaan-m/ECC/tree/4adeee6732a12d1540f49a4d50a38ce8c97f9a53/skills/agent-architecture-audit | MIT (repo root; upstream metadata `origin: oh-my-agent-check`, third-party origin not separately verified, covered by the repo's MIT) | n/a | VENDOR (adapted: `rg` pattern block, report JSON schema and `tools:` field dropped; security scope handed to `agents-security`) | skill-scout (ecc-scout) · 2026-11-25 | same |
+| `mcp-dependency-review` | github.com/affaan-m/ECC/tree/4adeee6732a12d1540f49a4d50a38ce8c97f9a53/skills/mcp-dependency-review | MIT (repo root) | n/a | SKIP — covered: the local (gitignored) `.mcp.json` runs only local venv commands (no npx/uvx/docker-run selectors), container images are digest-pinned by `check_supply_chain_pin`; the selector table is the only delta | skill-scout (ecc-scout) · 2026-11-25 | a repo-scoped MCP config gains a package-runner or image selector |
+| `gateguard`, `delivery-gate`, `safety-guard`, `hookify-rules` | github.com/affaan-m/ECC/tree/4adeee6732a12d1540f49a4d50a38ce8c97f9a53/skills/gateguard (upstream hook file gateguard-fact-force, 2848 lines of JS) | MIT | n/a | NOT VENDORED — executable harness hooks need owner sign-off; ideas absorbed into the ecc-scout report (§6d) | skill-scout (ecc-scout) · 2026-11-25 | owner asks for a fact-forcing or stop-gate hook |
 
 Row format for new entries: `noc-x | github.com/org/repo/tree/<sha>/skills/x | MIT | n/a | VENDOR | skill-scout · YYYY-MM-DD | upstream SHA moved ∨ license changed ∨ 12 months`. Verdicts: VENDOR · VENDOR-PARTIAL (name the files kept and why the rest was rejected) · AUTHOR-IN-HOME · INSTALL-NEEDS-CONSENT · SKIP.
+
+### 6d · Proposed-not-wired (mechanisms needing an owner decision)
+
+Executable mechanisms found while scouting are never wired by a scout. Each is recorded here with the gap it would close.
+
+| Mechanism | Origin | Gap in noc (verified 2026-11-25) | Owner decision needed |
+|---|---|---|---|
+| Agent-side secret gate: `permissions.deny` for `Read(**/.env*)`, `*.pem`, `*.key`, `id_rsa*` plus a UserPromptSubmit/PreToolUse detector for key shapes (`sk-`, `ghp_`, `AKIA`, JWT, private-key header) | ECC governance-capture hook (SECRET_PATTERNS, SENSITIVE_PATHS; MIT; record-only upstream) | gitleaks guards commits and CI only; `.claude/settings.json` has no `permissions.deny`; no hook sees a secret pasted into a prompt or read through a tool | yes: it changes `settings.json`; tools that legitimately read `.env` (env_file arguments) need an allow path |
+| Stop gate that blocks once (`stop_hook_active` re-entry exits 0) | ECC `skills/delivery-gate` | design idea only: a block-at-most-once Stop hook cannot trap a session on a condition the agent cannot fix | none unless a Stop gate is wanted |
 
 ### 6b · Runtime-provided — use, never vendor
 
