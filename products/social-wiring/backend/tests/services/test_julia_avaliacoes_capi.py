@@ -370,7 +370,7 @@ class TestHashing:
         ud = ev.user_data
         assert ud["lead_id"] == "9000000000000001" and len(ud["ph"][0]) == 64 and len(ud["em"][0]) == 64
         blob = repr(ev.como_payload())
-        assert "11988887777" not in blob and "a@b.co" not in blob and ev.nome == "QualifiedLead"
+        assert "11988887777" not in blob and "a@b.co" not in blob and ev.nome == "JuliaQualifiedLead"
         assert ev.como_payload()["action_source"] == "system_generated" and ev.event_time == int(AGORA.timestamp())
 
 
@@ -392,7 +392,7 @@ class TestCapi:
         fake = capi.FakeCapiProvider()
         assert run(capi.executar_envio(j, client=world.sw, provider_factory=lambda t: fake, agora=AGORA)) == "enviado"
         (pixel, ev), = fake.enviados
-        assert pixel == PIXEL and ev.nome == "QualifiedLead" and ev.user_data["lead_id"] == "9000000000000001"
+        assert pixel == PIXEL and ev.nome == "JuliaQualifiedLead" and ev.user_data["lead_id"] == "9000000000000001"
         assert ev.user_data["ph"] == [hashlib.sha256(b"5511988887777").hexdigest()]
         assert ev.user_data["em"] == [hashlib.sha256(b"ana@exemplo.com").hexdigest()]
         (row,) = world.rows(capi.T_CAPI)
@@ -513,3 +513,12 @@ class TestQualificadoDispara:
         c = contato(world, lead_id=lead_meta(world)["id"])
         run(envio.enviar_por_estagio(world.sw, ORG, c, estagio="perfil_basico", score=30))
         assert world.rows(capi.T_CAPI) == []
+
+
+def test_julia_event_names_never_collide_with_the_agency_crm_stages():
+    """The shared dataset already gets CRMLead / QualifiedLead / Lead from the agency's CRM. If Julia reused
+    one of those names, Meta would merge two meanings of "qualified" and conversion-lead optimisation would
+    learn from both. Julia's stages must stay disjoint."""
+    from app.services import julia_capi_service as capi
+
+    assert not set(capi.EVENTO_META.values()) & capi.EVENTOS_DE_TERCEIROS

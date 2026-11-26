@@ -45,8 +45,14 @@ JOB_ENVIAR = "julia_capi_enviar"
 JOB_MAX_RETRIES = 2
 
 EVENTOS = ("lead_qualificado", "visita_agendada", "resposta_cliente")
-#: Meta event names: Schedule / Contact are Meta standard events; `QualifiedLead` is the custom stage event.
-EVENTO_META = {"lead_qualificado": "QualifiedLead", "visita_agendada": "Schedule", "resposta_cliente": "Contact"}
+#: Meta event names: Schedule / Contact are Meta standard events; `JuliaQualifiedLead` is the custom CRM stage event.
+#: It is deliberately NOT `QualifiedLead`: the shared dataset ("Pixel - One Consultoria", owned by the agency
+#: Senseys) already receives `CRMLead` (every lead entering their CRM), `QualifiedLead` (their own stage) and
+#: `Lead` from the agency's CRM. Julia's verdict must stay a separate, unambiguous stage, so an ad set can be
+#: switched to optimise on it alone (2026-11-26, roadmap meta-ads-analytics-2026-11). Senseys' names are listed
+#: in `EVENTOS_DE_TERCEIROS` and a test keeps Julia's names disjoint from them.
+EVENTO_META = {"lead_qualificado": "JuliaQualifiedLead", "visita_agendada": "Schedule", "resposta_cliente": "Contact"}
+EVENTOS_DE_TERCEIROS = frozenset({"CRMLead", "QualifiedLead", "Lead"})
 LEAD_EVENT_SOURCE = "Julia"
 JANELA_RESPOSTA = timedelta(days=7)  # Meta rejects events older than 7 days
 _NAO_DIGITO = re.compile(r"\D")
