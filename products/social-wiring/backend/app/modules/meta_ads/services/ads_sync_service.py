@@ -28,7 +28,7 @@ import calendar
 import logging
 from dataclasses import asdict
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from noctusai_lib.integrations.meta import (
@@ -40,6 +40,7 @@ from noctusai_lib.integrations.meta import (
     AdSet,
     MetaAdapter,
 )
+from noctusai_lib.integrations.meta._meta_api import DEFAULT_MAX_PAGES
 
 from app.modules.meta_ads.services.money import (
     cents_from_major_unit_float,
@@ -136,29 +137,43 @@ class AdsSyncService:
             count += 1
         return count
 
+    # The seed's account-level list calls (`list_ad_sets` / `list_ads`)
+    # request `limit=100` per page and stop at `graph_paged`'s default
+    # page count, WITHOUT telling the caller it stopped. A result of this
+    # size or more may therefore be truncated (prod 2026-11-26: 646 ads vs
+    # a 500-row ceiling).
+    # NOC-REMEDIATE[meta-list-page-ceiling]: the seed list methods should
+    # page to completion (as `ad_insights_series` does with max_pages=50)
+    # or report truncation; then delete this ceiling and the per-parent
+    # completion below. Owner: the seed meta-integration slice of
+    # project-history/roadmaps/meta-ads-analytics-2026-11.md phase 2.
+    # — 2026-11-26
+    LIST_PAGE_SIZE = 100
+    LIST_PAGE_CEILING = LIST_PAGE_SIZE * DEFAULT_MAX_PAGES
+
     def sync_hierarchy(
         self,
         *,
         org_id: UUID,
         adapter: MetaAdapter,
         ad_account_id: str,
-        deep: bool = False,
     ) -> dict[str, int]:
-        """Upsert the ``ads_objects`` hierarchy.
+        """Upsert the whole ``ads_objects`` hierarchy (campaigns, ad sets,
+        ads) on EVERY call, refreshing existing rows in place
+        (``on_conflict=org_id,object_id`` + a new ``synced_at``).
 
-        🔴 **Shallow by default (``deep=False``): campaigns ONLY.** Ad
-        sets and ads are fetched LIVE on drill-down via the router's
-        ``GET /campaigns/{id}/children`` endpoint (``list_ad_sets`` /
-        ``list_ads`` straight off the adapter) — so pre-populating them
-        into ``ads_objects`` is dead weight the UI never reads. It is
-        also the exact call-burst that tripped Meta's user-level rate
-        limit on the first live 12-month backfill (2026-07-23): eagerly
-        walking every campaign → every ad set → every ad is O(campaigns ×
-        adsets × ads) Graph calls on top of the insight backfill.
+        Rate-limit shape: ONE paged account-level listing per level
+        (``act_<id>/campaigns``, ``act_<id>/adsets``, ``act_<id>/ads``
+        with the creative expanded inline), so the cost is
+        O(rows / page size) Graph calls. The pre-2026-11-26 code walked
+        campaign -> ad set -> ad (O(campaigns x adsets) calls), tripped
+        Meta's user-level rate limit on 2026-07-23, and was then switched
+        to campaigns-only by default. That left the ad set and ad rows
+        frozen at the July backfill while Meta kept adding ads.
 
-        ``deep=True`` restores the full walk (retained as a capability,
-        not deleted) for a future explicit need — never on the daily /
-        backfill path. Returns per-level upsert counts."""
+        Parent ids come from the objects themselves (``AdSet.campaign_id``,
+        ``Ad.adset_id``). A ``MetaGraphError`` propagates (no-silent-error
+        contract, module docstring). Returns per-level upsert counts."""
         acct = _acct_prefixed(ad_account_id)
         now_iso = datetime.now(timezone.utc).isoformat()
         counts = {"campaigns": 0, "adsets": 0, "ads": 0}
@@ -170,30 +185,67 @@ class AdsSyncService:
             )
             counts["campaigns"] += 1
 
-            if not deep:
-                continue
-
-            adsets = adapter.list_ad_sets(ad_account_id, campaign_id=camp.id)
-            for aset in adsets:
-                self._upsert_object(
-                    self._adset_row(
-                        aset, org_id=org_id, act_id=acct,
-                        parent_id=camp.id, synced_at=now_iso,
-                    )
+        adsets = self._list_complete(
+            level="adsets",
+            first_page=adapter.list_ad_sets(ad_account_id),
+            parent_ids=[c.id for c in campaigns],
+            per_parent=lambda cid: adapter.list_ad_sets(ad_account_id, campaign_id=cid),
+            ad_account_id=ad_account_id,
+        )
+        for aset in adsets:
+            self._upsert_object(
+                self._adset_row(
+                    aset, org_id=org_id, act_id=acct,
+                    parent_id=aset.campaign_id, synced_at=now_iso,
                 )
-                counts["adsets"] += 1
+            )
+            counts["adsets"] += 1
 
-                ads = adapter.list_ads(ad_account_id, adset_id=aset.id)
-                for ad in ads:
-                    self._upsert_object(
-                        self._ad_row(
-                            ad, org_id=org_id, act_id=acct,
-                            parent_id=aset.id, synced_at=now_iso,
-                        )
-                    )
-                    counts["ads"] += 1
+        ads = self._list_complete(
+            level="ads",
+            first_page=adapter.list_ads(ad_account_id),
+            parent_ids=[a.id for a in adsets],
+            per_parent=lambda sid: adapter.list_ads(ad_account_id, adset_id=sid),
+            ad_account_id=ad_account_id,
+        )
+        for ad in ads:
+            self._upsert_object(
+                self._ad_row(
+                    ad, org_id=org_id, act_id=acct,
+                    parent_id=ad.adset_id, synced_at=now_iso,
+                )
+            )
+            counts["ads"] += 1
 
         return counts
+
+    def _list_complete(
+        self,
+        *,
+        level: str,
+        first_page: list[Any],
+        parent_ids: list[str],
+        per_parent: Callable[[str], list[Any]],
+        ad_account_id: str,
+    ) -> list[Any]:
+        """Return the account-level listing, or, when it filled the seed's
+        page ceiling (possibly truncated), the union of one parent-filtered
+        listing per parent. Logged at WARNING every time it happens, so the
+        extra Graph calls and the seed limitation stay visible."""
+        if len(first_page) < self.LIST_PAGE_CEILING:
+            return first_page
+        logger.warning(
+            "ads sync: %s listing for %s returned %d rows, the seed page "
+            "ceiling (%d) — may be truncated; completing per parent with "
+            "%d filtered calls (NOC-REMEDIATE[meta-list-page-ceiling])",
+            level, ad_account_id, len(first_page), self.LIST_PAGE_CEILING,
+            len(parent_ids),
+        )
+        by_id: dict[str, Any] = {obj.id: obj for obj in first_page}
+        for parent_id in parent_ids:
+            for obj in per_parent(parent_id):
+                by_id[obj.id] = obj
+        return list(by_id.values())
 
     # ─── W2.2/W2.3 — insight snapshots ──────────────────────────────────
 
@@ -438,7 +490,7 @@ class AdsSyncService:
         }
 
     def _adset_row(
-        self, aset: AdSet, *, org_id: UUID, act_id: str, parent_id: str, synced_at: str
+        self, aset: AdSet, *, org_id: UUID, act_id: str, parent_id: str | None, synced_at: str
     ) -> dict[str, Any]:
         return {
             "org_id": str(org_id),
@@ -464,7 +516,7 @@ class AdsSyncService:
         }
 
     def _ad_row(
-        self, ad: Ad, *, org_id: UUID, act_id: str, parent_id: str, synced_at: str
+        self, ad: Ad, *, org_id: UUID, act_id: str, parent_id: str | None, synced_at: str
     ) -> dict[str, Any]:
         return {
             "org_id": str(org_id),
