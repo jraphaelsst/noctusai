@@ -3,8 +3,9 @@
 Coverage:
   - ``sync_accounts`` — money-to-cents conversion, idempotent re-sync
     (run twice -> no duplicate row for the same ``(org_id, act_id)``)
-  - ``sync_hierarchy`` — campaign -> ad-set -> ad rows with correct
-    ``parent_id`` chains
+  - ``sync_hierarchy`` — campaign + ad-set + ad rows refreshed on EVERY
+    run via account-level listings, correct ``parent_id`` chains, page-
+    ceiling completion
   - ``snapshot_campaign_insights`` — actions/action_values persisted as
     jsonb, NULL-breakdown dedupe on re-sync
   - ``backfill_campaign_insights`` — campaign-level ONLY (never writes
@@ -290,50 +291,159 @@ class TestSyncAccounts:
 
 
 # ─── sync_hierarchy ───────────────────────────────────────────────────────
+class _SpyMetaAdapter(FakeMetaAdapter):
+    """Records every hierarchy list call (with its parent filter) so a test
+    can assert the SHAPE of the Graph traffic, not just the rows written.
+    A double of the external Meta service, not a patch of our own code."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, str | None]] = []
+        self.ads_override: list[Ad] | None = None
+
+    def list_ad_campaigns(self, ad_account_id):
+        self.calls.append(("campaigns", None))
+        return super().list_ad_campaigns(ad_account_id)
+
+    def list_ad_sets(self, ad_account_id, campaign_id=None):
+        self.calls.append(("adsets", campaign_id))
+        return super().list_ad_sets(ad_account_id, campaign_id=campaign_id)
+
+    def list_ads(self, ad_account_id, adset_id=None):
+        self.calls.append(("ads", adset_id))
+        if self.ads_override is not None and adset_id is None:
+            return list(self.ads_override)
+        return super().list_ads(ad_account_id, adset_id=adset_id)
+
+
+def _hierarchy_adapter(
+    *, campaigns: list[AdCampaign], adsets: list[AdSet], ads: list[Ad]
+) -> _SpyMetaAdapter:
+    acct = f"act_{_ACT_ID}"
+    adapter = _SpyMetaAdapter()
+    adapter.seed(
+        ad_campaigns_by_account={acct: campaigns},
+        ad_sets_by_account={acct: adsets},
+        ads_by_account={acct: ads},
+    )
+    return adapter
+
+
 class TestSyncHierarchy:
-    def test_shallow_by_default_campaigns_only(self):
-        """Default (deep=False): campaigns ONLY — the fix for the live
-        rate-limit blowout. Ad sets/ads come live via /children, so the
-        daily+backfill path must NOT walk them."""
+    def test_ads_and_adsets_refresh_on_every_run_not_only_the_first(self):
+        """🔴 THE regression guard (prod 2026-11-26): ``ads_objects`` adset/ad
+        rows were written once by the July backfill and NEVER again, while
+        Meta grew to 646 ads. The default daily call must upsert ad sets and
+        ads too, and a second run must UPDATE them (status, name, creative)
+        and add the ads created since."""
         admin = _FakeAdminClient()
         svc = AdsSyncService(admin_supabase=admin)
-        adapter = _adapter_with_fixtures()
 
+        first = _hierarchy_adapter(
+            campaigns=[_campaign()], adsets=[_adset()], ads=[_ad()],
+        )
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=first, ad_account_id=_ACT_ID)
+        rows = {r["object_id"]: r for r in admin.tables["ads_objects"]}
+        assert set(rows) == {"camp_1", "adset_1", "ad_1"}
+        first_synced = rows["ad_1"]["synced_at"]
+
+        paused_ad = Ad(
+            id="ad_1", name="Ad 1 renamed", status="PAUSED",
+            effective_status="PAUSED", adset_id="adset_1",
+            creative_id="creative_9",
+            creative_thumbnail_url="https://x.example/thumb9.jpg",
+        )
+        second = _hierarchy_adapter(
+            campaigns=[_campaign()],
+            adsets=[_adset(), _adset("adset_2", campaign_id="camp_1")],
+            ads=[paused_ad, _ad("ad_2", adset_id="adset_2")],
+        )
         counts = svc.sync_hierarchy(
-            org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID
+            org_id=ORG_ID, adapter=second, ad_account_id=_ACT_ID
         )
 
-        assert counts == {"campaigns": 1, "adsets": 0, "ads": 0}
+        assert counts == {"campaigns": 1, "adsets": 2, "ads": 2}
         rows = {r["object_id"]: r for r in admin.tables["ads_objects"]}
-        assert set(rows) == {"camp_1"}
-        assert rows["camp_1"]["level"] == "campaign"
-        assert rows["camp_1"]["parent_id"] is None
-
-    def test_deep_flag_walks_full_chain(self):
-        """deep=True restores the full walk (capability retained, never
-        on the daily/backfill path)."""
-        admin = _FakeAdminClient()
-        svc = AdsSyncService(admin_supabase=admin)
-        adapter = _adapter_with_fixtures()
-
-        counts = svc.sync_hierarchy(
-            org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True
-        )
-
-        assert counts == {"campaigns": 1, "adsets": 1, "ads": 1}
-        rows = {r["object_id"]: r for r in admin.tables["ads_objects"]}
-        assert rows["adset_1"]["parent_id"] == "camp_1"
+        assert len(admin.tables["ads_objects"]) == 5  # upsert, never a dup row
+        ad1 = rows["ad_1"]
+        assert ad1["effective_status"] == "PAUSED"
+        assert ad1["name"] == "Ad 1 renamed"
+        assert ad1["creative_id"] == "creative_9"
+        assert ad1["creative_thumbnail_url"] == "https://x.example/thumb9.jpg"
+        assert ad1["parent_id"] == "adset_1"
+        assert ad1["synced_at"] >= first_synced
+        assert rows["ad_2"]["parent_id"] == "adset_2"
+        assert rows["adset_2"]["parent_id"] == "camp_1"
         assert rows["adset_1"]["daily_budget_cents"] == 5000
-        assert rows["ad_1"]["parent_id"] == "adset_1"
-        assert rows["ad_1"]["creative_id"] == "creative_1"
+
+    def test_lists_each_level_once_at_account_level(self):
+        """Rate-limit safety: three paged account-level listings
+        (``act_<id>/campaigns|adsets|ads``), never the per-campaign ->
+        per-adset walk that tripped Meta's user-level limit on 2026-07-23."""
+        adapter = _hierarchy_adapter(
+            campaigns=[_campaign("c1"), _campaign("c2")],
+            adsets=[_adset("s1", "c1"), _adset("s2", "c2")],
+            ads=[_ad("a1", "s1"), _ad("a2", "s2")],
+        )
+        svc = AdsSyncService(admin_supabase=_FakeAdminClient())
+
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
+
+        assert adapter.calls == [
+            ("campaigns", None), ("adsets", None), ("ads", None),
+        ]
+
+    def test_page_ceiling_completes_ads_per_adset_loudly(self, caplog):
+        """The seed list call stops at a fixed page count. A result that
+        fills it may be truncated (prod has 646 ads, above the ceiling), so
+        the sync completes the level per parent AND says so at WARNING,
+        never a silently partial hierarchy."""
+        ceiling = AdsSyncService.LIST_PAGE_CEILING
+        adsets = [_adset("s1"), _adset("s2")]
+        truncated = [_ad(f"a{i}", "s1") for i in range(ceiling)]
+        full = truncated + [_ad("late_1", "s2"), _ad("late_2", "s2")]
+        adapter = _hierarchy_adapter(
+            campaigns=[_campaign()], adsets=adsets, ads=full,
+        )
+        adapter.ads_override = truncated  # account-level call hits the ceiling
+        admin = _FakeAdminClient()
+        svc = AdsSyncService(admin_supabase=admin)
+
+        with caplog.at_level("WARNING"):
+            counts = svc.sync_hierarchy(
+                org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID
+            )
+
+        ids = {
+            r["object_id"] for r in admin.tables["ads_objects"] if r["level"] == "ad"
+        }
+        assert {"late_1", "late_2"} <= ids
+        assert counts["ads"] == len(full)
+        assert ("ads", "s1") in adapter.calls and ("ads", "s2") in adapter.calls
+        assert any("page ceiling" in r.getMessage() for r in caplog.records)
+
+    def test_meta_graph_error_on_ads_propagates(self):
+        class _Boom(_SpyMetaAdapter):
+            def list_ads(self, ad_account_id, adset_id=None):
+                raise MetaGraphError("(#17) User request limit reached")
+
+        adapter = _Boom()
+        adapter.seed(
+            ad_campaigns_by_account={f"act_{_ACT_ID}": [_campaign()]},
+            ad_sets_by_account={f"act_{_ACT_ID}": [_adset()]},
+        )
+        svc = AdsSyncService(admin_supabase=_FakeAdminClient())
+
+        with pytest.raises(MetaGraphError):
+            svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
 
     def test_idempotent_resync_no_duplicate_object_rows(self):
         admin = _FakeAdminClient()
         svc = AdsSyncService(admin_supabase=admin)
         adapter = _adapter_with_fixtures()
 
-        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True)
-        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID, deep=True)
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
+        svc.sync_hierarchy(org_id=ORG_ID, adapter=adapter, ad_account_id=_ACT_ID)
 
         assert len(admin.tables["ads_objects"]) == 3
 
