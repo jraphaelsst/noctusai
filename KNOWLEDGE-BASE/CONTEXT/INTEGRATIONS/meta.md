@@ -171,6 +171,17 @@ them directly:
 | `MetaCredentialResolver` | Protocol — product-injected per-tenant OAuth token lookup (mirrors `CalendarCredentialResolver`) |
 | `OAuthMetaCredentials` | Resolver return shape (long-lived token + meta) |
 
+### Ad analytics (`ad_account_insights` + `meta.ads_kpis`, added 2026-11-26)
+| Symbol | Role |
+|---|---|
+| `MetaAdapter.ad_account_insights(ad_account_id, *, level, object_ids, name_contains, time_range \| date_preset, time_increment, breakdowns, attribution_windows)` | `GET act_{id}/insights` at ad / adset / campaign level with the retention field set (curve, 6 s, 30 s, ThruPlay, quartiles, avg watch), per-window actions, `results`, rankings; paged (50 pages x 500), paced + throttle backoff via the shared transport. Real + Fake (Fake applies level / id / name / breakdown filters) |
+| `AdAnalyticsRow` · `ActionValue` · `AdResult` · `VideoMetrics` | Typed row; `raw` keeps the Graph row. `ad_analytics_row_from_body` is the one parse |
+| `meta.ads_kpis` | Pure KPI engine (no I/O) — per ad, per objective (lifetime + window), daily series, breakdown buckets, fatigue, shared-pool status, `build_property_report(...).to_dict()` = contract `noctus.meta-ads-kpis/v1` (shape in the module docstring). Consumers: social-wiring campaigns API, the noctus MCP property-report tool |
+
+Traps encoded: leads = `actions[onsite_conversion.lead_grouped]` (`results` is absent for lead ads under the System-User token); `video_continuous_2_sec` omitted by Graph (not requested; use curve index 2); video fields dropped on `hourly_stats_*` breakdowns; insights `objective` can be legacy (`LINK_CLICKS` for an `OUTCOME_TRAFFIC` campaign) so pass `campaign_objectives`; `name_contains` is CONTAIN (filter exact codes with `ads_kpis.filter_property_rows`).
+
+**Graph version pin:** `_meta_api.DEFAULT_GRAPH_VERSION = "v25.0"` (2026-11-26; was v21.0, which Meta already served as v25 — expired versions are silently upgraded to the oldest live one). Next bump: v27 (roadmap `meta-ads-analytics-2026-11`, phase 2). social-wiring still overrides with its own `meta_graph_api_version` setting (v21.0).
+
 ### Scope auto-discovery + Graph helpers (`meta._meta_api`)
 | Symbol | Role |
 |---|---|

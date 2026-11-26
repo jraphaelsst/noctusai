@@ -362,6 +362,145 @@ class AdInsightsSeries:
     rows: list[AdInsightsRow] = field(default_factory=list)
 
 
+# ─── Ad analytics (account-edge insights with retention fields) ───────────
+#
+# `ad_account_insights(...)` returns these. They model the field set the
+# ad-analytics engine (`meta.ads_kpis`) needs — delivery, link funnel,
+# per-attribution-window actions, objective result, rankings and the full
+# video retention family — so social-wiring and the noctus MCP tool read ONE
+# parse. Field traps (verified live 2026-11-26) are documented on each type;
+# `raw` always keeps the untouched Graph row.
+
+
+@dataclass(frozen=True)
+class ActionValue:
+    """One entry of an `actions` / `unique_actions` / `cost_per_action_type`
+    list. `value` is the object's OWN attribution setting (what Ads Manager
+    shows); it can be ABSENT when the action only exists under another window
+    (e.g. a view-only conversion under a click-only setting) — `None` then,
+    never 0. `windows` holds the per-window values requested through
+    `action_attribution_windows` (e.g. `{"7d_click": 4.0, "1d_view": 2.0}`)."""
+
+    action_type: str
+    value: float | None = None
+    windows: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AdResult:
+    """The objective's result (`results` + `cost_per_result`). `indicator`
+    names it (`conversion_leads:conversion_lead`, `actions:leadgen.other`,
+    `profile_visit_view`, ...). Never sum results across objectives.
+
+    `value` / `cost` read the `default` attribution window (= the object's own
+    setting, = the UI), falling back to the first window Graph listed;
+    `values_by_window` / `costs_by_window` keep every window. Under the
+    System-User token `results` is ABSENT for plain lead ads — the row then
+    carries `result=None` and leads come from `actions`."""
+
+    indicator: str | None = None
+    value: float | None = None
+    cost: float | None = None
+    values_by_window: dict[str, float] = field(default_factory=dict)
+    costs_by_window: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class VideoMetrics:
+    """Video retention family of one insights row. Counts are the summed
+    `value` of each `video_*_actions` list (Graph wraps them as
+    `[{"action_type": "video_view", "value": "N"}]`).
+
+    - `views_3s` — 3-second views = `actions[video_view]` (NOT a video_* field).
+    - `plays` — `video_play_actions`: autoplay starts (inflated; p25 is the
+      better "real views").
+    - `play_curve` — `video_play_curve_actions[0].value`, 22 ints = % of plays
+      reaching each bucket: idx 0-14 = second 0-14; 15-17 = [15,20) [20,25)
+      [25,30); 18-20 = [30,40) [40,50) [50,60); 21 = >60 s.
+    - `video_continuous_2_sec_watched_actions` is OMITTED by Graph on our
+      account (v22/v25/v27) and is not requested; use `play_curve[2]`.
+    - video fields cannot be combined with hourly breakdowns (the adapter
+      drops them there), so every field is optional."""
+
+    plays: float | None = None
+    views_3s: float | None = None
+    thruplay: float | None = None
+    p25: float | None = None
+    p50: float | None = None
+    p75: float | None = None
+    p95: float | None = None
+    p100: float | None = None
+    avg_time_s: float | None = None
+    views_6s: float | None = None
+    views_30s: float | None = None
+    cost_per_thruplay: float | None = None
+    play_curve: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True)
+class AdAnalyticsRow:
+    """One row of `GET act_{id}/insights` at `level` ad / adset / campaign.
+
+    Identity columns are whatever Graph returned for the level (an ad row
+    carries campaign/adset/ad ids + names). Money fields are major units as
+    Graph sends them (`spend` "103.98" -> 103.98). `ctr` counts ALL clicks
+    (inflated by expand/profile opens); judge intent by
+    `inline_link_click_ctr`. `frequency` is Graph's; `meta.ads_kpis`
+    recomputes impressions/reach and never averages it. Reach is not additive
+    across rows. `breakdown` holds the requested breakdown dimensions of THIS
+    row (e.g. `{"age": "25-34", "gender": "female"}`)."""
+
+    level: str
+    date_start: str | None = None
+    date_stop: str | None = None
+    account_id: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+    objective: str | None = None
+    optimization_goal: str | None = None
+    spend: float | None = None
+    impressions: float | None = None
+    reach: float | None = None
+    frequency: float | None = None
+    cpm: float | None = None
+    clicks: float | None = None
+    ctr: float | None = None
+    inline_link_clicks: float | None = None
+    inline_link_click_ctr: float | None = None
+    cost_per_inline_link_click: float | None = None
+    outbound_clicks: float | None = None
+    actions: dict[str, ActionValue] = field(default_factory=dict)
+    unique_actions: dict[str, ActionValue] = field(default_factory=dict)
+    cost_per_action_type: dict[str, ActionValue] = field(default_factory=dict)
+    result: AdResult | None = None
+    quality_ranking: str | None = None
+    engagement_rate_ranking: str | None = None
+    conversion_rate_ranking: str | None = None
+    video: VideoMetrics = field(default_factory=VideoMetrics)
+    breakdown: dict[str, str] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def object_id(self) -> str | None:
+        """The id of the row's own level (`ad_id` for level ad, ...)."""
+        return {"ad": self.ad_id, "adset": self.adset_id, "campaign": self.campaign_id}.get(self.level)
+
+    @property
+    def object_name(self) -> str | None:
+        return {"ad": self.ad_name, "adset": self.adset_name, "campaign": self.campaign_name}.get(self.level)
+
+    def action(self, action_type: str, *, window: str | None = None) -> float | None:
+        """Value of one action (`window=None` = the object's own setting)."""
+        a = self.actions.get(action_type)
+        if a is None:
+            return None
+        return a.value if window is None else a.windows.get(window)
+
+
 @dataclass(frozen=True)
 class MetaConnectionStatus:
     """Adapter introspection surface for `/api/meta/status`.
@@ -921,6 +1060,20 @@ class MetaAdapter(Protocol):
         action_attribution_windows: list[str] | None = None,
         fields: list[str] | None = None,
     ) -> AdInsightsSeries: ...
+
+    def ad_account_insights(
+        self,
+        ad_account_id: str,
+        *,
+        level: str = "ad",
+        object_ids: list[str] | None = None,
+        name_contains: str | None = None,
+        time_range: tuple[date, date] | None = None,
+        date_preset: str | None = None,
+        time_increment: int | str = "all_days",
+        breakdowns: list[str] | None = None,
+        attribution_windows: Sequence[str] = ("7d_click", "1d_view"),
+    ) -> list[AdAnalyticsRow]: ...
 
     def list_activities(
         self, ad_account_id: str, since: int, until: int

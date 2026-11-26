@@ -26,6 +26,7 @@ from noctusai_lib.integrations.meta._meta_api import (
 from noctusai_lib.integrations.meta.mappers import (
     business_discovery_fields_param,
     normalize_ig_handle,
+    split_breakdowns,
 )
 from noctusai_lib.integrations.meta.types import (
     BusinessDiscoveryPage,
@@ -35,6 +36,7 @@ from noctusai_lib.integrations.meta.types import (
     AdCampaign,
     AdCreative,
     AdCreativeSpec,
+    AdAnalyticsRow,
     AdInsights,
     AdInsightsSeries,
     AdSet,
@@ -90,6 +92,7 @@ class FakeMetaAdapter:
         self._ad_sets_by_account: dict[str, list[AdSet]] = {}
         self._ads_by_account: dict[str, list[Ad]] = {}
         self._ad_insights_series: dict[str, AdInsightsSeries] = {}
+        self._ad_account_insights: dict[str, list[AdAnalyticsRow]] = {}
         self._activities_by_account: dict[str, list[AdActivity]] = {}
         self._leadgen_forms_by_page: dict[str, list[LeadgenForm]] = {}
         self._leads_by_form: dict[str, list[Lead]] = {}
@@ -162,6 +165,7 @@ class FakeMetaAdapter:
         ad_sets_by_account: dict[str, list[AdSet]] | None = None,
         ads_by_account: dict[str, list[Ad]] | None = None,
         ad_insights_series: dict[str, AdInsightsSeries] | None = None,
+        ad_account_insights: dict[str, list[AdAnalyticsRow]] | None = None,
         activities_by_account: dict[str, list[AdActivity]] | None = None,
         leadgen_forms_by_page: dict[str, list[LeadgenForm]] | None = None,
         leads_by_form: dict[str, list[Lead]] | None = None,
@@ -219,6 +223,10 @@ class FakeMetaAdapter:
             }
         if ad_insights_series is not None:
             self._ad_insights_series = dict(ad_insights_series)
+        if ad_account_insights is not None:
+            self._ad_account_insights = {
+                k: list(v) for k, v in ad_account_insights.items()
+            }
         if activities_by_account is not None:
             self._activities_by_account = {
                 k: list(v) for k, v in activities_by_account.items()
@@ -580,6 +588,45 @@ class FakeMetaAdapter:
         return self._ad_insights_series.get(
             object_id, AdInsightsSeries(object_id=object_id, level=level)
         )
+
+    def ad_account_insights(
+        self,
+        ad_account_id: str,
+        *,
+        level: str = "ad",
+        object_ids: list[str] | None = None,
+        name_contains: str | None = None,
+        time_range=None,
+        date_preset: str | None = None,
+        time_increment: int | str = "all_days",
+        breakdowns: list[str] | None = None,
+        attribution_windows: Sequence[str] = ("7d_click", "1d_view"),
+    ) -> list[AdAnalyticsRow]:
+        # Seeded, not computed — but the server-side FILTERS are applied so a
+        # consumer exercising them sees the Real adapter's shape: rows of the
+        # requested `level`, `object_ids` (IN) / `name_contains` (CONTAIN,
+        # case-insensitive like Graph) and the requested breakdown dimensions
+        # (rows seeded without a breakdown answer breakdown-less calls).
+        # time_range / date_preset / time_increment / attribution_windows are
+        # accepted for parity and ignored. Same validation as the Real one.
+        if level not in {"ad", "adset", "campaign"}:
+            raise ValueError(f"level must be ad|adset|campaign, got {level!r}")
+        if time_range is not None and date_preset:
+            raise ValueError("pass time_range OR date_preset, not both")
+        acct = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
+        rows = self._ad_account_insights.get(
+            acct, self._ad_account_insights.get(ad_account_id, [])
+        )
+        dims = set(split_breakdowns(breakdowns))
+        ids = set(object_ids or [])
+        needle = (name_contains or "").lower()
+        return [
+            r for r in rows
+            if r.level == level
+            and (not ids or r.object_id in ids)
+            and (not needle or needle in (r.object_name or "").lower())
+            and set(r.breakdown) == dims
+        ]
 
     def list_activities(
         self, ad_account_id: str, since: int, until: int
