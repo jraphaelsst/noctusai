@@ -531,12 +531,13 @@ class TestBackfillCampaignInsights:
         snapshot_rows = admin.tables["ads_insight_snapshots"]
         assert snapshot_rows  # the fixture's single row is returned every chunk
         assert all(r["level"] == "campaign" for r in snapshot_rows)
-        # Backfill's hierarchy sync is SHALLOW — only campaign objects land
-        # in ads_objects; ad-set/ad rows are fetched live on drill-down and
-        # never backfilled (rate-limit fix, 2026-07-23).
+        # The INSIGHT HISTORY is campaign-only; the object hierarchy is not:
+        # since 2026-11-26 every hierarchy sync (backfill included) upserts
+        # ad sets and ads too, through account-level listings, so the
+        # ads_objects rows never freeze at the first run again.
         object_rows = admin.tables["ads_objects"]
         levels_in_objects = {r["level"] for r in object_rows}
-        assert levels_in_objects == {"campaign"}
+        assert levels_in_objects == {"campaign", "adset", "ad"}
         levels_in_snapshots = {r["level"] for r in snapshot_rows}
         assert levels_in_snapshots == {"campaign"}
 
