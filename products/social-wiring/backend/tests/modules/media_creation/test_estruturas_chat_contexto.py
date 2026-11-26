@@ -307,7 +307,7 @@ def test_the_model_is_never_asked_to_use_tools():
     assert "Você não usa ferramentas" in ec.REGRA_PLACEHOLDERS
     from app.modules.media_creation.prompts import chat_headline
 
-    assert chat_headline.PROMPT_VERSAO == "chat-headline-v3-draft"
+    assert chat_headline.PROMPT_VERSAO == "chat-headline-v4-draft"
 
 
 def test_the_pool_replaced_the_virais_blueprint_pool():

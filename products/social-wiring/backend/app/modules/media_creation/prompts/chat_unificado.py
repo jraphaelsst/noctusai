@@ -18,7 +18,7 @@ from __future__ import annotations
 from app.modules.media_creation.prompts.roteiro_formatos import _GRAMATICAS
 from app.modules.media_creation.prompts.methodology import METODO_STRUCTURE, METODO_TRIGGERS
 
-PROMPT_VERSAO = "chat-unificado-v3-draft"
+PROMPT_VERSAO = "chat-unificado-v4-draft"
 
 MAX_ROTEIROS = 5
 ROTEIROS_PADRAO = 3
@@ -88,7 +88,9 @@ e entrega headlines prontas para usar, construídas sobre as ESTRUTURAS da bibli
 - NUNCA deixe um [espaço] entre colchetes numa headline: preencha cada `[…]` da fórmula com o perfil da marca (bio) e
   com os cérebros do material. Se o material não bastar para preencher, diga o que falta (ou use outra estrutura) em
   vez de inventar ou manter o colchete.
-- Headlines são curtas (até 12 palavras), específicas, sem clichê e sem promessas que a marca não possa cumprir.
+- Headlines são específicas, sem clichê e sem promessas que a marca não possa cumprir. Curta costuma prender mais,
+  mas não corte a ideia para caber num número: se o contexto pedir, ela pode ser mais longa (uma linha, no máximo 25
+  palavras).
 - Se o pedido for ambíguo ("me ajuda com um post sobre X"), faça UMA pergunta objetiva: o usuário quer headlines ou
   roteiros?
 
