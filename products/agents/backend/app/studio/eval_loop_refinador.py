@@ -41,7 +41,10 @@ __all__ = [
 CHAVE_REFINADOR = "agents.eval_loop.refinar"
 #: one refine call never costs more than this, whatever the loop budget has left (the per-run cap of the rounds is untouched)
 TETO_REFINO_USD = 0.50
-MAX_TOKENS_REFINO = 4000
+#: the answer carries the WHOLE new text of one line (`novo_conteudo`), and a real agent's line can be long: 4000 cut the first prod
+#: refine off mid-JSON (Julia, 2026-11-26: 40,898 in / 4,000 out -> unparseable). Same ceiling as an agent turn; the cost
+#: estimate below still has to fit TETO_REFINO_USD before the call is made.
+MAX_TOKENS_REFINO = 16000
 _CHARS_POR_TOKEN = 2.5
 
 
@@ -60,7 +63,8 @@ class EntradaRefino:
 @dataclass(frozen=True)
 class ResultadoRefino:
     """``saida`` is the model's parsed proposal (NOT yet validated), or ``None`` with a fixed ``codigo``: ``refinador_indisponivel``
-    (no registry row / inactive / unreadable) | ``modelo_sem_preco`` | ``limite_de_custo`` | ``llm_erro`` | ``saida_invalida``."""
+    (no registry row / inactive / unreadable) | ``modelo_sem_preco`` | ``limite_de_custo`` | ``llm_erro`` | ``saida_truncada``
+    (the answer used every output token: cut off, never judged as a format error) | ``saida_invalida``."""
 
     saida: SaidaRefino | None
     custo_usd: float
@@ -156,7 +160,14 @@ class LlmRefinador:
             return ResultadoRefino(None, 0.0, "llm_erro", modelo)
         custo = r.custo_usd if r.custo_usd is not None else estimativa  # unmeasured != free
         saida = interpretar_saida(r.texto)
-        return ResultadoRefino(saida, custo, None if saida else "saida_invalida", r.modelo)
+        if saida is not None:
+            return ResultadoRefino(saida, custo, None, r.modelo)
+        # Never a silent refusal: the shape of what came back (lengths only, never the text - it quotes the lead transcripts)
+        truncada = r.tokens_saida is not None and r.tokens_saida >= MAX_TOKENS_REFINO
+        logger.warning("agents.eval_loop.refino_saida_rejeitada agente=%s codigo=%s tokens_entrada=%s tokens_saida=%s chars=%s",
+                       entrada.agente_chave, "saida_truncada" if truncada else "saida_invalida", r.tokens_entrada,
+                       r.tokens_saida, len(r.texto or ""))
+        return ResultadoRefino(None, custo, "saida_truncada" if truncada else "saida_invalida", r.modelo)
 
 
 def get_refinador(settings: Any, *, registro: Callable[[], Any] | None = None) -> Refinador:
