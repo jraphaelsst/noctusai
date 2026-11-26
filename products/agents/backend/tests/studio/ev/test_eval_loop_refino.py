@@ -23,10 +23,11 @@ from app.stores.studio_eval_loops import FakeLoopStore
 from app.stores.studio_eval_refino import EscritaLinha, FakeRefinoStore, SupabaseRefinoStore
 from app.studio.eval_loop_driver import LoopDriver, agendar_ao_fechar, install_driver
 from app.studio.eval_loop_refinador import (
-    CHAVE_REFINADOR, EntradaRefino, FakeRefinador, LlmRefinador, get_refinador, interpretar_saida,
+    CHAVE_REFINADOR, MAX_TOKENS_REFINO, EntradaRefino, FakeRefinador, LlmRefinador, get_refinador, interpretar_saida,
 )
 from app.studio.eval_loop_refino import (
-    CasoFalhando, LinhasDoAgente, RefinoRecusado, SaidaRefino, SecaoLinha, deve_refinar, trecho_do_diff, validar_proposta,
+    MENSAGENS_REFINO, CasoFalhando, LinhasDoAgente, RefinoRecusado, SaidaRefino, SecaoLinha, deve_refinar, trecho_do_diff,
+    validar_proposta,
 )
 from app.studio.eval_loop_refino_protegido import protegidas_para_rpc
 from app.studio.eval_loop_refino_service import RefinoService
@@ -480,12 +481,12 @@ def _registro(modelo="claude-haiku-5-5", ativo=True):
 
 
 class Chat:
-    def __init__(self, texto, *, custo=0.03, usage=True):
-        self.texto, self.custo, self.usage, self.chamadas = texto, custo, usage, []
+    def __init__(self, texto, *, custo=0.03, usage=True, tokens_saida=200):
+        self.texto, self.custo, self.usage, self.tokens_saida, self.chamadas = texto, custo, usage, tokens_saida, []
 
     async def __call__(self, messages, **kw):
         self.chamadas.append((messages, kw))
-        u = SimpleNamespace(prompt_tokens=1000, completion_tokens=200, cost_usd=self.custo) if self.usage else None
+        u = SimpleNamespace(prompt_tokens=1000, completion_tokens=self.tokens_saida, cost_usd=self.custo) if self.usage else None
         return SimpleNamespace(text=self.texto, usage=u)
 
 
@@ -507,6 +508,8 @@ def test_the_real_refiner_sends_the_registry_prompt_plus_data_only_and_reports_t
     (lambda: _registro(modelo="modelo-sem-preco"), Chat("{}"), 1.0, "modelo_sem_preco"),
     (_registro, Chat("{}"), 0.00001, "limite_de_custo"),  # the estimate does not fit the cap: the call is NOT made
     (_registro, Chat("não é json"), 1.0, "saida_invalida"),
+    # cut off at the output cap (prod 2026-11-26, Julia: 4,000 of 4,000): named as truncation, never as a format error
+    (_registro, Chat('{"alvo": {"tipo": "secao", "chave": "tom"}, "novo_conteudo": "x', tokens_saida=MAX_TOKENS_REFINO), 1.0, "saida_truncada"),
     (_registro, Chat(json.dumps({"alvo": {"tipo": "secao", "chave": "tom"}, "novo_conteudo": "x" * 30, "racional": "r",
                                  "casos_alvo": ["a"], "ativo": True})), 1.0, "saida_invalida"),
 ])
@@ -515,6 +518,12 @@ def test_the_real_refiner_refuses_with_a_fixed_code(registro, chat, limite, codi
     assert r.saida is None and r.codigo == codigo
     if codigo in ("refinador_indisponivel", "modelo_sem_preco", "limite_de_custo"):
         assert chat.chamadas == [] and r.custo_usd == 0.0
+
+
+def test_the_refine_output_cap_fits_a_long_line_and_the_cost_ceiling():
+    # the first prod refine (Julia) needed more than 4,000 output tokens; the cap must leave room for one long line
+    assert MAX_TOKENS_REFINO >= 16000
+    assert "saida_truncada" in MENSAGENS_REFINO and "saida_invalida" in MENSAGENS_REFINO
 
 
 def test_an_unmeasured_call_is_charged_its_estimate_not_zero_and_a_provider_error_is_a_fixed_code():
