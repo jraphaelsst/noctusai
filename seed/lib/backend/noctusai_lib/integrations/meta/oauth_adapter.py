@@ -50,6 +50,10 @@ from noctusai_lib.integrations.meta import _meta_api
 from noctusai_lib.integrations.meta._meta_api import MetaGraphError
 from noctusai_lib.integrations.meta.credentials import MetaCredentialResolver
 from noctusai_lib.integrations.meta.mappers import (
+    AD_ANALYTICS_BASE_FIELDS,
+    AD_ANALYTICS_VIDEO_FIELDS,
+    ad_analytics_row_from_body,
+    split_breakdowns,
     business_discovery_fields_param,
     business_discovery_page_from_body,
     normalize_ig_handle,
@@ -88,6 +92,7 @@ from noctusai_lib.integrations.meta.mappers import (
     post_from_body,
 )
 from noctusai_lib.integrations.meta.types import (
+    AdAnalyticsRow,
     BusinessDiscoveryPage,
     Ad,
     AdAccount,
@@ -1290,6 +1295,103 @@ class MetaOAuthAdapter:
                 if isinstance(r, dict)
             ],
         )
+
+    def ad_account_insights(
+        self,
+        ad_account_id: str,
+        *,
+        level: str = "ad",
+        object_ids: list[str] | None = None,
+        name_contains: str | None = None,
+        time_range: tuple[date, date] | None = None,
+        date_preset: str | None = None,
+        time_increment: int | str = "all_days",
+        breakdowns: list[str] | None = None,
+        attribution_windows: Sequence[str] = ("7d_click", "1d_view"),
+    ) -> list[AdAnalyticsRow]:
+        """Ad-analytics insights on the AD ACCOUNT edge
+        (`GET act_{id}/insights`) at `level` ad / adset / campaign — the
+        retention-aware pull the ads-analytics engine (`meta.ads_kpis`)
+        computes over. Every row Graph returns, typed (`AdAnalyticsRow`),
+        across all pages.
+
+        - `object_ids` filters server-side (`<level>.id IN [...]`);
+          `name_contains` filters `<level>.name CONTAIN <s>` — note CONTAIN
+          '10449' also matches '104490': keep exact property codes with
+          `ads_kpis.filter_property_rows`.
+        - `time_range` (since, until) XOR `date_preset`; neither = `maximum`
+          (lifetime, what the reference extractor pulls). Both = ValueError.
+        - `time_increment`: `1` (daily; zero-delivery days return NO row) |
+          `"all_days"` | `"monthly"`.
+        - `breakdowns`: e.g. `["age,gender"]`, `["publisher_platform",
+          "platform_position"]`. An `hourly_stats_*` breakdown DROPS the
+          video fields (Graph rejects the combination) and returns
+          reach/frequency as 0.
+        - `attribution_windows` -> `action_attribution_windows`; every action
+          keeps its per-window values (`ActionValue.windows`).
+
+        Throttle: the transport paces on the `meta` bucket and backs off on
+        Graph throttle codes (4/17/32/613, 80000 ads-insights BUC) honouring
+        the regain-access header. Quota on the `development_access` tier =
+        600 + 400 x active ads per account per hour.
+
+        **Production gate:** `ads_read`; absent it Graph's permission error
+        surfaces as `MetaGraphError` (`requires_app_review`), never an empty
+        list."""
+
+        import json
+
+        if level not in {"ad", "adset", "campaign"}:
+            raise ValueError(f"level must be ad|adset|campaign, got {level!r}")
+        if time_range is not None and date_preset:
+            raise ValueError("pass time_range OR date_preset, not both")
+        dims = split_breakdowns(breakdowns)
+        hourly = any(d.startswith("hourly_stats") for d in dims)
+        fields = list(AD_ANALYTICS_BASE_FIELDS)
+        if not hourly:
+            fields += list(AD_ANALYTICS_VIDEO_FIELDS)
+        filtering: list[dict[str, Any]] = []
+        if object_ids:
+            filtering.append(
+                {"field": f"{level}.id", "operator": "IN", "value": list(object_ids)}
+            )
+        if name_contains:
+            filtering.append(
+                {"field": f"{level}.name", "operator": "CONTAIN", "value": name_contains}
+            )
+        params: dict[str, Any] = {
+            "level": level,
+            "fields": ",".join(fields),
+            "time_increment": str(time_increment),
+            "limit": 500,
+        }
+        if time_range is not None:
+            since_date, until_date = time_range
+            params["time_range"] = json.dumps({
+                "since": since_date.isoformat(),
+                "until": until_date.isoformat(),
+            })
+        else:
+            params["date_preset"] = date_preset or "maximum"
+        if filtering:
+            params["filtering"] = json.dumps(filtering)
+        if dims:
+            params["breakdowns"] = ",".join(dims)
+        if attribution_windows:
+            params["action_attribution_windows"] = json.dumps(list(attribution_windows))
+        acct = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
+        rows = _meta_api.graph_paged(
+            f"{acct}/insights",
+            access_token=self._user_token(),
+            params=params,
+            version=self._version,
+            max_pages=50,
+        )
+        return [
+            ad_analytics_row_from_body(r, level=level, breakdown_keys=dims)
+            for r in rows
+            if isinstance(r, dict)
+        ]
 
     def list_activities(
         self, ad_account_id: str, since: int, until: int

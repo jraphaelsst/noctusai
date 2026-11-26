@@ -101,7 +101,11 @@ def _meta_paced_retry(fn: Callable[..., _T]) -> Callable[..., _T]:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_GRAPH_VERSION = "v21.0"
+# Pinned Graph version. v25.0 since 2026-11-26: Meta already served our v21/v22
+# calls as v25 (an expired version is silently upgraded to the oldest live one),
+# so this pin is behaviour-preserving. Next: v27 (roadmap
+# meta-ads-analytics-2026-11, phase 2). Expiry calendar: KB § INTEGRATIONS/meta.md.
+DEFAULT_GRAPH_VERSION = "v25.0"
 GRAPH_BASE = "https://graph.facebook.com"
 # Instagram-Login model host — the Instagram API with Instagram Login serves
 # from graph.instagram.com (NOT graph.facebook.com) with a per-client IG User

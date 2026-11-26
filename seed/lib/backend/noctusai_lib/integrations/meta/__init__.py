@@ -13,14 +13,17 @@ account). Sibling to `google_calendar/`, `google_maps/`,
   `InstagramMedia`, `PostInsights`, `MetaConnectionStatus`,
   `PublishedPost`, `PublishedMedia`, `MediaProcessingStatus`,
   `AdCampaign`, `AdAccount`, `AdSet`, `Ad`, `AdCreative`, `AdInsights`,
-  `AdInsightsRow`, `AdInsightsSeries`, `AdActivity`, `InstagramComment`,
+  `AdInsightsRow`, `AdInsightsSeries`, `AdAnalyticsRow` (+ `ActionValue`,
+  `AdResult`, `VideoMetrics`), `AdActivity`, `InstagramComment`,
   `FacebookComment`, `Conversation`, `DirectMessage`, `LeadgenForm`,
   `LeadgenQuestion`, `Lead`, `LeadFieldEntry`, `PageSubscription`,
   `LeadgenEvent` (the webhook-parsed shape — see `leadgen_webhook`
   below).
 - Contract: `MetaAdapter` (Protocol) — read surface + ads-read surface
   (list ad accounts/campaigns/sets/ads, multi-row `ad_insights_series`
-  with `actions`/`action_values` conversion metrics, ad-account change
+  with `actions`/`action_values` conversion metrics, account-edge
+  `ad_account_insights` with the retention fields — consumed by the pure
+  `ads_kpis` engine — ad-account change
   log via `list_activities`) + lead-ads read/webhook surface
   (`list_leadgen_forms` / `get_leadgen_form` / `list_leads` /
   `get_lead` / `subscribe_page_to_leadgen` /
@@ -143,6 +146,7 @@ from noctusai_lib.integrations.meta.mappers import (
     ad_account_from_body,
     ad_activity_from_body,
     ad_from_body,
+    ad_analytics_row_from_body,
     ad_insights_row_from_body,
     ad_set_from_body,
     conversation_from_body,
@@ -168,8 +172,12 @@ from noctusai_lib.integrations.meta.types import (
     AdCreative,
     AdCreativeSpec,
     AdInsights,
+    ActionValue,
+    AdAnalyticsRow,
     AdInsightsRow,
     AdInsightsSeries,
+    AdResult,
+    VideoMetrics,
     AdSet,
     AdSetSpec,
     AdSpec,
@@ -260,8 +268,12 @@ __all__ = [
     "AdCreative",
     "AdCreativeSpec",
     "AdInsights",
+    "ActionValue",
+    "AdAnalyticsRow",
     "AdInsightsRow",
     "AdInsightsSeries",
+    "AdResult",
+    "VideoMetrics",
     "AdSet",
     "AdSetSpec",
     "AdSpec",
@@ -315,6 +327,7 @@ __all__ = [
     "ad_account_from_body",
     "ad_activity_from_body",
     "ad_from_body",
+    "ad_analytics_row_from_body",
     "ad_insights_row_from_body",
     "ad_set_from_body",
     "build_ig_authorize_url",

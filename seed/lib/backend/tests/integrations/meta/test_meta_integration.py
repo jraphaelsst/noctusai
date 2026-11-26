@@ -20,6 +20,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION as _GV
 from noctusai_lib.integrations.meta import (
     Conversation,
     DirectMessage,
@@ -756,7 +757,7 @@ class TestInstagramLoginOAuthAdapterMe:
             me = adapter.me()
         assert me == body
         call_args, call_kwargs = mock_get.call_args
-        assert call_args[0] == "https://graph.instagram.com/v21.0/me"
+        assert call_args[0] == f"https://graph.instagram.com/{_GV}/me"
         assert call_kwargs["params"]["fields"] == "id,username"
         assert call_kwargs["params"]["access_token"] == "IG-LONG60D"
 
@@ -790,7 +791,7 @@ class TestInstagramLoginOAuthAdapterSend:
             with patch.object(httpx, "post", side_effect=_post):
                 out = adapter.send_instagram_message("U1", "olá")
 
-        assert captured["url"] == "https://graph.instagram.com/v21.0/me/messages"
+        assert captured["url"] == f"https://graph.instagram.com/{_GV}/me/messages"
         assert captured["data"]["access_token"] == "IG-LONG60D"
         assert json.loads(captured["data"]["recipient"]) == {"id": "U1"}
         assert json.loads(captured["data"]["message"]) == {"text": "olá"}

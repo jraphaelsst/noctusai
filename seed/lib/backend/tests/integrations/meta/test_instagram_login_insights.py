@@ -15,6 +15,7 @@ import httpx
 import pytest
 from unittest.mock import patch
 
+from noctusai_lib.integrations.meta._meta_api import DEFAULT_GRAPH_VERSION as _GV
 from noctusai_lib.integrations.meta import (
     IG_MEDIA_METRICS_BY_PRODUCT_TYPE,
     FakeInstagramLoginAdapter,
@@ -113,7 +114,7 @@ class TestRealProfile:
             prof = InstagramLoginOAuthAdapter("TOK").get_profile()
         assert prof.ig_user_id == "1784" and prof.followers_count == 1500 and prof.website == "https://x"
         path, params = router.calls[0]
-        assert path == "/v21.0/me"
+        assert path == f"/{_GV}/me"
         assert "followers_count" in params["fields"] and "biography" in params["fields"]
 
     def test_rejected_optional_fields_fall_back_to_core(self):
@@ -156,7 +157,7 @@ class TestRealMediaList:
         assert p1.items[0].like_count == 4 and p1.items[0].timestamp.year == 2026
         assert p1.items[1].like_count is None  # hidden/absent → None, never 0
         assert [m.id for m in p2.items] == ["3"] and p2.next_cursor is None
-        assert router.calls[0][0] == "/v21.0/me/media"
+        assert router.calls[0][0] == f"/{_GV}/me/media"
         assert "media_product_type" in router.calls[0][1]["fields"]
 
     def test_time_based_paging_cursor(self):
@@ -190,7 +191,7 @@ class TestRealMediaList:
         with patch.object(httpx, "get", side_effect=router):
             stories = InstagramLoginOAuthAdapter("TOK").list_stories()
         assert stories[0].media_product_type == "STORY"
-        assert router.calls[0][0] == "/v21.0/me/stories"
+        assert router.calls[0][0] == f"/{_GV}/me/stories"
 
 
 class TestRealMediaInsights:
@@ -201,7 +202,7 @@ class TestRealMediaInsights:
         router = _Router(handler)
         with patch.object(httpx, "get", side_effect=router):
             res = InstagramLoginOAuthAdapter("TOK").get_media_insights("M1", "REELS")
-        assert router.calls[0][0] == "/v21.0/M1/insights"
+        assert router.calls[0][0] == f"/{_GV}/M1/insights"
         assert router.calls[0][1]["metric"].split(",") == list(IG_MEDIA_METRICS_BY_PRODUCT_TYPE["REELS"])
         assert res.unsupported == () and res.values["views"] == 1
 
@@ -242,7 +243,7 @@ class TestRealUserInsights:
             res = InstagramLoginOAuthAdapter("TOK").get_user_insights(
                 "1784", ["reach", "views", "replies"], since=1, until=2)
         path, params = router.calls[0]
-        assert path == "/v21.0/1784/insights"
+        assert path == f"/{_GV}/1784/insights"
         assert params["metric_type"] == "total_value" and params["period"] == "day"
         assert params["since"] == 1 and params["until"] == 2
         assert res.totals == {"reach": 5, "views": 5, "replies": None}

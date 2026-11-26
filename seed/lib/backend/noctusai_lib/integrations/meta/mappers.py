@@ -18,8 +18,12 @@ from noctusai_lib.integrations.meta.types import (
     Ad,
     AdAccount,
     AdActivity,
+    AdAnalyticsRow,
     AdCampaign,
     AdInsightsRow,
+    AdResult,
+    ActionValue,
+    VideoMetrics,
     AdSet,
     BusinessDiscoveryMedia,
     BusinessDiscoveryPage,
@@ -715,6 +719,211 @@ def ad_insights_row_from_body(
     )
 
 
+# ─── Ad analytics rows (`ad_account_insights`) ────────────────────────────
+
+# The field set `ad_account_insights` requests — exactly the retention-aware
+# set the 2026-11-26 dev extractor validated live
+# (products/social-wiring/projects/meta-ads-snapshots/extract_api.py), minus
+# `video_continuous_2_sec_watched_actions` (always omitted by Graph on our
+# account; use the play curve's index 2). The id/name columns are always
+# requested; Graph fills the ones that exist at the requested level.
+AD_ANALYTICS_BASE_FIELDS: tuple[str, ...] = (
+    "account_id", "campaign_id", "campaign_name", "adset_id", "adset_name",
+    "ad_id", "ad_name", "objective", "optimization_goal", "date_start",
+    "date_stop", "spend", "impressions", "reach", "frequency", "cpm", "clicks",
+    "ctr", "inline_link_clicks", "inline_link_click_ctr",
+    "cost_per_inline_link_click", "outbound_clicks", "actions",
+    "unique_actions", "cost_per_action_type", "quality_ranking",
+    "engagement_rate_ranking", "conversion_rate_ranking", "results",
+    "cost_per_result",
+)
+# Video fields — Graph REJECTS them combined with an hourly breakdown, so the
+# adapter drops this group whenever an `hourly_stats_*` breakdown is asked.
+AD_ANALYTICS_VIDEO_FIELDS: tuple[str, ...] = (
+    "video_play_actions", "video_thruplay_watched_actions",
+    "video_p25_watched_actions", "video_p50_watched_actions",
+    "video_p75_watched_actions", "video_p95_watched_actions",
+    "video_p100_watched_actions", "video_avg_time_watched_actions",
+    "video_6_sec_watched_actions", "video_30_sec_watched_actions",
+    "video_play_curve_actions", "cost_per_thruplay",
+)
+_VIDEO_COUNT_FIELDS = {
+    "plays": "video_play_actions",
+    "thruplay": "video_thruplay_watched_actions",
+    "p25": "video_p25_watched_actions",
+    "p50": "video_p50_watched_actions",
+    "p75": "video_p75_watched_actions",
+    "p95": "video_p95_watched_actions",
+    "p100": "video_p100_watched_actions",
+    "avg_time_s": "video_avg_time_watched_actions",
+    "views_6s": "video_6_sec_watched_actions",
+    "views_30s": "video_30_sec_watched_actions",
+}
+_ACTION_NON_WINDOW_KEYS = {"action_type", "value", "action_destination", "action_target_id"}
+
+
+def _opt_float(value: Any) -> float | None:
+    """Graph sends numbers as strings; '' / None / garbage -> None (absent),
+    never a silent 0."""
+    if value is None or value == "" or isinstance(value, (list, dict)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _action_values(entries: Any) -> dict[str, ActionValue]:
+    """Fold an `actions`-shaped list into `{action_type: ActionValue}`,
+    keeping every per-attribution-window key (`7d_click`, `1d_view`, ...)."""
+    out: dict[str, ActionValue] = {}
+    if not isinstance(entries, list):
+        return out
+    for item in entries:
+        if not isinstance(item, dict) or not item.get("action_type"):
+            continue
+        windows = {
+            str(k): f
+            for k, v in item.items()
+            if k not in _ACTION_NON_WINDOW_KEYS and (f := _opt_float(v)) is not None
+        }
+        out[str(item["action_type"])] = ActionValue(
+            action_type=str(item["action_type"]),
+            value=_opt_float(item.get("value")),
+            windows=windows,
+        )
+    return out
+
+
+def _summed_value(entries: Any) -> float | None:
+    """Video / outbound fields arrive as `[{"action_type": ..., "value": "N"}]`;
+    the metric is the summed `value`. Absent / empty -> None."""
+    if isinstance(entries, (str, int, float)):
+        return _opt_float(entries)
+    if not isinstance(entries, list) or not entries:
+        return None
+    vals = [_opt_float(x.get("value")) for x in entries if isinstance(x, dict)]
+    vals = [v for v in vals if v is not None]
+    return sum(vals) if vals else None
+
+
+def _by_window(entry: Any) -> dict[str, float]:
+    out: dict[str, float] = {}
+    if not isinstance(entry, dict):
+        return out
+    for v in entry.get("values") or []:
+        if not isinstance(v, dict):
+            continue
+        f = _opt_float(v.get("value"))
+        if f is None:
+            continue
+        for w in v.get("attribution_windows") or ["default"]:
+            out.setdefault(str(w), f)
+    return out
+
+
+def _pick_window(by_window: dict[str, float]) -> float | None:
+    if "default" in by_window:
+        return by_window["default"]
+    return next(iter(by_window.values()), None)
+
+
+def _result_from(row: dict[str, Any]) -> AdResult | None:
+    res = (row.get("results") or [None])[0]
+    cpr = (row.get("cost_per_result") or [None])[0]
+    if not isinstance(res, dict) and not isinstance(cpr, dict):
+        return None
+    values = _by_window(res)
+    costs = _by_window(cpr)
+    indicator = (res or {}).get("indicator") if isinstance(res, dict) else None
+    if indicator is None and isinstance(cpr, dict):
+        indicator = cpr.get("indicator")
+    return AdResult(
+        indicator=indicator,
+        value=_pick_window(values),
+        cost=_pick_window(costs),
+        values_by_window=values,
+        costs_by_window=costs,
+    )
+
+
+def _play_curve(entries: Any) -> tuple[int, ...] | None:
+    if not isinstance(entries, list) or not entries or not isinstance(entries[0], dict):
+        return None
+    val = entries[0].get("value")
+    if not isinstance(val, list):
+        return None
+    try:
+        return tuple(int(x) for x in val)
+    except (TypeError, ValueError):
+        return None
+
+
+def split_breakdowns(breakdowns: Sequence[str] | None) -> list[str]:
+    """`["age,gender", "region"]` / `["age", "gender"]` -> flat dimension names
+    (Graph's `breakdowns` param takes one comma list)."""
+    dims: list[str] = []
+    for b in breakdowns or []:
+        dims += [d.strip() for d in str(b).split(",") if d.strip()]
+    return dims
+
+
+def ad_analytics_row_from_body(
+    row: dict[str, Any], *, level: str, breakdown_keys: Sequence[str] | None = None
+) -> AdAnalyticsRow:
+    """Map ONE `act_{id}/insights` row to `AdAnalyticsRow` (the one parse
+    `meta.ads_kpis` and every consumer share). Absent fields stay `None` —
+    `results` is missing for lead ads under the System-User token, video fields
+    are missing on hourly breakdowns and on non-video creatives."""
+
+    if not isinstance(row, dict):
+        row = {}
+    actions = _action_values(row.get("actions"))
+    video = VideoMetrics(
+        **{k: _summed_value(row.get(src)) for k, src in _VIDEO_COUNT_FIELDS.items()},
+        views_3s=actions["video_view"].value if "video_view" in actions else None,
+        cost_per_thruplay=_summed_value(row.get("cost_per_thruplay")),
+        play_curve=_play_curve(row.get("video_play_curve_actions")),
+    )
+    dims = split_breakdowns(breakdown_keys)
+    s = lambda k: (None if row.get(k) is None else str(row.get(k)))  # noqa: E731
+    return AdAnalyticsRow(
+        level=level,
+        date_start=s("date_start"),
+        date_stop=s("date_stop"),
+        account_id=s("account_id"),
+        campaign_id=s("campaign_id"),
+        campaign_name=s("campaign_name"),
+        adset_id=s("adset_id"),
+        adset_name=s("adset_name"),
+        ad_id=s("ad_id"),
+        ad_name=s("ad_name"),
+        objective=s("objective"),
+        optimization_goal=s("optimization_goal"),
+        spend=_opt_float(row.get("spend")),
+        impressions=_opt_float(row.get("impressions")),
+        reach=_opt_float(row.get("reach")),
+        frequency=_opt_float(row.get("frequency")),
+        cpm=_opt_float(row.get("cpm")),
+        clicks=_opt_float(row.get("clicks")),
+        ctr=_opt_float(row.get("ctr")),
+        inline_link_clicks=_opt_float(row.get("inline_link_clicks")),
+        inline_link_click_ctr=_opt_float(row.get("inline_link_click_ctr")),
+        cost_per_inline_link_click=_opt_float(row.get("cost_per_inline_link_click")),
+        outbound_clicks=_summed_value(row.get("outbound_clicks")),
+        actions=actions,
+        unique_actions=_action_values(row.get("unique_actions")),
+        cost_per_action_type=_action_values(row.get("cost_per_action_type")),
+        result=_result_from(row),
+        quality_ranking=s("quality_ranking"),
+        engagement_rate_ranking=s("engagement_rate_ranking"),
+        conversion_rate_ranking=s("conversion_rate_ranking"),
+        video=video,
+        breakdown={d: str(row[d]) for d in dims if row.get(d) is not None},
+        raw=dict(row),
+    )
+
+
 def ad_activity_from_body(body: dict[str, Any]) -> AdActivity:
     """Map one row of `GET act_{id}/activities` to `AdActivity`.
 
@@ -894,6 +1103,8 @@ def business_discovery_page_from_body(
 
 
 __all__ = [
+    "AD_ANALYTICS_BASE_FIELDS",
+    "AD_ANALYTICS_VIDEO_FIELDS",
     "BUSINESS_DISCOVERY_MAX_PAGE_SIZE",
     "BUSINESS_DISCOVERY_MEDIA_FIELDS",
     "BUSINESS_DISCOVERY_PROFILE_FIELDS",
@@ -917,6 +1128,7 @@ __all__ = [
     "POST_INSIGHT_METRICS",
     "ad_account_from_body",
     "ad_activity_from_body",
+    "ad_analytics_row_from_body",
     "ad_from_body",
     "ad_insights_row_from_body",
     "ad_set_from_body",
@@ -934,4 +1146,5 @@ __all__ = [
     "page_from_body",
     "parse_graph_datetime",
     "post_from_body",
+    "split_breakdowns",
 ]
