@@ -72,7 +72,8 @@ def load(bundle_path: Path, db_path: Path, scope_kind: str, scope_value: str) ->
     cur.execute(
         "INSERT INTO extraction_run(fetched_at, source, account_id, scope_kind, scope_value, date_preset, attribution, graph_version, raw_path)"
         " VALUES (?,?,?,?,?,?,?,?,?)",
-        (b["fetched_at"], "graph_in_page", account_id, scope_kind, scope_value, "maximum", "7d_click,1d_view", "v22.0", str(bundle_path)),
+        (b["fetched_at"], b.get("source", "graph_in_page"), account_id, scope_kind, scope_value, "maximum", "7d_click,1d_view",
+         b.get("graph_version", "v22.0"), str(bundle_path)),
     )
     run_id = cur.lastrowid
 
@@ -154,6 +155,14 @@ def load(bundle_path: Path, db_path: Path, scope_kind: str, scope_value: str) ->
                     video["video_p95"], video["video_p100"], video["video_avg_time_s"], video["video_30s"], video["cost_per_thruplay"],
                 ),
             )
+            curve = r.get("video_play_curve_actions")
+            two_s = r.get("video_continuous_2_sec_watched_actions")
+            six_s = r.get("video_6_sec_watched_actions")
+            if curve or two_s or six_s:
+                cur.execute("INSERT INTO insight_video(run_id, level, object_id, granularity, date_start, date_stop,"
+                            " video_2s_continuous, video_6s, play_curve_json) VALUES (?,?,?,?,?,?,?,?,?)",
+                            key + (_first_action_value(two_s), _first_action_value(six_s),
+                                   json.dumps(curve[0]["value"]) if curve else None))
             for fam in ACTION_FAMILIES:
                 for x in r.get(fam) or []:
                     cur.execute("INSERT INTO insight_action VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -164,10 +173,13 @@ def load(bundle_path: Path, db_path: Path, scope_kind: str, scope_value: str) ->
     put_insights(b["ins_lifetime_adset"]["data"], "adset", "lifetime")
     put_insights(b["ins_daily_adset"]["data"], "adset", "day")
 
-    for bd, payload in b["breakdowns"].items():
+    bd_sets = list(b["breakdowns"].items())
+    if b.get("breakdowns_window"):  # same breakdowns over [since, fetch day]; stored as '<bd>@<since>'
+        bd_sets += [(f"{bd}@{b['breakdowns_window']['since']}", pl) for bd, pl in b["breakdowns_window"]["data"].items()]
+    for bd, payload in bd_sets:
         if "error" in payload:
             raise RuntimeError(f"breakdown {bd} errored: {payload['error']}")
-        dims = bd.split(",")
+        dims = bd.split("@")[0].split(",")
         for r in payload["data"]:
             bucket = "|".join(str(r.get(d)) for d in dims)
             cur.execute(

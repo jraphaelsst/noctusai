@@ -103,6 +103,22 @@ inside the tab, **read-only**, returning exactly what the UI shows. That is the 
 - **`video_play_actions`** counts autoplay starts; use p25 as "real views". ThruPlay can exceed p25 on long videos.
 - **Quality / engagement / conversion rankings** = `UNKNOWN` under ~500 impressions.
 - **Meta changed result measurement on 2026-03-17** (Ads Manager banner) — don't compare across it.
+- **API path (2026-11-26):** the system-user token reads this account, so no browser is needed
+  (`extract_api.py`, Graph **v27**). Expired versions are served silently as the oldest live one (v22 →
+  v25). Under that token, `results`/`cost_per_result` are **absent for plain lead ads** (use
+  `lead_grouped`). `video_continuous_2_sec_watched_actions` is **omitted** (use curve index 2). The app is on
+  the `development_access` insights tier (600 + 400 × active ads per hour).
+- **`video_play_curve_actions`** = 22-point retention curve (% of plays reaching each bucket: idx 0–14 =
+  seconds 0–14; 15–17 = 15–20, 20–25, 25–30 s; 18–20 = 30–40, 40–50, 50–60 s; 21 = >60 s). Hook =
+  3-second `video_view` / impressions; hold = ThruPlay / 3-second views. Full catalogue:
+  `.claude/skills/noc-meta-ads-report/kpis.md`.
+- **"Leads qualificados"** = result indicator `conversion_leads:conversion_lead` (CRM events sent back to
+  Meta, on ad sets optimised for quality leads). Check which CRM stage is sent before calling them
+  qualified.
+- **Shared pools:** ad sets such as *Público One* hold several properties under one CBO campaign budget.
+  Check `adset.ads{name}` before attributing ad set numbers to a property.
+- **Breakdowns over `date_preset=maximum` are lifetime.** For a recent window, pull them again with
+  `time_range` (stored as `<bd>@<since>`).
 
 ---
 
@@ -125,7 +141,10 @@ inside the tab, **read-only**, returning exactly what the UI shows. That is the 
 `schema.sql` — append-only facts keyed by `extraction_run.run_id` (each weekly run = one "screenshot"):
 `extraction_run` · dims `account / campaign / adset (is_shared_pool) / ad (property_code, variant) / creative` · `object_snapshot` (raw JSON per run → budget/status history) · facts `insight` (lifetime|day) · `insight_action` (every action_type × family × window) · `insight_breakdown` · `post_engagement` · `activity` (dedup across runs) · `ui_column` · views `v_ad_lifetime`, `v_action_pivot`, `v_latest_run`.
 
-Weekly loop: `extract_bundle.js` (CODE=…) → download (ask) → `python load_bundle.py <bundle> ~/.noctusai/meta-ads/meta_ads.sqlite --scope-value <CODE>` → report vs previous run (template: report §9).
+Weekly loop (since 2026-11-26, **API-first**, skill `noc-meta-ads-report`): `extract_api.py <CODE> <bundle> --window-since <date>`
+→ `load_bundle.py <bundle> <db> --scope-value <CODE>` → `kpi_pack.py <db> <CODE>` → report vs previous run.
+The browser recipe (`extract_bundle.js`) stays as the fallback and the UI-parity check. Tables added:
+`insight_video` (2-second and 6-second views, retention curve).
 
 ---
 

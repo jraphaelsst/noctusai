@@ -3,11 +3,14 @@
 The browser-driven path for capturing Meta Ads Manager data per property (`ONExxxxx`), so a weekly
 report agent can work quickly and precisely.
 
+**Procedure:** skill `noc-meta-ads-report` (`.claude/skills/noc-meta-ads-report/`, with the KPI catalogue in `kpis.md`).
 **Read first:** `KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/META-ADS-MANAGER-MAP.md`. It covers the
 hierarchy, UI, URL grammar, data wiring, metric traps, browser lessons and the promotion map to `030_meta_ads.sql`.
 
 | File | Role |
 |---|---|
+| `extract_api.py` | **Default (2026-11-26).** Same bundle via the Graph API (v27) and the system-user token from `.env`; adds the retention curve, 6-second views, window breakdowns (`--window-since`) and ad set siblings (shared-pool check). No browser. |
+| `kpi_pack.py` | Every KPI a report needs, as markdown tables: per objective, per ad, retention, daily, window funnel, breakdowns, activity, ad set configuration and pool. |
 | `extract_bundle.js` | In-page, read-only Graph v22 pull for one property. Starts a background job; poll `window.__jobStatus`, then download the bundle (ask the user first). |
 | `load_bundle.py` | Loads a bundle into SQLite as one `extraction_run`. Append-only facts; refuses partial bundles. |
 | `schema.sql` / `ui_columns.sql` | Snapshot schema, plus the UI-column ↔ API-field dictionary. |

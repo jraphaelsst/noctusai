@@ -13,7 +13,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS extraction_run (
   run_id            INTEGER PRIMARY KEY AUTOINCREMENT,
   fetched_at        TEXT NOT NULL,              -- ISO-8601 UTC
-  source            TEXT NOT NULL,              -- 'graph_in_page' | 'ui_dom' | 'ui_export'
+  source            TEXT NOT NULL,              -- 'graph_in_page' | 'graph_api_system_user' | 'ui_dom' | 'ui_export'
   account_id        TEXT NOT NULL,
   scope_kind        TEXT NOT NULL,              -- 'property' | 'campaign' | 'account'
   scope_value       TEXT NOT NULL,              -- e.g. 'ONE10449'
@@ -138,11 +138,30 @@ CREATE TABLE IF NOT EXISTS insight_breakdown (
   run_id            INTEGER NOT NULL REFERENCES extraction_run(run_id),
   level             TEXT NOT NULL,
   object_id         TEXT NOT NULL,
-  breakdown         TEXT NOT NULL,              -- 'age,gender' | 'publisher_platform,platform_position' | ...
+  breakdown         TEXT NOT NULL,              -- 'age,gender' | 'publisher_platform,platform_position' | ... (lifetime)
+                                                -- '<bd>@YYYY-MM-DD' = same breakdown over [that date, fetch day] (window)
   bucket            TEXT NOT NULL,              -- e.g. '35-44|female', 'instagram|reels'
   spend REAL, impressions INTEGER, reach INTEGER, clicks INTEGER, link_clicks INTEGER,
   actions_json      TEXT,
   PRIMARY KEY (run_id, level, object_id, breakdown, bucket)
+);
+
+-- Video retention (added 2026-11-26, API path). `video_play_curve_actions` is Meta's retention curve:
+-- 22 points, % of plays reaching the bucket — indexes 0..14 = seconds 0..14; 15..17 = [15,20) [20,25) [25,30);
+-- 18..20 = [30,40) [40,50) [50,60); 21 = >60 s (Meta docs, read 2026-11-26). Stored raw; the report derives
+-- hook/hold from it plus the insight columns.
+CREATE TABLE IF NOT EXISTS insight_video (
+  run_id            INTEGER NOT NULL,
+  level             TEXT NOT NULL,
+  object_id         TEXT NOT NULL,
+  granularity       TEXT NOT NULL,
+  date_start        TEXT NOT NULL, date_stop TEXT NOT NULL,
+  video_2s_continuous INTEGER,                  -- video_continuous_2_sec_watched_actions (often omitted by Graph)
+  video_6s          INTEGER,                    -- video_6_sec_watched_actions
+  play_curve_json   TEXT,                       -- JSON array of 22 percentages
+  PRIMARY KEY (run_id, level, object_id, granularity, date_start, date_stop),
+  FOREIGN KEY (run_id, level, object_id, granularity, date_start, date_stop)
+    REFERENCES insight(run_id, level, object_id, granularity, date_start, date_stop)
 );
 
 -- Organic-side counters of the post behind each creative (NOT the same as ad-attributed actions).
