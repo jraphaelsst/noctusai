@@ -9,6 +9,8 @@ at the DI seams (the RPC transport and the queue), never by patching our own cod
 """
 from __future__ import annotations
 
+from app.modules.media_creation.saida_ia import MAX_HEADLINE_PALAVRAS
+
 import asyncio
 import hashlib
 import uuid
@@ -603,7 +605,7 @@ def test_roteiro_primeiro_um_clique_com_a_headline_ja_salva_retoma_direto_no_car
 def test_headline_invalida_uma_tentativa_extra_depois_falhou_sem_card_e_o_clique_tenta_de_novo(sg):
     cid, pid = _proposta(sg, tipo="roteiro")
     assert sg.escolher(cid, pid).status_code == 202
-    llm = Llm("Uma headline com [placeholder] aqui", " ".join(["palavra"] * 13))
+    llm = Llm("Uma headline com [placeholder] aqui", " ".join(["palavra"] * (MAX_HEADLINE_PALAVRAS + 1)))
     asyncio.run(sg.rodar("fluxo.headline_do_roteiro", llm))
     assert llm.calls == 2  # the call + ONE retry
     p = sg.proposta(pid)
@@ -635,7 +637,7 @@ def test_headline_invalida_e_depois_valida_na_tentativa_extra_segue_o_fluxo(sg):
 
 @pytest.mark.parametrize("texto,ok", [
     (HEADLINE_OK, True), ('  "Entre aspas e espaços"  ', True), ("", False), ("a\nb", False),
-    (" ".join(["p"] * 12), True), (" ".join(["p"] * 13), False), ("Veja [nome] agora", False),
+    (" ".join(["p"] * MAX_HEADLINE_PALAVRAS), True), (" ".join(["p"] * (MAX_HEADLINE_PALAVRAS + 1)), False), ("Veja [nome] agora", False),
     ("Acesse https://exemplo.com hoje", False), (None, False),
 ])
 def test_o_validador_da_headline(texto, ok):

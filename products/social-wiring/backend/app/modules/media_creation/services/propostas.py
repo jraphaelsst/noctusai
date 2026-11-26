@@ -13,7 +13,7 @@ What it enforces (the model is never trusted):
 - a headline left with NO valid code is not a proposta (an uncited numbered line counts as ``citacao_rejeitada``);
 - a headline that still matches ``\\[[^\\]]+\\]`` is dropped (``placeholder_remanescente``);
 - a headline the untrusted-output guard refuses (``saida_ia.validar_headline``: URL, domain, markdown image, secret,
-  injection echo, > 12 words, > 1000 chars) is dropped (``headline_invalida``);
+  injection echo, > MAX_HEADLINE_PALAVRAS words, > 1000 chars) is dropped (``headline_invalida``);
 - at most 10 propostas; the ``### Estruturas usadas`` attribution list is never read as headlines.
 
 Roteiro-first (contract 16.3 / 16.4): the same pass also reads COMPLETE scripts. A section headed EXACTLY
@@ -287,7 +287,7 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
         if detectar_proibido(limpa) is None and _PLACEHOLDER_RE.search(limpa):  # ``![x](url)`` is unsafe, not a slot
             conta("placeholder_remanescente")
             continue
-        if validar_headline(limpa) is None:  # URL / domain / image / secret / injection echo / > 12 words
+        if validar_headline(limpa) is None:  # URL / domain / image / secret / injection echo / > MAX_HEADLINE_PALAVRAS words
             conta("headline_invalida")
             continue
         antes = len(propostas)

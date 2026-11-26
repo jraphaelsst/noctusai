@@ -143,7 +143,8 @@ def urls_das_ferramentas(resultados: Iterable[tuple[str, Mapping[str, Any]]]) ->
 # ── the proposals (headline lines / roteiro sections), as SW's ``propostas.py`` reads them ──────────────────
 #: A REDUCED mirror of SW's grammar (``products/social-wiring/.../services/propostas.py``): enough to COUNT what SW would
 #: accept and to hold every cited code to the turn's tool answers. SW stays the only parser that writes anything.
-MAX_HEADLINE_PALAVRAS = 12
+#: the same ceiling as SW's ``saida_ia.MAX_HEADLINE_PALAVRAS`` (one line, not a paragraph; owner 2026-11-26: 12 was too small)
+MAX_HEADLINE_PALAVRAS = 25
 _CITACAO_RE = re.compile(r"\(\s*estrutura\s*#\s*(\d+(?:\s*\+\s*#\s*\d+)*)\s*\)", re.IGNORECASE)
 _HEADLINE_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*\S)\s*$")
 _ROTEIRO_CAB_RE = re.compile(r"^\s*###\s+roteiro\s+(\d+)\s*:\s*(.*\S)\s*$", re.IGNORECASE)
@@ -210,7 +211,7 @@ def checar_propostas(
     texto: str, resultados: Sequence[tuple[str, Mapping[str, Any]]], *, tipo: str = "qualquer",
     minimo: int = 1, maximo: int | None = None,
 ) -> list[str]:
-    """``tipo`` options between ``minimo`` and ``maximo``; each cites only codes a tool returned; a headline has 1..12
+    """``tipo`` options between ``minimo`` and ``maximo``; each cites only codes a tool returned; a headline has 1..MAX_HEADLINE_PALAVRAS
     words and no ``[...]``; options of the other kind are not counted (``qualquer`` counts both)."""
     citaveis = codigos_das_ferramentas(resultados)
     props = [p for p in propostas_do_texto(texto) if tipo == "qualquer" or p.tipo == tipo]

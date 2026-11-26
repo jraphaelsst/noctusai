@@ -9,7 +9,7 @@ P = cu.SYSTEM_PROMPT
 
 
 def test_versoes():
-    assert cu.PROMPT_VERSAO == "chat-unificado-v3-draft"
+    assert cu.PROMPT_VERSAO == "chat-unificado-v4-draft"
     assert hr.PROMPT_VERSAO == "headline-do-roteiro-v1-draft"
 
 
@@ -60,7 +60,7 @@ def test_builder_sem_formula_e_limites():
 
 def test_saida_pedida():
     s = " ".join(hr.SYSTEM_PROMPT.split())
-    assert "12 palavras" in s and "sem colchetes" in s and "sem aspas" in s
+    assert f"{hr.MAX_PALAVRAS} palavras" in s and "sem colchetes" in s and "sem aspas" in s
 
 
 # ── prod 2026-11-19: what the assistant may say about its own material, and links ────────────────────────
@@ -85,3 +85,18 @@ def test_nunca_emite_imagens_links_ou_urls_que_o_usuario_nao_digitou():
 
 def test_o_material_chega_no_turno_do_usuario():
     assert "Abaixo da conversa" not in P and "Na mensagem do usuário" in P
+
+
+# ── owner 2026-11-26: 12 words was too small; the guard is a one-line ceiling, the prompts name the same number ──
+
+
+def test_headline_teto_e_o_mesmo_no_guard_e_nos_prompts():
+    from app.modules.media_creation.prompts import chat_headline as ch
+    from app.modules.media_creation.saida_ia import MAX_HEADLINE_PALAVRAS, validar_headline
+
+    for prompt in (ch.SYSTEM_PROMPT, P):
+        texto = " ".join(prompt.split())
+        assert f"no máximo {MAX_HEADLINE_PALAVRAS} palavras" in texto and "até 12 palavras" not in texto
+    longa = " ".join(["palavra"] * 15)
+    assert validar_headline(longa) == longa
+    assert validar_headline(" ".join(["palavra"] * (MAX_HEADLINE_PALAVRAS + 1))) is None

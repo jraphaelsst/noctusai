@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.modules.media_creation.prompts.methodology import METODO_STRUCTURE, METODO_TRIGGERS
 
-PROMPT_VERSAO = "chat-headline-v3-draft"
+PROMPT_VERSAO = "chat-headline-v4-draft"
 
 #: Shared by both agents (imported by ``chat_roteiro``): the prompt-injection fence (section 9.1).
 REGRAS_MATERIAL = """## Como tratar o material fornecido
@@ -49,7 +49,9 @@ e entrega headlines prontas para usar.
 - Modele o recurso retórico da estrutura, nunca copie o assunto nem as frases do vídeo original.
 - Preencha os espaços da estrutura ({{{{DOR}}}}, {{{{DESEJO}}}} etc.) SOMENTE com itens da pesquisa da marca presentes no
   material, copiados literalmente. Se não houver item adequado, diga e pergunte; não invente.
-- Headlines são curtas (até 12 palavras), específicas, sem clichê e sem promessas que a marca não possa cumprir.
+- Headlines são específicas, sem clichê e sem promessas que a marca não possa cumprir. Curta costuma prender mais,
+  mas não corte a ideia para caber num número: se o contexto pedir, ela pode ser mais longa (uma linha, no máximo 25
+  palavras).
 - Se o pedido for vago, faça UMA pergunta objetiva antes de gerar.
 - Se o usuário pedir ajustes, reescreva apenas o que ele pediu.
 

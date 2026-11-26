@@ -102,14 +102,15 @@ def remover_imagens_remotas(texto: str) -> str:
     return _IMAGEM_REMOTA.sub("", texto or "")
 
 
-#: A headline is one short line (``prompts/headline_do_roteiro.MAX_PALAVRAS`` re-exports this).
-MAX_HEADLINE_PALAVRAS = 12
+#: A headline is ONE line; this is a ceiling against a paragraph, not a style target (``prompts/headline_do_roteiro.MAX_PALAVRAS``
+#: re-exports it). Owner 2026-11-26: 12 was too small, a headline may run longer when the context needs it.
+MAX_HEADLINE_PALAVRAS = 25
 MAX_HEADLINE_CHARS = 1000
 _PLACEHOLDER = re.compile(r"\[[^\]]+\]")
 
 
 def validar_headline(texto: Any) -> Optional[str]:
-    """The single-headline guard (chat proposals and the roteiro-first job): one line, <= 12 words, <= 1000 chars, no
+    """The single-headline guard (chat proposals and the roteiro-first job): one line, <= MAX_HEADLINE_PALAVRAS words, <= 1000 chars, no
     ``[...]`` placeholder, nothing :func:`detectar_proibido` forbids (URL / domain / image / storage path / secret /
     injection echo). Returns the headline (outer quotes stripped) or ``None`` = invalid (never trimmed or cleaned)."""
     if not isinstance(texto, str):
