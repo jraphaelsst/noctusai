@@ -707,6 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steward-deadline-min", type=float, default=None, help="With --release-steward ask: minutes until the question expires (default 30).")
     parser.add_argument("--steward-ref", default=None, help="With --release-steward position: the needs_info id (ni-N) being answered.")
     parser.add_argument("--steward-confirm", action="store_true", help="With --release-steward reconcile: actually ack the already-landed requests.")
+    parser.add_argument("--steward-since", default=None, help="With --release-steward verdicts: only records at/after this ISO timestamp.")
     parser.add_argument("--steward-include-done", action="store_true", help="With --release-steward inbox/mine: include finished requests.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
     parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
@@ -4719,7 +4720,7 @@ def main():
             role=args.steward_role, op=args.steward_role_op, confirm=args.steward_confirm,
             question=args.steward_question, addressed_to=args.steward_addressed_to,
             deadline_min=args.steward_deadline_min, ref=args.steward_ref,
-            verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped)
+            verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped, since=args.steward_since)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(_rs.cli_exit_code(r))
 

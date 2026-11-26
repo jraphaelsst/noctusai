@@ -3500,6 +3500,57 @@ def _run_action(action: str, session_id: str | None, *, store: StewardStore,
     return _err(f"unknown action {action!r} ({'|'.join(ACTIONS)})")
 
 
+#: Actions a stale server may still answer in-process (pure reads of the lease/role files, warned). Everything else
+#: judges or writes, so on a stale server it re-runs on the code on disk (`register`, toolkit_freshness R4).
+STALE_IN_PROCESS_ACTIONS = frozenset({"status", "roles"})
+
+
+def steward_call_is_write(args: dict[str, Any]) -> bool:
+    return (args.get("action") or "status") not in STALE_IN_PROCESS_ACTIONS
+
+
+def steward_call(action: str = "status", name: str | None = None, reason: str | None = None,
+                 ttl_s: int | None = None, to_session_id: str | None = None,
+                 to_name: str | None = None, slug: str | None = None, branch: str | None = None,
+                 head_sha: str | None = None, products: list[str] | None = None,
+                 migrations: bool = False, notes: str | None = None, outcome: str | None = None,
+                 dev_sha: str | None = None, include_done: bool = False,
+                 inline_reason: str | None = None, inline_note: str | None = None, branches: list[str] | None = None,
+                 role: str | None = None, op: str | None = None, confirm: bool = False,
+                 question: str | None = None, addressed_to: str | None = None,
+                 deadline_min: float | None = None, ref: str | None = None,
+                 verdict_ref: str | None = None, run_scoped: bool = False, since: str | None = None) -> dict:
+    """The MCP tool's body: this server's session + its Claude process (the parent) as the caller."""
+    return run_action(
+        action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
+        child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
+        name=name, reason=reason, ttl_s=ttl_s, to_session_id=to_session_id, to_name=to_name, slug=slug,
+        branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
+        outcome=outcome, dev_sha=dev_sha, include_done=include_done,
+        inline_reason=inline_reason, inline_note=inline_note, branches=branches,
+        role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
+        deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped, since=since)
+
+
+_GATED_STEWARD_CALL: Callable[..., dict] | None = None
+
+
+def gated_steward_call() -> Callable[..., dict]:
+    """`steward_call` behind `toolkit_freshness.refuse_gate` (built once, lazily: this file is also loaded by path
+    from the hooks, where the `tools` package is not importable and no MCP call is ever made).
+
+    A STALE server judges with the code it loaded, not the code on disk (2026-11-26: the kb-counts item left the
+    delivery contract on 2026-11-18, yet servers started before that kept refusing on it - 42x across 6 sessions,
+    class `deliverable:derived_current:...-kb-counts`). Every judging or writing action therefore re-runs in a fresh
+    `cli.py --release-steward` subprocess when this process is stale (toolkit_freshness R4, result
+    `executed_via=fresh_subprocess`); only `STALE_IN_PROCESS_ACTIONS` stay in-process, with the stale warning."""
+    global _GATED_STEWARD_CALL
+    if _GATED_STEWARD_CALL is None:
+        from tools.noctus.dev import toolkit_freshness as _tf
+        _GATED_STEWARD_CALL = _tf.refuse_gate("release_steward", write_predicate=steward_call_is_write)(steward_call)
+    return _GATED_STEWARD_CALL
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.release_steward",
@@ -3537,17 +3588,15 @@ def register(server) -> None:
                          question: str | None = None, addressed_to: str | None = None,
                          deadline_min: float | None = None, ref: str | None = None,
                          verdict_ref: str | None = None, run_scoped: bool = False, since: str | None = None) -> dict:
-        return run_action(
-            action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
-            child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
-            name=name, reason=reason, ttl_s=ttl_s, to_session_id=to_session_id, to_name=to_name, slug=slug,
-            branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
-            outcome=outcome, dev_sha=dev_sha, include_done=include_done,
-            inline_reason=inline_reason, inline_note=inline_note, branches=branches,
-            role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
-            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped, since=since)
+        return gated_steward_call()(
+            action=action, name=name, reason=reason, ttl_s=ttl_s, to_session_id=to_session_id, to_name=to_name,
+            slug=slug, branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
+            outcome=outcome, dev_sha=dev_sha, include_done=include_done, inline_reason=inline_reason,
+            inline_note=inline_note, branches=branches, role=role, op=op, confirm=confirm, question=question,
+            addressed_to=addressed_to, deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref,
+            run_scoped=run_scoped, since=since)
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
            "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "select_ci_suites", "live_tree_test_ids", "merge_tree_sha", "verdict_report", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
-           "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
+           "tool_refusal", "run_action", "steward_call_is_write", "STALE_IN_PROCESS_ACTIONS", "steward_call", "gated_steward_call", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
