@@ -9,6 +9,7 @@ import asyncio
 import pytest
 from noctusai_lib.integrations.llm import FakeProvider
 
+from app.criacao.saida import MAX_HEADLINE_PALAVRAS
 from app.studio.catalog import StoreKnowledgeCatalog
 from app.studio.eval_driver import ThreadState
 from app.studio.eval_driver_live import FixtureSwClient, LiveEvalTurnDriver
@@ -143,11 +144,11 @@ class TestCriacaoAsserts:
 
     def test_headline_counts_and_word_limit(self):
         texto = ("1. Você dorme mal por um motivo simples (estrutura #101) (Mistério)\n"
-                 "2. " + " ".join(["palavra"] * 13) + " (estrutura #101)\n"
+                 "2. " + " ".join(["palavra"] * (MAX_HEADLINE_PALAVRAS + 1)) + " (estrutura #101)\n"
                  "### Estruturas usadas\n1. #101 (estrutura #101)\n")
         codigos = [f.codigo for f in avaliar_asserts(
             {"propostas_criacao": {"tipo": "headline", "min": 3}}, _traco(texto, self.RES))]
-        assert codigos == ["propostas:2<3", "headline2:palavras:13"]
+        assert codigos == ["propostas:2<3", f"headline2:palavras:{MAX_HEADLINE_PALAVRAS + 1}"]
 
     def test_a_refusal_has_no_options(self):
         assert avaliar_asserts({"propostas_criacao": {"tipo": "qualquer", "min": 0, "max": 0}},
