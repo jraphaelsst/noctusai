@@ -492,6 +492,23 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-train-order={kwargs['order']}")
         return argv
 
+    if tool_name == "release_steward":
+        # 2026-11-26: a stale server judged deliveries with the code it loaded days earlier - the kb-counts item it
+        # still ran was removed from the contract on 2026-11-18, and 42 refusals across 6 sessions followed.
+        argv = [f"--release-steward={kwargs.get('action') or 'status'}"]
+        for key, flag in _STEWARD_VALUE_FLAGS:
+            v = kwargs.get(key)
+            if v not in (None, ""):
+                argv.append(f"--{flag}={v}")
+        for key, flag in (("products", "steward-products"), ("branches", "steward-branches")):
+            if kwargs.get(key):
+                argv.append(f"--{flag}={','.join(str(x) for x in kwargs[key])}")
+        for key, flag in (("migrations", "steward-migrations"), ("include_done", "steward-include-done"),
+                          ("confirm", "steward-confirm"), ("run_scoped", "steward-run-scoped")):
+            if kwargs.get(key):
+                argv.append(f"--{flag}")
+        return argv
+
     if tool_name == "source_register":
         argv = ["--source-register"]
         for k in ("action", "query", "tier_filter", "limit", "source", "outcome", "tier", "label",
@@ -548,6 +565,19 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
 # anyway would run the child against the WRONG target (wrong remote, wrong
 # executor, ...) with no signal at all — `_unmapped_param_diffs` catches
 # that BEFORE any subprocess is launched.
+#: release_steward kwarg -> its `cli.py --steward-*` value flag (the boolean and list flags are mapped inline).
+_STEWARD_VALUE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("name", "steward-name"), ("reason", "steward-reason"), ("ttl_s", "steward-ttl-s"),
+    ("to_session_id", "steward-to-session-id"), ("to_name", "steward-to-name"), ("slug", "steward-slug"),
+    ("branch", "steward-branch"), ("head_sha", "steward-head-sha"), ("notes", "steward-notes"),
+    ("outcome", "steward-outcome"), ("dev_sha", "steward-dev-sha"), ("inline_reason", "steward-inline-reason"),
+    ("inline_note", "steward-inline-note"), ("role", "steward-role"), ("op", "steward-role-op"),
+    ("question", "steward-question"), ("addressed_to", "steward-addressed-to"),
+    ("deadline_min", "steward-deadline-min"), ("ref", "steward-ref"), ("verdict_ref", "steward-verdict-ref"),
+    ("since", "steward-since"),
+)
+
+
 _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "release": frozenset({"stage", "confirm", "sha", "mode", "release_branch"}),
     "migrate_product": frozenset({
@@ -575,7 +605,17 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "bg_process": frozenset({
         "action", "pid", "purpose", "reason", "learnings", "term_grace_s", "session_id", "confirm",
     }),
+    "release_steward": frozenset({"action", "products", "branches", "migrations", "include_done", "confirm", "run_scoped",
+                                  *(k for k, _f in _STEWARD_VALUE_FLAGS)}),
 }
+
+
+def _tool_cli_env(tool_name: str) -> dict[str, str]:
+    """Extra env the fresh child needs to act as the SAME caller. release_steward: the MCP path passes the Claude
+    process (this server's parent) as the lease/role liveness pid; the CLI reads it from `CLAUDE_PID`."""
+    if tool_name == "release_steward":
+        return {"CLAUDE_PID": str(os.getppid())}
+    return {}
 
 
 def _unmapped_param_diffs(
@@ -755,6 +795,7 @@ def _run_via_fresh_subprocess(
     child_env = {
         k: v for k, v in os.environ.items() if k != "PYTHONPATH"
     }
+    child_env.update(_tool_cli_env(tool_name))
     runner = subprocess_run or (
         lambda cmd: (
             lambda p: (p.returncode, p.stdout, p.stderr)

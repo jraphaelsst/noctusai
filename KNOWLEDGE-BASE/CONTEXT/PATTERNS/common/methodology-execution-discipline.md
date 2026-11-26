@@ -392,6 +392,17 @@ itself — its answer was read as current when the code producing it was not.
   explicitly passes `allow_stale_toolkit=True` (recorded on the return,
   never silent); every WARN case carries `toolkit_stale: true` + a loud
   `warnings` entry naming the remedy (never silently as-if-current).
+- **A JUDGE is a write too (2026-11-26).** `release_steward` was left out
+  because its `deliverable` is read-only — yet a stale steward's verdict is
+  exactly the plausible-wrong answer this line exists for: the kb-counts item
+  left the delivery contract on 2026-11-18, and every session whose server
+  started before that kept refusing `request`s on `derived_current:
+  kb-counts` (42x / 6 sessions / 14 d, read as "regenerate and re-push").
+  Every steward action except the lease reads (`status`, `roles`) now takes
+  the R4 fresh-subprocess path when stale (`release_steward.gated_steward_call`,
+  `toolkit_freshness._tool_cli_argv["release_steward"]`, the child keeps the
+  caller's `CLAUDE_PID`). The test for "does this tool belong here" is "can
+  its stale answer be acted on", not "does it mutate".
 - **The remedy is always a restart, never a hot-reload.** Swapping code
   under a live module graph mid-call is a worse failure mode than reporting
   staleness — `/mcp` in Claude Code re-imports the toolkit from disk.
