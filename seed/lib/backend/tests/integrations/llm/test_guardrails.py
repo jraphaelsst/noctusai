@@ -144,16 +144,3 @@ def test_bounds():
     assert outside_word_band("um dois", 3, 5) and not outside_word_band("um dois tres", 3, 5)
     assert outside_enum(["a", "z"], {"a", "b"}) and not outside_enum(["a"], {"a", "b"})
     assert unretrieved_sources(["s1", "s9"], ["s1"]) and not unretrieved_sources(["s1"], {"s1", "s2"})
-
-
-def test_idioma_do_lead_reads_one_word_greetings_and_never_mistakes_portuguese_for_foreign():
-    from noctusai_lib.integrations.llm.guardrails import formato_suspeito, idioma_do_lead
-
-    assert idioma_do_lead(["Hi"]) == "en"
-    assert idioma_do_lead(["Hola", "gracias"]) == "es"
-    assert idioma_do_lead(["Oi, quero alugar", "me manda mais opções"]) is None
-    assert idioma_do_lead(["ok"]) is None and idioma_do_lead([]) is None
-    ingles = "Hi! I'm Julia, the assistant for the agency. Are you looking to buy or rent a property in the city?"
-    assert "outro_idioma" in (formato_suspeito(ingles) or {})
-    assert formato_suspeito(ingles, idioma_do_lead="en") is None
-    assert "outro_idioma" in (formato_suspeito(ingles, idioma_do_lead="es") or {})

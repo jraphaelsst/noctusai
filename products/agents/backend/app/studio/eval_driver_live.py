@@ -33,7 +33,9 @@ from cryptography.fernet import Fernet
 
 from app.catalogos.fixture import FixtureCatalogo, casa as _casa
 from app.channels import turno as turno_mod
-from app.channels.controles import LeadIdentidade, aplicar_controles
+from app.channels.controles import (
+    STATUS_AGENTE_DESLIGADO, STATUS_AGENTE_DESLIGADO_PLATAFORMA, LeadIdentidade, aplicar_controles,
+)
 from app.channels.tool_registry import make_channel_tools_factory
 from app.config import settings
 from app.criacao.canais import CANAL_APP, agente_aceita_canal_app
@@ -476,10 +478,13 @@ class LiveEvalTurnDriver:
 
     async def _opt_out_em_recusa(self, m: _Mundo, th: Any, ctl: Any, mensagem_lead: str) -> Any:
         """``turno.opt_out_em_conversa_recusada`` over the eval world (None when the message is no stop word)."""
-        try:
-            prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
-        except turno_mod.TurnoRecusado:
-            prep = None  # the agent cannot compile: the opt-out still stands, nothing is sent (as in production)
+        prep = None  # agent off (control mode or platform kill): nothing compiles, nothing is sent -- as channels_router
+        if ctl.status not in (STATUS_AGENTE_DESLIGADO, STATUS_AGENTE_DESLIGADO_PLATAFORMA):
+            try:
+                prep = turno_mod.preparar(
+                    m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
+            except turno_mod.TurnoRecusado:
+                prep = None  # the agent cannot compile: the opt-out still stands, nothing is sent (as in production)
         return await turno_mod.opt_out_em_conversa_recusada(
             svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, lote_lead=[mensagem_lead],
             participante=ctl.participante)

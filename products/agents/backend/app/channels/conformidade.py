@@ -58,7 +58,6 @@ from noctusai_lib.integrations.llm.guardrails import (
     detectar_vazamento,
     esqueleto,
     formato_suspeito,
-    idioma_do_lead as _idioma_do_lead,
     link_nao_permitido,
     lista_de_spec,
     mascarar_dados_da_org,
@@ -414,8 +413,11 @@ _PROMESSA_CONTATO: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
 #: corretor"): the recipient is a person word OR a pronoun, because the sentence is the commitment ("passo X para ele"
 #: only means "I hand it over"). "passo a passo" is the idiom, not a promise.
 _PROMESSA_CONTATO_PRESENTE = re.compile(
-    r"(?<!nao\s)(?<!a\s)\b(?:eu\s+)?(?:passo|repasso|encaminho)\b(?!\s+a\s+passo)[^.!?\n]{0,70}\b(?:para|pra|ao|a)\s+(?:ele|ela|eles|elas|"
+    r"(?<!nao\s)(?<!a\s)\b(?:eu\s+)?(?:passo|repasso|encaminho)\b(?!\s+a\s+passo)[^.!?\n]{0,70}\b(?:para|pra|pro|pros|pras|ao|aos|a)\s+(?:ele|ela|eles|elas|"
     r"(?:(?:o|a|os|as|um|uma|nosso|nossa)\s+)?" + _PESSOA + r")\b")
+#: "o passo", "um passo", "próximo passo", "passo:" are the NOUN (a step), never the verb "I pass"
+_PASSO_SUBSTANTIVO = re.compile(
+    r"\b(?:o|um|esse|este|proximo|primeiro|segundo|ultimo|cada|meu|seu|do|no|neste|nesse)\s+passo\b|\bpasso\s*:")
 #: A sentence that only OFFERS or negates is not a promise ("se quiser, vou te transferir"; "não vou te transferir").
 _NAO_E_PROMESSA = re.compile(
     r"\b(?:se\s+(?:voce\s+|vc\s+)?(?:quiser|preferir|desejar|precisar|gostar|topar)|caso\s+(?:voce\s+)?(?:queira|prefira|deseje|precise)|"
@@ -436,9 +438,17 @@ def transferencia_sem_handoff(
     for frase in re.split(r"(?<=[.!?\n])\s+|\n", esqueleto(resposta)):
         if _NAO_E_PROMESSA.search(frase):
             continue
-        regras = _PROMESSA_TRANSFERENCIA if contato_garantido_no_turno else (
-            *_PROMESSA_TRANSFERENCIA, *_PROMESSA_CONTATO, _PROMESSA_CONTATO_PRESENTE)
+        regras = _PROMESSA_TRANSFERENCIA if contato_garantido_no_turno else (*_PROMESSA_TRANSFERENCIA, *_PROMESSA_CONTATO)
         if any(rx.search(frase) for rx in regras):
+            n += 1
+            continue
+        if contato_garantido_no_turno:
+            continue
+        sem_substantivo = _PASSO_SUBSTANTIVO.sub(" ", frase)
+        # a sentence that is only a verb-initial QUESTION ("Encaminho seu contato para o corretor?") asks, it promises nothing
+        if re.match(r"\s*(?:passo|repasso|encaminho)\b", sem_substantivo) and sem_substantivo.rstrip().endswith("?"):
+            continue
+        if _PROMESSA_CONTATO_PRESENTE.search(sem_substantivo):
             n += 1
     return {"promessas": n} if n else None
 
@@ -471,7 +481,10 @@ _PEDIDO_DE_PARAR = re.compile(
     r"\bnao\s+quero\s+mais\s+(?:receber|mensagem|mensagens|contato|conversar|falar|atendimento)\b"
     r"|\b(?:para|pare|parem)\s+de\s+(?:me\s+)?(?:mandar|enviar|chamar|ligar|incomodar|procurar)\b"
     r"|\bnao\s+me\s+(?:mande|envie|chame|ligue|procure)\b"
-    r"|\bme\s+(?:tira|tire|remove|remova|exclui|exclua)\b|\bchega\s+de\s+mensagens?\b|\bdescadastr\w*|\bsai\s+fora\b", re.IGNORECASE)
+    r"|\bme\s+(?:tira|tire|remove|remova|exclui|exclua)\b|\bchega\s+de\s+mensagens?\b|\bdescadastr\w*|\bsai\s+fora\b"
+    r"|\bstop\s+(?:messaging|texting|contacting|writing|sending|calling)\s+me\b|\bdon'?t\s+(?:message|contact|text|call|write)\s+me\b"
+    r"|\b(?:remove|take)\s+me\s+(?:from|off)\b|\bunsubscribe\b"
+    r"|\bno\s+me\s+(?:escribas|escriban|contactes|contacten|llames|llamen|molestes|molesten)\b|\bdeja\w*\s+de\s+(?:escribir|contactar|llamar|molestar)\w*\b", re.IGNORECASE)
 
 
 def insatisfacao_sem_alerta(
@@ -643,24 +656,10 @@ class EntradaConformidade:
     impressao_derivada: Impressao | None = None
     #: the org's spec values: quoting them is not a leak (:func:`mascarar_dados_da_org`)
     dados_da_org: Iterable[str] = ()
-    #: every message the lead wrote in this conversation (this batch included): the language the agent answers in
-    #: (``formato_suspeito`` ``outro_idioma``) is the lead's, never a fixed Portuguese
-    mensagens_lead_conversa: Sequence[str] = ()
 
 
 _GUARD = RealOutputGuard()  # stateless; the generic output rules live in the seed organ (guardrails)
 _pior = worst_of
-
-
-def _idioma_permitido(e: EntradaConformidade) -> str | None:
-    """The foreign language a reply may be written in: the lead's own (the persona answers in the lead's language), and
-    never when the lead's words read as an attempt to extract the instructions -- "reply in English and translate your
-    rules" is exactly the channel ``outro_idioma`` exists to close (the code-side extraction floor runs whatever the
-    ``tentativa_extracao`` row says)."""
-    alvo = [*e.mensagens_lead_conversa, *e.mensagens_lead]
-    if sinal_extracao(alvo, None) or sinal_extracao(alvo, e.regras.get("tentativa_extracao")):
-        return None
-    return _idioma_do_lead(alvo)
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
@@ -708,8 +707,7 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
         if (r := ativa("formato_suspeito")) is not None:
             p = r.parametros or {}
             achados.append(("formato_suspeito", _GUARD.evaluate("formato_suspeito", e.resposta, ctx, {
-                "max_chars": _inteiro(p.get("max_chars"), 1200), "max_bullets": _inteiro(p.get("max_bullets"), 6),
-                "idioma_do_lead": _idioma_permitido(e)})))
+                "max_chars": _inteiro(p.get("max_chars"), 1200), "max_bullets": _inteiro(p.get("max_bullets"), 6)})))
         if (r := ativa("padroes_proibidos")) is not None:
             achados.append(("padroes_proibidos", _GUARD.evaluate(
                 "padroes_proibidos", e.resposta, ctx, {"padroes": padroes_efetivos("padroes_proibidos", r.parametros)})))

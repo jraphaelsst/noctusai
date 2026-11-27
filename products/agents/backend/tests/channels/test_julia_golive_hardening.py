@@ -441,8 +441,8 @@ class TestStopBackstop:
         assert c.palavra_de_parar([texto], None) is None
 
     def test_the_rule_data_extends_the_words_and_can_switch_it_off(self):
-        extra = RegraConfig("opt_out_palavras", parametros={"palavras": ["basta"]})
-        assert c.palavra_de_parar(["Basta!"], extra) == "basta" and c.palavra_de_parar(["basta"], None) is None
+        extra = RegraConfig("opt_out_palavras", parametros={"palavras": ["encerrado"]})
+        assert c.palavra_de_parar(["Encerrado!"], extra) == "encerrado" and c.palavra_de_parar(["encerrado"], None) is None
         assert c.palavra_de_parar(["parar"], RegraConfig("opt_out_palavras", ativo=False)) is None
 
     def test_a_one_word_stop_opts_out_without_the_model(self, chan):
