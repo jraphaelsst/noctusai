@@ -131,6 +131,12 @@ PISO_DE_PADROES: dict[str, tuple[str, ...]] = {
 PALAVRAS_PARAR_PISO: tuple[str, ...] = (
     "parar", "sair", "stop", "cancelar", "nao quero mais", "pare", "para", "parem", "sai", "chega",
     "descadastrar", "descadastre", "unsubscribe",
+    # an opt-out is honoured in ANY language (LGPD / consent withdrawal), whatever language the agent answers in
+    "alto", "basta", "detente", "no mas", "no me escribas", "no me escribas mas", "no me escriban", "no me escriban mas",
+    "no me contactes", "no me llames", "dejen de escribirme", "deja de escribirme", "darse de baja", "baja",
+    "don't message me", "don't text me", "don't contact me", "don't call me", "stop messaging me", "stop texting me", "stop contacting me", "stop emailing me", "stop calling me", "dont message me",
+    "dont text me", "dont contact me", "dont call me", "do not message me", "do not contact me", "do not text me",
+    "remove me", "opt out", "optout", "unsub", "cancel",
 )
 
 

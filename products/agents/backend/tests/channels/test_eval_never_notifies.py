@@ -75,3 +75,17 @@ class TestEvalHonoursStopInEveryState:
         assert parar.participante_estado == "encerrado"
         assert any(a.get("type") == "opt_out" for a in parar.acoes_detalhe)
         assert not any(v.regra == "sem_turno" for v in parar.violacoes)
+
+    def test_with_the_agent_off_the_stop_is_recorded_and_no_confirmation_is_sent(self, chan):
+        chan.seed_agent(publish=False)
+        provider = FakeProvider(tool_responses=[say("Oi! Você procura para comprar ou alugar?")])
+        driver = _driver(chan, provider)
+        thread = ThreadState()
+        asyncio.run(driver.executar_turno(thread, "oi"))
+        m = driver._mundo
+        m.controles.set(m.org_id, m.agent.id, modo="desligado")  # the org switches the agent off mid-conversation
+        chamadas = len(provider.calls)
+        parar = asyncio.run(driver.executar_turno(thread, "STOP"))
+        assert any(a.get("type") == "opt_out" for a in parar.acoes_detalhe)
+        assert parar.bolhas == ()
+        assert len(provider.calls) == chamadas  # no model call, no confirmation text
