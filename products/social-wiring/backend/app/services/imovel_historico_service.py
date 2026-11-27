@@ -10,7 +10,8 @@ entity `imovel`) -- not a fork -- with four gatherers merged on one thread:
   vista           imovel_historico            campo_atualizado | vista_prevaleceu     {campo, rotulo, de, para, acao}
   aprovacao       imovel_historico            aprovacao_pendente | aprovacao_decidida {campo, rotulo, de, para, acao, conversa?, status, divergencia_id}
   vista_envio     imovel_historico            enviado_ao_vista | envio_vista_falhou   {campo, rotulo, de, para, acao, conversa?, detalhe?}
-  alteracao       imovel_historico            campo_atualizado by a user / Julia / the system
+  alteracao       imovel_historico            campo_atualizado by a user / Julia / the system, video_youtube_definido |
+                                              video_youtube_removido (campo `video_youtube`, detalhe = the motivo; any origem)
   preco           imovel_preco_historico      one entry per price that changed        {campo, rotulo, de, para, acao}
   nota            imovel_notas                {id, corpo, autor}
 
@@ -40,6 +41,7 @@ T_CONFLITOS = "imovel_campo_conflitos"
 ORIGENS = ("vista_sync", "usuario", "julia", "sistema")
 ACOES = (
     "campo_atualizado", "vista_prevaleceu", "enviado_ao_vista", "envio_vista_falhou", "aprovacao_pendente", "aprovacao_decidida",
+    "video_youtube_definido", "video_youtube_removido",  # migration 371 (imovel_video_youtube_service)
 )
 _TIPO_ATOR = {"vista_sync": "vista", "usuario": "usuario", "julia": "julia", "sistema": "sistema"}
 _NOME_ATOR = {"vista": "Vista", "julia": "Julia", "sistema": "Sistema"}
@@ -183,7 +185,8 @@ def configuracao() -> CardHubConfig:
             "vista": _gatherer_historico("vista", lambda r: r["acao"] in ("vista_prevaleceu",) or (r["acao"] == "campo_atualizado" and r["origem"] == "vista_sync")),
             "aprovacao": _gatherer_historico("aprovacao", lambda r: r["acao"] in ("aprovacao_pendente", "aprovacao_decidida")),
             "vista_envio": _gatherer_historico("vista_envio", lambda r: r["acao"] in ("enviado_ao_vista", "envio_vista_falhou")),
-            "alteracao": _gatherer_historico("alteracao", lambda r: r["acao"] == "campo_atualizado" and r["origem"] != "vista_sync"),
+            "alteracao": _gatherer_historico("alteracao", lambda r: (r["acao"] == "campo_atualizado" and r["origem"] != "vista_sync")
+                                             or r["acao"] in ("video_youtube_definido", "video_youtube_removido")),
             "preco": _gather_preco,
             "nota": _gather_nota,
         },

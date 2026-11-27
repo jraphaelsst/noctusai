@@ -204,11 +204,12 @@ class VistaRESTAdapter:
     # is why `get_property` cannot see `BanheiroSocial`, `Caracteristicas`
     # or any field the tenant enabled after that list was written.
     #
-    # NOC-REMEDIATE[seed-fork]: `get_property` + `update_property_video_url`
-    # still use raw httpx with a frozen 16-field `pesquisa`. They should be
-    # re-based onto `VistaClient` + `calibrator` so the adapter has ONE
-    # transport. Deferred here rather than done in-flight because those two
-    # feed the live YouTube fan-out and a field-set change alters
+    # NOC-REMEDIATE[seed-fork]: `get_property` still uses raw httpx with a
+    # frozen 16-field `pesquisa` (`update_property_video_url` already goes
+    # through `atualizar_imovel`, 2026-11-04). It should be re-based onto
+    # `VistaClient` + `calibrator` so the adapter has ONE transport. Deferred
+    # here rather than done in-flight because it feeds the live YouTube
+    # fan-out and a field-set change alters
     # `PropertyData.description` — a behaviour change that wants its own
     # slice, not a drive-by. Named destination: roadmap
     # `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up. — 2026-08-03
@@ -614,11 +615,12 @@ class VistaRESTAdapter:
         *,
         motivo: str,
         autor: str = "NoctusAI",
-        field_name: str = "Tour360",
+        field_name: str = "VideoDestaque",
     ) -> bool:
         """Push a video URL onto a Vista property -- best-effort write; ``True`` if Vista accepted it, ``False`` on any
         failure (never raises: a fire-and-forget side effect; `motivo` is still REQUIRED -- a missing one is a caller bug and raises). Goes through `atualizar_imovel`
-        (`PUT /imoveis/detalhes`; the old `PUT /imoveis/alterar` never existed -- 404, probed 2026-11-04)."""
+        (`PUT /imoveis/detalhes`; the old `PUT /imoveis/alterar` never existed -- 404, probed 2026-11-04). The field is Vista's
+        `VideoDestaque` (the listing's featured video) by default; it was `Tour360` until 2026-11-27, when no caller used it."""
         if not video_url:
             return False
         exigir_motivo(motivo, autor)

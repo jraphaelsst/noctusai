@@ -63,8 +63,12 @@ The `core/billing.py` refactor preserved both surfaces deliberately.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
-from typing import Any, Coroutine, Optional
+import threading
+from typing import Any, Awaitable, Callable, Coroutine, Optional, TypeVar
+
+T = TypeVar("T")
 
 _module_logger = logging.getLogger(__name__)
 
@@ -151,4 +155,41 @@ def schedule_coro(
     return task
 
 
-__all__ = ["schedule_coro", "NoRunningLoopError"]
+def run_coro_sync(factory: Callable[[], Awaitable[T]]) -> T:
+    """Drive an async call to completion from SYNC code and return its result (or re-raise its error).
+
+    `factory` builds the awaitable (`lambda: adapter.call(...)`), so it is created on the thread that runs it.
+    With no running loop on this thread: `asyncio.run`. From inside a running loop (a sync function called by
+    async code): a private loop on a helper thread, blocking the caller as a sync call must. The helper thread
+    keeps the caller's context variables (e.g. the Supabase-breaker source scope).
+
+    Third instance of the shape (`integrations.llm.tool_loop.run_tool_loop_sync`,
+    `integrations.google_drive.sync_facade._drive_sync`) -- formalised here at N=3.
+    NOC-REMEDIATE[run-coro-sync-adopt]: re-point those two at this primitive -- 2026-11-27
+    """
+    async def _main() -> T:
+        return await factory()
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_main())
+
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["result"] = asyncio.run(_main())
+        except BaseException as exc:  # re-raised on the caller's thread
+            box["error"] = exc
+
+    ctx = contextvars.copy_context()
+    t = threading.Thread(target=lambda: ctx.run(_runner), name="run_coro_sync")
+    t.start()
+    t.join()
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
+
+
+__all__ = ["schedule_coro", "NoRunningLoopError", "run_coro_sync"]

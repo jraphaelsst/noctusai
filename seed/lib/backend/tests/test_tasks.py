@@ -222,3 +222,40 @@ class TestScheduleCoro:
         assert captured["name"].startswith("Task-"), (
             f"expected default 'Task-N' name; got {captured['name']!r}"
         )
+
+
+class TestRunCoroSync:
+    """`run_coro_sync`: a sync caller gets the async result (or its error), with or without a running loop."""
+
+    def test_no_running_loop_returns_the_result(self) -> None:
+        from noctusai_lib.primitives.tasks import run_coro_sync
+
+        async def dobro(x: int) -> int:
+            await asyncio.sleep(0)
+            return x * 2
+
+        assert run_coro_sync(lambda: dobro(21)) == 42
+
+    def test_inside_a_running_loop_runs_on_a_helper_thread_and_reraises(self) -> None:
+        import contextvars
+
+        from noctusai_lib.primitives.tasks import run_coro_sync
+
+        var: contextvars.ContextVar[str] = contextvars.ContextVar("v", default="-")
+
+        async def le() -> str:
+            return var.get()
+
+        async def falha() -> None:
+            raise LookupError("x")
+
+        async def driver() -> str:
+            var.set("caller")
+            visto = run_coro_sync(le)
+            try:
+                run_coro_sync(falha)
+            except LookupError:
+                return visto
+            raise AssertionError("error was not re-raised")
+
+        assert asyncio.run(driver()) == "caller"
