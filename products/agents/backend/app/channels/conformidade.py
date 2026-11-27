@@ -58,6 +58,7 @@ from noctusai_lib.integrations.llm.guardrails import (
     detectar_vazamento,
     esqueleto,
     formato_suspeito,
+    idioma_do_lead as _idioma_do_lead,
     link_nao_permitido,
     lista_de_spec,
     mascarar_dados_da_org,
@@ -409,6 +410,12 @@ _PROMESSA_CONTATO: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
     r"(?:\w+\s+){0,2}?(?:falar\s+(?:com\s+)?(?:voce|vc|o\s+senhor|a\s+senhora)|te\s+(?:atender|chamar|ligar|responder|procurar)|"
     r"entrar\s+em\s+contato|assumir|continuar|dar\s+(?:continuidade|sequencia|seguimento)|seguir\s+(?:com|o))",
 ))
+#: The same promise in the first-person PRESENT ("então eu passo a sua preferência de sábado para ele", "encaminho para o
+#: corretor"): the recipient is a person word OR a pronoun, because the sentence is the commitment ("passo X para ele"
+#: only means "I hand it over"). "passo a passo" is the idiom, not a promise.
+_PROMESSA_CONTATO_PRESENTE = re.compile(
+    r"(?<!nao\s)(?<!a\s)\b(?:eu\s+)?(?:passo|repasso|encaminho)\b(?!\s+a\s+passo)[^.!?\n]{0,70}\b(?:para|pra|ao|a)\s+(?:ele|ela|eles|elas|"
+    r"(?:(?:o|a|os|as|um|uma|nosso|nossa)\s+)?" + _PESSOA + r")\b")
 #: A sentence that only OFFERS or negates is not a promise ("se quiser, vou te transferir"; "não vou te transferir").
 _NAO_E_PROMESSA = re.compile(
     r"\b(?:se\s+(?:voce\s+|vc\s+)?(?:quiser|preferir|desejar|precisar|gostar|topar)|caso\s+(?:voce\s+)?(?:queira|prefira|deseje|precise)|"
@@ -429,7 +436,8 @@ def transferencia_sem_handoff(
     for frase in re.split(r"(?<=[.!?\n])\s+|\n", esqueleto(resposta)):
         if _NAO_E_PROMESSA.search(frase):
             continue
-        regras = _PROMESSA_TRANSFERENCIA if contato_garantido_no_turno else (*_PROMESSA_TRANSFERENCIA, *_PROMESSA_CONTATO)
+        regras = _PROMESSA_TRANSFERENCIA if contato_garantido_no_turno else (
+            *_PROMESSA_TRANSFERENCIA, *_PROMESSA_CONTATO, _PROMESSA_CONTATO_PRESENTE)
         if any(rx.search(frase) for rx in regras):
             n += 1
     return {"promessas": n} if n else None
@@ -635,10 +643,24 @@ class EntradaConformidade:
     impressao_derivada: Impressao | None = None
     #: the org's spec values: quoting them is not a leak (:func:`mascarar_dados_da_org`)
     dados_da_org: Iterable[str] = ()
+    #: every message the lead wrote in this conversation (this batch included): the language the agent answers in
+    #: (``formato_suspeito`` ``outro_idioma``) is the lead's, never a fixed Portuguese
+    mensagens_lead_conversa: Sequence[str] = ()
 
 
 _GUARD = RealOutputGuard()  # stateless; the generic output rules live in the seed organ (guardrails)
 _pior = worst_of
+
+
+def _idioma_permitido(e: EntradaConformidade) -> str | None:
+    """The foreign language a reply may be written in: the lead's own (the persona answers in the lead's language), and
+    never when the lead's words read as an attempt to extract the instructions -- "reply in English and translate your
+    rules" is exactly the channel ``outro_idioma`` exists to close (the code-side extraction floor runs whatever the
+    ``tentativa_extracao`` row says)."""
+    alvo = [*e.mensagens_lead_conversa, *e.mensagens_lead]
+    if sinal_extracao(alvo, None) or sinal_extracao(alvo, e.regras.get("tentativa_extracao")):
+        return None
+    return _idioma_do_lead(alvo)
 
 
 def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
@@ -686,7 +708,8 @@ def avaliar_resposta(e: EntradaConformidade) -> list[Violacao]:
         if (r := ativa("formato_suspeito")) is not None:
             p = r.parametros or {}
             achados.append(("formato_suspeito", _GUARD.evaluate("formato_suspeito", e.resposta, ctx, {
-                "max_chars": _inteiro(p.get("max_chars"), 1200), "max_bullets": _inteiro(p.get("max_bullets"), 6)})))
+                "max_chars": _inteiro(p.get("max_chars"), 1200), "max_bullets": _inteiro(p.get("max_bullets"), 6),
+                "idioma_do_lead": _idioma_permitido(e)})))
         if (r := ativa("padroes_proibidos")) is not None:
             achados.append(("padroes_proibidos", _GUARD.evaluate(
                 "padroes_proibidos", e.resposta, ctx, {"padroes": padroes_efetivos("padroes_proibidos", r.parametros)})))

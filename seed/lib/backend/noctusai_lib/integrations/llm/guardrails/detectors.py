@@ -156,10 +156,41 @@ _STOP_EN = frozenset("the and is are you your of to in that this it for with on 
 _STOP_ES = frozenset("el los las y es son usted tu tus del al lo con una unos para por pero qué como está están tiene tienen muy también cuando donde yo mi sus nosotros hay".split())
 
 
-def formato_suspeito(resposta: str, max_chars: int = 1200, max_bullets: int = 6) -> dict[str, Any] | None:
+#: Words that betray the LEAD's language even in a one-word message ("Hi", "STOP", "Hola"): the function words above
+#: plus greetings / stop words a short message is made of. Portuguese counterparts keep a "Oi" from reading as foreign.
+_EXTRA_EN = frozenset("hi hello hey stop yes thanks thank please".split())
+_EXTRA_ES = frozenset("hola buenas gracias sí buenos días tardes noches".split())
+_EXTRA_PT = frozenset("oi olá ola bom boa dia tarde noite obrigado obrigada sim parar pare".split())
+
+
+def _contagens_de_idioma(texto: str) -> tuple[int, int, int]:
+    palavras = re.findall(r"[a-zà-ú']+", texto.casefold())
+    return (
+        sum(1 for w in palavras if w in _STOP_EN or w in _EXTRA_EN),
+        sum(1 for w in palavras if w in _STOP_ES or w in _EXTRA_ES),
+        sum(1 for w in palavras if w in _STOP_PT or w in _EXTRA_PT))
+
+
+def idioma_do_lead(mensagens: Iterable[str]) -> str | None:
+    """``"en"`` / ``"es"`` when the lead's own messages are written in that language (strictly more of its function
+    words than Portuguese ones, in every message taken together); ``None`` when Portuguese or when there is no evidence.
+    The agent answers in the lead's language, so a foreign reply to a foreign lead is no anomaly (``formato_suspeito``)."""
+    en = es = pt = 0
+    for m in mensagens:
+        e, s, p = _contagens_de_idioma(m or "")
+        en, es, pt = en + e, es + s, pt + p
+    if max(en, es) == 0 or max(en, es) <= pt:
+        return None
+    return "en" if en >= es else "es"
+
+
+def formato_suspeito(
+    resposta: str, max_chars: int = 1200, max_bullets: int = 6, idioma_do_lead: str | None = None,
+) -> dict[str, Any] | None:
     """Encoded or structured output that carries data out past the shingle check: base64 / hex runs of 40+,
     code fences, markdown headings, JSON, more than ``max_bullets`` bullet lines, a reply over ``max_chars``
-    or one mostly in another language. ``detalhe`` holds the shape codes, never a fragment."""
+    or one mostly in another language than the lead's (``idioma_do_lead``: ``"en"`` / ``"es"`` when the lead wrote in
+    it, else the reply is expected in Portuguese). ``detalhe`` holds the shape codes, never a fragment."""
     if not resposta or not resposta.strip():
         return None
     achado: dict[str, Any] = {}
@@ -180,8 +211,10 @@ def formato_suspeito(resposta: str, max_chars: int = 1200, max_bullets: int = 6)
     palavras = re.findall(r"[a-zà-ú']+", resposta.casefold())
     if len(palavras) >= 12:
         pt = sum(1 for w in palavras if w in _STOP_PT)
-        fora = max(sum(1 for w in palavras if w in _STOP_EN), sum(1 for w in palavras if w in _STOP_ES))
-        if fora >= 4 and fora > pt:
+        en = sum(1 for w in palavras if w in _STOP_EN)
+        es = sum(1 for w in palavras if w in _STOP_ES)
+        fora = max(en, es)
+        if fora >= 4 and fora > pt and ("en" if en >= es else "es") != idioma_do_lead:
             achado["outro_idioma"] = True
     return achado or None
 

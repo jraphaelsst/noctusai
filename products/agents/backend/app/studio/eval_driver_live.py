@@ -438,6 +438,12 @@ class LiveEvalTurnDriver:
             m.lead_ref_id = th.lead_ref_id
             self._semear(m, thread.estado)
         if not ctl.prosseguir or th is None:
+            if th is not None and ctl.status not in turno_mod.STATUS_RECUSA_SEM_OPT_OUT:
+                # the SAME step the channel route runs before answering a refusal: a stop word is honoured in EVERY
+                # conversation state (a paused / handed-over participant included), so the eval world must too
+                feito = await self._opt_out_em_recusa(m, th, ctl, mensagem_lead)
+                if feito is not None:
+                    return self._outcome(m, th, feito)
             return TurnOutcome(
                 estado=self._estado(m), violacoes=(Violation("sem_turno", ctl.status),),
                 participante_estado=self._participante_estado(m, th), valores_terceiros=m.sinteticos.terceiros())
@@ -467,6 +473,16 @@ class LiveEvalTurnDriver:
         finally:
             await slot.release()
         return self._outcome(m, th, res)
+
+    async def _opt_out_em_recusa(self, m: _Mundo, th: Any, ctl: Any, mensagem_lead: str) -> Any:
+        """``turno.opt_out_em_conversa_recusada`` over the eval world (None when the message is no stop word)."""
+        try:
+            prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
+        except turno_mod.TurnoRecusado:
+            prep = None  # the agent cannot compile: the opt-out still stands, nothing is sent (as in production)
+        return await turno_mod.opt_out_em_conversa_recusada(
+            svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, lote_lead=[mensagem_lead],
+            participante=ctl.participante)
 
     async def _executar_turno_app(self, m: _Mundo, texto: str) -> TurnOutcome:
         """One ``app``-channel turn (the Diretor de Criacao): the SAME steps as ``app.criacao.canal_app`` minus what an

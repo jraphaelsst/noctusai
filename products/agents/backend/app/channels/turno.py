@@ -788,6 +788,7 @@ async def _executar(
             contatos_permitidos=conf.lista_de_spec(valores.get(conf.SPEC_CONTATOS)),
             cnpjs_proprios=conf.lista_de_spec(valores.get(conf.SPEC_CNPJ)),
             textos_com_valor=_textos_com_valor(turno, ct, estado0, lote_lead, mensagens_lead),
+            mensagens_lead_conversa=[i.texto for i in ct.mensagens if i.origem == "lead"],
         ))
 
     try:

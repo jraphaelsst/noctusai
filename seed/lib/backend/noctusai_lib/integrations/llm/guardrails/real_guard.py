@@ -51,7 +51,7 @@ class RealOutputGuard:
         if rule == "pii_na_resposta":
             return pii_na_resposta(reply, ctx.own_company_ids)
         if rule == "formato_suspeito":
-            return formato_suspeito(reply, p.get("max_chars", 1200), p.get("max_bullets", 6))
+            return formato_suspeito(reply, p.get("max_chars", 1200), p.get("max_bullets", 6), p.get("idioma_do_lead"))
         if rule == "padroes_proibidos":
             return padroes_proibidos(reply, p.get("padroes", ()))
         raise KeyError(f"unknown guardrail rule {rule!r}")
