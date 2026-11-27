@@ -1,0 +1,53 @@
+{
+  "_nota": "Limiares e listas sao PROPOSTAS da casa (design aprovado 2026-11-26/27), a calibrar contra transcricoes reais de criadores. Mude aqui, nao no codigo. Termos sao comparados sem acento e em minusculas.",
+  "travessao": {"max": 0},
+  "contraste": {"max_headline": 0, "max_outros": 1},
+  "triade": {
+    "max_headline": 0,
+    "max_outros": 1,
+    "max_palavras_item": 4,
+    "saudacoes": ["oi", "olá", "opa", "bom dia", "boa tarde", "boa noite", "e aí", "valeu", "obrigado", "obrigada"]
+  },
+  "lexico_ia": {
+    "max_headline": 0,
+    "palavras_por_ocorrencia": 150,
+    "termos": [
+      "crucial", "papel fundamental", "é fundamental", "vale ressaltar", "vale destacar", "é importante destacar",
+      "no cenário atual", "cenário em constante evolução", "jornada", "desbravar", "desbravando", "potencializar",
+      "potencializa", "potencializando", "mergulhar", "mergulhe", "mergulhem", "mergulhando", "aprofundar-se",
+      "aprofunde-se", "um verdadeiro testemunho", "serve como", "ponto de virada", "preparando o terreno",
+      "em suma", "em resumo", "diante do exposto", "por conseguinte", "transformador", "transformadora",
+      "revolucionar", "elevar ao próximo nível", "desvendar", "desvendando", "no mundo de hoje"
+    ]
+  },
+  "aberturas": ["ótima pergunta", "excelente pergunta", "boa pergunta", "certamente"],
+  "aberturas_exatas": ["claro", "com certeza"],
+  "fechamentos": [
+    "espero ter ajudado", "espero que isso ajude", "espero que ajude", "fico à disposição", "estou à disposição",
+    "se precisar de algo", "não hesite em"
+  ],
+  "title_case": {
+    "min_palavras": 3,
+    "min_razao": 0.6,
+    "perfis": ["headline", "legenda"],
+    "stopwords": ["de", "da", "do", "das", "dos", "a", "o", "as", "os", "e", "em", "no", "na", "nos", "nas", "para", "por", "com", "um", "uma", "que", "ou", "ao", "aos"]
+  },
+  "emoji_max": {"chat": 1, "legenda": 3, "roteiro": 0, "headline": 1},
+  "conectivos": {
+    "max_por_100_palavras": 1,
+    "termos": ["além disso", "dessa forma", "desse modo", "por outro lado", "nesse sentido", "ademais", "outrossim"]
+  },
+  "ritmo": {
+    "cv_min": 0.4,
+    "curta_palavras": 5,
+    "curta_a_cada": 4,
+    "min_frases": 4,
+    "frase_curta_palavras": 8,
+    "frases_curtas_share_min": 0.25,
+    "abertura_palavras": 2
+  },
+  "giria": {
+    "sempre": ["vc", "vcs", "pq", "tbm", "tb"],
+    "so_formal": ["pra", "tá", "tô", "né", "blz"]
+  }
+}

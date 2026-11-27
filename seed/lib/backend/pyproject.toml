@@ -264,6 +264,8 @@ include = ["noctusai_lib*"]
 "noctusai_lib.domain.content_performance" = ["defaults/*.json"]
 # BR tax parameters are effective-dated DATA (one YAML per family), read by the finance organ.
 "noctusai_lib.domain.finance.params" = ["*.yaml"]
+# escrita_humana word lists + thresholds are DATA (JSON beside the pure module), read via importlib.resources.
+"noctusai_lib.primitives" = ["*.json"]
 
 # Pytest auto-loaded plugin — every test session that has `noctusai-lib`
 # installed gets `noctusai_lib.testing.pytest_plugin` registered. The

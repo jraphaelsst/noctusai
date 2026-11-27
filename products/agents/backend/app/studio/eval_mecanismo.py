@@ -105,6 +105,7 @@ ASSERT_NAMES = (
     "saida_criacao",
     "propostas_criacao",
     "texto_sem_termos",
+    "escrita_humana",
 )
 #: the ``tipo`` values ``propostas_criacao`` accepts (``app.criacao.saida.checar_propostas``)
 TIPOS_PROPOSTA = ("headline", "roteiro", "qualquer")
@@ -228,6 +229,8 @@ def validar_asserts(asserts: Any, *, onde: str = "asserts") -> None:
             _validar_propostas_criacao(valor)
         elif nome == "texto_sem_termos":
             _lista_str(nome, valor)
+        elif nome == "escrita_humana":
+            _validar_escrita_humana(valor)
         elif nome == "skill_aberta_antes_de":
             itens = valor if isinstance(valor, list) else [valor]
             if not itens or not all(
@@ -250,6 +253,21 @@ def _validar_saida_criacao(valor: Any) -> None:
         raise AssertInvalido(f"saida_criacao: campos desconhecidos {sorted(extra)}")
     for chave, lista in valor.items():
         _lista_str(f"saida_criacao.{chave}", lista)
+
+
+def _validar_escrita_humana(valor: Any) -> None:
+    """``{perfil: chat|roteiro|legenda|headline, registro?: formal|informal, ignorar?: [code prefixes]}``. Closed shape."""
+    from noctusai_lib.primitives.escrita_humana import PERFIS, REGISTROS
+
+    if not isinstance(valor, dict) or valor.get("perfil") not in PERFIS:
+        raise AssertInvalido(f"escrita_humana: {{perfil: um de {', '.join(PERFIS)}, registro?, ignorar?}}")
+    extra = set(valor) - {"perfil", "registro", "ignorar"}
+    if extra:
+        raise AssertInvalido(f"escrita_humana: campos desconhecidos {sorted(extra)}")
+    if "registro" in valor and valor["registro"] not in REGISTROS:
+        raise AssertInvalido(f"escrita_humana.registro: um de {', '.join(REGISTROS)}")
+    if "ignorar" in valor:
+        _lista_str("escrita_humana.ignorar", valor["ignorar"])
 
 
 def _validar_propostas_criacao(valor: Any) -> None:
@@ -665,6 +683,10 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
             for i, termo in enumerate(valor):
                 if fold_accents(termo).casefold() in alvo:
                     falha(nome, f"termo{i + 1}")
+        elif nome == "escrita_humana":
+            for codigo in _codigos_escrita_humana(t, valor):
+                if not any(codigo.startswith(p) for p in (valor.get("ignorar") or ())):
+                    falha(nome, codigo)
         elif nome == "solicitacao_titular":
             tipos = [c.args.get("tipo") for c in t.ferramentas if c.nome == FERRAMENTA_SOLICITACAO_TITULAR]
             if not tipos:
@@ -690,6 +712,22 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
                 if not aberta:
                     falha(nome, f"{skill}:antes_de:{alvo}")
     return falhas
+
+
+def _codigos_escrita_humana(t: Any, valor: dict[str, Any]) -> list[str]:
+    """The seed's ``checar_escrita`` over what the turn produced: ``chat`` judges each bubble (``bolhaN:`` prefix);
+    the creation perfis read the reply text (``app.criacao.saida``: each roteiro body, headline line, Legenda field)."""
+    from noctusai_lib.primitives.escrita_humana import checar_escrita
+
+    perfil, registro = valor["perfil"], valor.get("registro", "informal")
+    if perfil == "chat":
+        return [f"bolha{j}:{c}" for j, b in enumerate(t.bolhas, start=1) for c in checar_escrita(b, perfil="chat", registro=registro)]
+    from app.criacao.saida import checar_escrita_humana
+
+    prefixo = {"roteiro": "roteiro", "headline": "headline", "legenda": "pub"}[perfil]
+    marca = ":legenda:" if perfil == "legenda" else None
+    codigos = checar_escrita_humana(t.ultimo_texto, registro=registro)
+    return [c for c in codigos if c.startswith(prefixo) and (marca is None or marca in c)]
 
 
 # ── pass^k ────────────────────────────────────────────────────────────────────────────────────────────────

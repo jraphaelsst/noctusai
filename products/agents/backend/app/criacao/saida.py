@@ -25,14 +25,10 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from noctusai_lib.primitives.accents import fold_accents
+from noctusai_lib.primitives.escrita_humana import checar_escrita, checar_ritmo, texto_falado
 
 OBJETIVOS = ("alcance", "salvamentos", "conversa", "seguidores", "autoridade", "reflexão")
 HASHTAGS_EXATAS = 5
-#: share of spoken sentences under 8 words a humanized script must reach (a narrator's rhythm is short-heavy)
-FRASES_CURTAS_MIN = 0.25
-FRASE_CURTA_PALAVRAS = 8
-#: how many leading words two consecutive blocks may NOT share (a repeated anchor reads as a template)
-ABERTURA_PALAVRAS = 2
 
 _PUB_RE = re.compile(r"^\s*###\s+publica[cç][aã]o\s+(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 _CAMPO_RE = re.compile(r"^\s*[-*]\s*([^:\n]{2,40}):[ \t]*(.*)$")
@@ -106,15 +102,6 @@ def corpos_de_roteiro(texto: str) -> list[str]:
 
 def hashtags_de(valor: str) -> list[str]:
     return _HASHTAG_RE.findall(valor or "")
-
-
-def _frases(corpo: str) -> list[str]:
-    limpo = re.sub(r"^\s*[-*•]\s+|\[[^\]]*\]|\([^)]*\)", " ", corpo, flags=re.MULTILINE)
-    return [f.strip() for f in re.split(r"(?<=[.!?…])\s+|\n+", limpo) if len(f.split()) >= 1]
-
-
-def _blocos(corpo: str) -> list[str]:
-    return [b.strip() for b in re.split(r"\n\s*\n", corpo) if b.strip()]
 
 
 def _urls(valor: str) -> set[str]:
@@ -294,18 +281,28 @@ def checar_fontes(pubs: Sequence[Publicacao], citaveis: set[str]) -> list[str]:
 
 
 def checar_humanizacao(texto: str) -> list[str]:
-    """Rhythm of the spoken bodies: enough short sentences, no two consecutive blocks opening with the same words."""
+    """Rhythm of the spoken bodies: enough short sentences, no two consecutive blocks opening with the same words
+    (the ONE implementation is the seed's ``checar_ritmo``; this prefixes its codes per roteiro)."""
     falhas = []
     for i, corpo in enumerate(corpos_de_roteiro(texto), start=1):
-        frases = _frases(corpo)
-        if frases:
-            curtas = sum(1 for f in frases if len(f.split()) < FRASE_CURTA_PALAVRAS) / len(frases)
-            if curtas < FRASES_CURTAS_MIN:
-                falhas.append(f"roteiro{i}:frases_curtas:{curtas:.2f}")
-        aberturas = [" ".join(_sem_acento(b).split()[:ABERTURA_PALAVRAS]) for b in _blocos(corpo)]
-        for a, b in zip(aberturas, aberturas[1:]):
-            if a and a == b:
-                falhas.append(f"roteiro{i}:abertura_repetida:{a}")
+        falhas += [f"roteiro{i}:{c}" for c in checar_ritmo(texto_falado(corpo))]
+    return falhas
+
+
+def checar_escrita_humana(texto: str, *, registro: str = "informal") -> list[str]:
+    """The seed's anti-AI-slop checker over every roteiro body (perfil roteiro, rhythm included), headline (perfil
+    headline) and publication Legenda (perfil legenda) of the reply. Codes are prefixed ``roteiroN:`` /
+    ``headlineN:`` / ``pubN:legenda:``."""
+    falhas: list[str] = []
+    for i, corpo in enumerate(corpos_de_roteiro(texto), start=1):
+        falhas += [f"roteiro{i}:{c}" for c in checar_escrita(corpo, perfil="roteiro", registro=registro)]  # type: ignore[arg-type]
+    for p in propostas_do_texto(texto):
+        if p.tipo == "headline":
+            falhas += [f"headline{p.numero}:{c}" for c in checar_escrita(p.texto, perfil="headline", registro=registro)]  # type: ignore[arg-type]
+    for pub in extrair_publicacoes(texto):
+        legenda = pub.get("legenda")
+        if legenda:
+            falhas += [f"pub{pub.numero}:legenda:{c}" for c in checar_escrita(legenda, perfil="legenda", registro=registro)]  # type: ignore[arg-type]
     return falhas
 
 
@@ -353,7 +350,7 @@ def avaliar_saida(
     falhas += checar_cta_proibido(pubs, cta_proibidos)
     falhas += checar_nomes(texto, nomes_proibidos)
     falhas += checar_fontes(pubs, urls_das_ferramentas(resultados))
-    falhas += checar_humanizacao(texto)
+    falhas += checar_escrita_humana(texto)
     falhas += checar_voz(pubs, voz_disponivel=voz_disponivel(resultados))
     return falhas
 
@@ -361,6 +358,6 @@ def avaliar_saida(
 __all__ = [
     "HASHTAGS_EXATAS", "MAX_HEADLINE_PALAVRAS", "OBJETIVOS", "Proposta", "Publicacao", "checar_propostas",
     "codigos_das_ferramentas", "propostas_do_texto", "avaliar_saida", "checar_cta_proibido", "checar_fontes",
-    "checar_humanizacao", "checar_nomes", "checar_publicacao", "checar_voz", "corpos_de_roteiro",
+    "checar_escrita_humana", "checar_humanizacao", "checar_nomes", "checar_publicacao", "checar_voz", "corpos_de_roteiro",
     "extrair_publicacoes", "hashtags_de", "urls_das_ferramentas", "voz_disponivel",
 ]
