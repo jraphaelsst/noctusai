@@ -56,3 +56,22 @@ class TestEvalNeverNotifies:
                        lambda: sink.send("u", kind="k", title="t", message="m", metadata={})):
                 with pytest.raises(EvalSideEffectRefused):
                     fn()
+
+
+class TestEvalHonoursStopInEveryState:
+    """The eval world mirrors the channel route: a stop word reaching a PAUSED participant (handed to the owner) still
+    ends it and records the opt-out (LGPD), instead of ending the case as ``sem_turno`` with nothing recorded."""
+
+    def test_a_stop_word_to_a_paused_participant_ends_it_and_records_the_opt_out(self, chan):
+        chan.seed_agent(publish=False)
+        provider = FakeProvider(tool_responses=[
+            step(call("handoff", motivo_codigo="outro", motivo="Cliente pediu um humano")), say("Chamei alguém. Algo mais?"),
+        ])
+        driver = _driver(chan, provider)
+        thread = ThreadState()
+        primeiro = asyncio.run(driver.executar_turno(thread, "oi"))
+        assert primeiro.participante_estado == "pausado" or primeiro.handoff is not None
+        parar = asyncio.run(driver.executar_turno(thread, "STOP"))
+        assert parar.participante_estado == "encerrado"
+        assert any(a.get("type") == "opt_out" for a in parar.acoes_detalhe)
+        assert not any(v.regra == "sem_turno" for v in parar.violacoes)

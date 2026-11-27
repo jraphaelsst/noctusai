@@ -13,7 +13,7 @@ from typing import Any
 
 from .bounds import count_words, outside_enum, outside_word_band, unretrieved_sources
 from .detectors import (
-    CNPJ_PATTERN, CPF_PATTERN, LINK_PATTERN, PIX_PATTERN, contar_padroes, contato_nao_permitido, formato_suspeito, link_nao_permitido, lista_de_spec, padroes_proibidos,
+    CNPJ_PATTERN, CPF_PATTERN, LINK_PATTERN, PIX_PATTERN, contar_padroes, contato_nao_permitido, formato_suspeito, idioma_do_lead, link_nao_permitido, lista_de_spec, padroes_proibidos,
     pii_na_resposta,
 )
 from .fake_guard import FakeOutputGuard
@@ -30,7 +30,7 @@ __all__ = [
     "CNPJ_PATTERN", "CPF_PATTERN", "LINK_PATTERN", "PIX_PATTERN", "GENERIC_RULES", "REDACTION_PATTERNS", "SHINGLE_TOKENS", "SHINGLE_TOKENS_DERIVADO", "FakeOutputGuard", "Fingerprint",
     "GuardContext", "GuardFinding", "GuardRule", "OutputGuard", "RealOutputGuard", "canario", "caractere_proibido",
     "contar_padroes", "contato_nao_permitido", "count_redactions", "count_words", "detectar_vazamento", "esqueleto",
-    "fingerprint_of", "formato_suspeito", "get_output_guard", "limpar", "link_nao_permitido", "lista_de_spec",
+    "fingerprint_of", "formato_suspeito", "get_output_guard", "idioma_do_lead", "limpar", "link_nao_permitido", "lista_de_spec",
     "mascarar_dados_da_org", "outside_enum", "outside_word_band", "padroes_proibidos", "pii_na_resposta",
     "redact_payload", "redact_pii", "sem_falas_de_exemplo", "shingles_de", "tem_caractere_oculto",
     "unretrieved_sources", "worst_of",
