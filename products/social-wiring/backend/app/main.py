@@ -157,6 +157,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_catalogo_router import router as julia_catalogo_router
     from app.routers.integracao_vista_router import router as integracao_vista_router
     from app.routers.imovel_divergencias_router import router as imovel_divergencias_router
+    from app.routers.imovel_video_youtube_router import router as imovel_video_youtube_router
     from app.routers.julia_especificacoes_router import router as julia_especificacoes_router
     from app.routers.julia_contatos_setoriais_router import router as julia_contatos_setoriais_router
     from app.routers.julia_conhecimento_editor_router import router as julia_conhecimento_editor_router
@@ -309,6 +310,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_catalogo_router,
             integracao_vista_router,
             imovel_divergencias_router,
+            imovel_video_youtube_router,
             julia_especificacoes_router,
             julia_contatos_setoriais_router,
             julia_conhecimento_editor_router,

@@ -45,6 +45,7 @@ async def test_real_adapter_probes_non_mutatingly_and_writes_through_put_with_a_
     linha = await adapter.atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
     assert seen[-1].method == "PUT" and json.loads(seen[-1].url.params["cadastro"])["fields"]["ObsVenda"] == linha  # empty field => just our line
     assert await adapter.update_property_video_url("CA2830", "https://v/1", motivo="vídeo novo") is True
+    assert json.loads(seen[-1].url.params["cadastro"])["fields"]["VideoDestaque"] == "https://v/1"  # the featured-video field, not Tour360
     with pytest.raises(ValueError):
         await adapter.update_property_video_url("CA2830", "https://v/1", motivo="")
 

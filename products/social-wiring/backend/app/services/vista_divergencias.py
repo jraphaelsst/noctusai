@@ -107,6 +107,7 @@ ROTULO_CAMPO = {
     "vagas": "vagas", "status": "status", "disponibilidade": "disponibilidade", "area_terreno_m2": "área do terreno",
     "area_construida_m2": "área construída", "logradouro": "logradouro", "numero": "número",
     "complemento": "complemento", "bairro": "bairro", "cidade": "cidade", "uf": "UF", "cep": "CEP", "empreendimento": "condomínio/empreendimento",
+    "video_youtube": "vídeo do YouTube",  # imovel_video_youtube_service (history `campo`)
 }
 DINHEIRO = {"valor_venda", "valor_locacao", "valor_condominio", "valor_iptu"}
 MEDIDA = {"area_total", "area_privativa", "area_terreno_m2", "area_construida_m2"}

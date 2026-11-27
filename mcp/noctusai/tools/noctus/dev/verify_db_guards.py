@@ -14089,6 +14089,57 @@ _SW_370_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imovel_video_youtube + the widened imovel_historico.acao (371).
+# ---------------------------------------------------------------------------
+
+_SW_371_MIGRATION = "371_imovel_video_youtube.sql"
+_T_IMOVEL_VIDEO_YOUTUBE = f"{_SW_SCHEMA}.imovel_video_youtube"
+
+
+def _sw371_video_ins(video_id: str, origem: str) -> str:
+    return (f"    INSERT INTO {_T_IMOVEL_VIDEO_YOUTUBE} (org_id, codigo, youtube_video_id, origem)\n"
+            f"    VALUES (v_org, v_codigo, {video_id}, {origem});")
+
+
+_SW_371_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="imovel_video_youtube.id_formato",
+        guard_name="imovel_video_youtube_id_check",
+        migration=_SW_371_MIGRATION,
+        rationale="youtube_url is generated from the id and embedded on the property page: a non-11-char id is a broken link.",
+        fixtures=("registry",),
+        ops_sql=_sw371_video_ins("'nao-e-um-id'", "'manual'"),
+        sqlstate_condition=_CHECK,
+        what="an imovel_video_youtube row with a malformed video id",
+        tabelas=(_T_IMOVEL_VIDEO_YOUTUBE,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_video_youtube.origem_valores",
+        guard_name="imovel_video_youtube_origem_check",
+        migration=_SW_371_MIGRATION,
+        rationale="origem decides the Vista write-back (never echo a value that came from Vista): an unknown origem has no rule.",
+        fixtures=("registry",),
+        ops_sql=_sw371_video_ins("'dQw4w9WgXcQ'", "'outra'"),
+        sqlstate_condition=_CHECK,
+        what="an imovel_video_youtube row with an unknown origem",
+        tabelas=(_T_IMOVEL_VIDEO_YOUTUBE,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_historico.acao_valores",
+        guard_name="imovel_historico_acao_check",
+        migration=_SW_371_MIGRATION,
+        rationale="The imóvel action register is read by kind from acao: an unknown action would vanish from the timeline.",
+        fixtures=("registry",),
+        ops_sql=(f"    INSERT INTO {_T_IMOVEL_HISTORICO} (org_id, codigo_canonical, origem, acao)\n"
+                 "    VALUES (v_org, v_codigo, 'sistema', 'acao_inexistente');"),
+        sqlstate_condition=_CHECK,
+        what="an imovel_historico row with an unknown acao",
+        tabelas=(_T_IMOVEL_HISTORICO,),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — social_wiring per-org daily generation limits (migration 361, geracao-contract.md §9.4.1). The
 # append-only change log `cs_limite_geracao_eventos` (who / old / new per limit change). Self-provisioning: each probe
 # builds its OWN org and one `limite_definido` row inside the rolled-back transaction.
@@ -14522,6 +14573,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_362_PROBES,
     *_SW_367_PROBES,
     *_SW_370_PROBES,
+    *_SW_371_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
