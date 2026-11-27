@@ -86,6 +86,7 @@ class GeminiProvider:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
         org_id: Optional[str] = None,
+        effort: Optional[str] = None,  # accepted and ignored: no reasoning-effort mapping in this provider yet
         **kwargs: Any,
     ) -> str:
         from ..usage import record_usage

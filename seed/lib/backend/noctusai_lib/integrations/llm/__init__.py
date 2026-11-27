@@ -112,6 +112,7 @@ from .tracing import (
 from .exceptions import (
     LLMAPIError,
     ProviderQuotaExhausted,
+    LLMOutputExhausted,
     LLMBudgetExceeded,
     LLMBudgetNotConfigured,
     LLMBudgetUnverifiable,
@@ -205,6 +206,7 @@ __all__ = [
     # Exceptions
     "LLMAPIError",
     "ProviderQuotaExhausted",
+    "LLMOutputExhausted",
     "LLMBudgetExceeded",
     "LLMBudgetNotConfigured",
     "LLMBudgetUnverifiable",

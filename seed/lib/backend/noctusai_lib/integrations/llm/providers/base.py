@@ -39,9 +39,13 @@ class LLMProvider(Protocol):
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
+        effort: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
-        """Send a chat completion request. Returns the assistant message text."""
+        """Send a chat completion request. Returns the assistant message text.
+
+        `effort` ("low"|"medium"|"high"|"xhigh"|"max"): reasoning budget. Anthropic forwards it as `output_config.effort`;
+        a provider with no equivalent accepts and ignores it (never an error: the knob is a hint, not a contract)."""
         ...
 
     async def generate_embedding(

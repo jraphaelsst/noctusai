@@ -520,6 +520,23 @@ def test_the_real_refiner_refuses_with_a_fixed_code(registro, chat, limite, codi
         assert chat.chamadas == [] and r.custo_usd == 0.0
 
 
+def test_the_refiner_asks_for_medium_effort_and_a_thinking_only_answer_is_its_own_charged_refusal():
+    from noctusai_lib.integrations.llm.exceptions import LLMOutputExhausted
+
+    from app.studio.eval_loop_refinador import EFFORT_REFINO
+
+    chat = Chat(saida().model_dump_json())
+    asyncio.run(LlmRefinador(registro=_registro, chat=chat).propor(_entrada(), limite_usd=1.0))
+    assert chat.chamadas[0][1]["effort"] == EFFORT_REFINO == "medium"
+
+    async def esgotado(messages, **kw):
+        raise LLMOutputExhausted("anthropic", model="claude-haiku-5-5", prompt_tokens=40922, completion_tokens=MAX_TOKENS_REFINO)
+
+    r = asyncio.run(LlmRefinador(registro=_registro, chat=esgotado).propor(_entrada(), limite_usd=1.0))
+    assert r.saida is None and r.codigo == "saida_esgotada_no_raciocinio" and r.custo_usd > 0.0  # never free: the tokens were spent
+    assert "saida_esgotada_no_raciocinio" in MENSAGENS_REFINO
+
+
 def test_the_refine_output_cap_fits_a_long_line_and_the_cost_ceiling():
     # the first prod refine (Julia) needed more than 4,000 output tokens; the cap must leave room for one long line
     assert MAX_TOKENS_REFINO >= 16000

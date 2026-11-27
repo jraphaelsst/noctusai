@@ -71,6 +71,27 @@ class ProviderQuotaExhausted(LLMAPIError):
         self.args = (self.message,)
 
 
+class LLMOutputExhausted(LLMAPIError):
+    """The reply spent every output token and produced NO text (all of it went to reasoning/thinking).
+
+    Current Claude models run adaptive thinking when `thinking` is omitted; thinking blocks carry no `.text`, so a
+    call that burns the whole `max_tokens` budget thinking used to come back as `""` with no error. Raised by the
+    provider AFTER the usage was recorded (the spend is metered), carrying the token counts so a caller can charge
+    the call. Subclasses `LLMAPIError` so generic handlers still catch it; it is never retried (same input, same
+    outcome) -- lower `effort` or raise `max_tokens`.
+    """
+
+    def __init__(self, provider: str, *, model: str = "", prompt_tokens: Optional[int] = None,
+                 completion_tokens: Optional[int] = None):
+        super().__init__(provider, "a resposta esgotou o limite de tokens no raciocínio, sem texto", status_code=502)
+        self.code = "LLM_OUTPUT_EXHAUSTED"
+        self.model = model
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.details = {"provider": provider, "model": model, "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens}
+
+
 class LLMBudgetExceeded(AppException):
     """The org's monthly LLM budget has been exhausted.
 

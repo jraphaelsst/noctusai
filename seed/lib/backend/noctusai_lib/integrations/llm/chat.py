@@ -44,6 +44,7 @@ async def chat_completion(
     response_format: Optional[dict] = None,
     cache: bool = True,
     purpose: Optional[str] = None,
+    effort: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
     """Route a chat completion through the configured provider.
@@ -61,6 +62,9 @@ async def chat_completion(
         purpose: ``"classify" | "extract" | "summarize" | "reason" | "chat"`` — what the call is for. When ``model``
             is not pinned, the seed policy (`model_policy`) picks the tier's model of the SAME provider; omitted (or
             ``"chat"``) = today's default. Always recorded on the usage row. No provider failover, ever.
+        effort: ``"low" | "medium" | "high" | "xhigh" | "max"`` -- how much reasoning the model may spend. Anthropic maps
+            it to ``output_config.effort``; providers without an equivalent (OpenAI, Gemini, Fake) accept and ignore it.
+            ``None`` = the model's own default (adaptive thinking on current Claude models).
         cache: Whether this call is eligible for Phase 8 response caching.
             Set to `False` for non-deterministic prompts or LGPD-protected
             patient data (Therapy clinical flows MUST pass False).
@@ -105,7 +109,7 @@ async def chat_completion(
             provider=effective_provider,
             model=effective_model,
             prompt_version=prompt_version,
-            payload=messages,
+            payload=messages if not effort else [*messages, {"effort": effort}],
             org_id=org_id,
         )
         hit, value = await try_get(config.cache_backend, cache_key)
@@ -123,6 +127,7 @@ async def chat_completion(
                 max_tokens=max_tokens,
                 response_format=response_format,
                 org_id=org_id,
+                **({"effort": effort} if effort else {}),
                 **kwargs,
             ),
             provider=effective_provider, model=effective_model, operation="chat", org_id=org_id,

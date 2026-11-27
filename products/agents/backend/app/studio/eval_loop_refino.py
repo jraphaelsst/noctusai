@@ -458,6 +458,7 @@ MENSAGENS_REFINO: dict[str, str] = {
     "limite_de_custo": "A chamada do refinador não cabe no orçamento que o loop ainda tem; nada foi gasto.",
     "llm_erro": "A chamada ao modelo do refinador falhou; nada foi gravado.",
     "saida_invalida": "A resposta do refinador não seguiu o formato exigido; nada foi gravado.",
+    "saida_esgotada_no_raciocinio": "O modelo gastou todo o limite de saída raciocinando e não escreveu a resposta; nada foi gravado.",
     "saida_truncada": "A resposta do refinador foi cortada no limite de tamanho antes de terminar; nada foi gravado.",
     "refinador_falhou": "O refinador falhou antes de responder; nada foi gravado.",
     "agente_sem_linhas": "O conteúdo deste agente não é editável por linhas (texto do compilador no código ou definição da plataforma).",

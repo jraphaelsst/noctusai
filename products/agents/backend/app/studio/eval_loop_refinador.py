@@ -30,7 +30,7 @@ from app.studio.eval_loop_refino import CasoFalhando, LinhasDoAgente, SaidaRefin
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "CHAVE_REFINADOR", "TETO_REFINO_USD", "MAX_TOKENS_REFINO", "EntradaRefino", "ResultadoRefino", "Refinador", "FakeRefinador",
+    "CHAVE_REFINADOR", "TETO_REFINO_USD", "MAX_TOKENS_REFINO", "EFFORT_REFINO", "EntradaRefino", "ResultadoRefino", "Refinador", "FakeRefinador",
     "LlmRefinador", "get_refinador", "interpretar_saida", "montar_mensagem",
 ]
 
@@ -45,6 +45,9 @@ TETO_REFINO_USD = 0.50
 #: refine off mid-JSON (Julia, 2026-11-26: 40,898 in / 4,000 out -> unparseable). Same ceiling as an agent turn; the cost
 #: estimate below still has to fit TETO_REFINO_USD before the call is made.
 MAX_TOKENS_REFINO = 16000
+#: reasoning budget of the refine call: the answer is one rewritten line, not a proof; at the model's default (adaptive thinking) a
+#: refine spent all 16,000 output tokens thinking and returned no text (Julia, 2026-11-27)
+EFFORT_REFINO = "medium"
 _CHARS_POR_TOKEN = 2.5
 
 
@@ -63,8 +66,8 @@ class EntradaRefino:
 @dataclass(frozen=True)
 class ResultadoRefino:
     """``saida`` is the model's parsed proposal (NOT yet validated), or ``None`` with a fixed ``codigo``: ``refinador_indisponivel``
-    (no registry row / inactive / unreadable) | ``modelo_sem_preco`` | ``limite_de_custo`` | ``llm_erro`` | ``saida_truncada``
-    (the answer used every output token: cut off, never judged as a format error) | ``saida_invalida``."""
+    (no registry row / inactive / unreadable) | ``modelo_sem_preco`` | ``limite_de_custo`` | ``llm_erro`` | ``saida_esgotada_no_raciocinio``
+    (every output token went to reasoning, no text) | ``saida_truncada`` (the answer used every output token: cut off, never judged as a format error) | ``saida_invalida``."""
 
     saida: SaidaRefino | None
     custo_usd: float
@@ -135,6 +138,8 @@ class LlmRefinador:
     async def propor(self, entrada: EntradaRefino, *, limite_usd: float) -> ResultadoRefino:
         from noctusai_lib.integrations.prompt_registry import RegistroIAIndisponivel, chamar_ia, prompt_e_modelo
 
+        from noctusai_lib.integrations.llm.exceptions import LLMOutputExhausted
+
         from app.studio.geracao import preco_do_modelo
 
         registry = self._registro() if self._registro is not None else None
@@ -154,7 +159,14 @@ class LlmRefinador:
         try:
             r = await chamar_ia(
                 CHAVE_REFINADOR, [{"role": "user", "content": mensagem}], org_id=str(entrada.org_id), registry=registry, chat=self._chat,
-                max_tokens=MAX_TOKENS_REFINO, response_format={"type": "json_object"}, cache=False)
+                max_tokens=MAX_TOKENS_REFINO, effort=EFFORT_REFINO, response_format={"type": "json_object"}, cache=False)
+        except LLMOutputExhausted as exc:
+            # The spend is real (the seed metered it): charge the measured tokens, or the estimate when unmeasured.
+            custo = estimativa if exc.prompt_tokens is None or exc.completion_tokens is None else (
+                exc.prompt_tokens * preco[0] + exc.completion_tokens * preco[1]) / 1_000_000
+            logger.warning("agents.eval_loop.refino_saida_rejeitada agente=%s codigo=saida_esgotada_no_raciocinio tokens_entrada=%s tokens_saida=%s chars=0",
+                           entrada.agente_chave, exc.prompt_tokens, exc.completion_tokens)
+            return ResultadoRefino(None, custo, "saida_esgotada_no_raciocinio", modelo)
         except Exception:  # noqa: BLE001 -- provider / key failure: logged with the traceback, a fixed code to the caller
             logger.warning("agents.eval_loop.refino_llm_falhou agente=%s", entrada.agente_chave, exc_info=True)
             return ResultadoRefino(None, 0.0, "llm_erro", modelo)

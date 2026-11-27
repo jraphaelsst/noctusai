@@ -34,6 +34,7 @@ from typing import Any, Optional, Sequence, Union
 from anthropic import AsyncAnthropic, APIError as AnthropicAPIError, APIStatusError
 
 from ..exceptions import (
+    LLMOutputExhausted,
     LLMAPIError,
     LLMNotConfigured,
     ProviderNotImplemented,
@@ -310,12 +311,16 @@ class AnthropicProvider:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
         org_id: Optional[str] = None,
+        effort: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
         from ..usage import record_usage
 
         client = self._client_for(api_key)
         system_prompt, conversation = _split_system_and_messages(messages)
+        if effort:
+            # `output_config.effort` via `extra_body`: the SDK floor (>=0.40) predates the typed `output_config` param.
+            kwargs["extra_body"] = {**(kwargs.pop("extra_body", None) or {}), "output_config": {"effort": effort}}
         # `response_format` is OpenAI-shaped — Anthropic expresses JSON mode
         # by prefixing the assistant turn with "{" or by instruction in the
         # system prompt. We honour the OpenAI hint minimally by adding a
@@ -379,6 +384,12 @@ class AnthropicProvider:
                 cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", None),
                 cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", None),
             )
+            if not content and getattr(response, "stop_reason", None) == "max_tokens":
+                # Spent every output token on thinking blocks (no `.text`): never hand back "" as if it were an answer.
+                raise LLMOutputExhausted(
+                    "anthropic", model=model,
+                    prompt_tokens=getattr(usage, "input_tokens", None),
+                    completion_tokens=getattr(usage, "output_tokens", None))
             return content
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_completion failed: %s", exc)

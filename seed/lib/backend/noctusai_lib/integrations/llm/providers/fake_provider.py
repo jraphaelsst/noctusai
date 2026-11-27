@@ -92,10 +92,12 @@ class FakeProvider:
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
+        effort: Optional[str] = None,
         **kwargs: Any,
     ) -> str:
         self._record(
             "chat_completion",
+            effort=effort,
             messages=messages,
             model=model,
             api_key=api_key,
