@@ -32,7 +32,7 @@ TENANT = {
 RESPOSTA_OK = f"""### Roteiro 1: Dormir melhor (estrutura #101)
 **(Gancho)** Você acorda cansada. Todo dia.
 
-Aí você culpa o café. Mas olha, não é o café.
+Aí você culpa o café, a cama, o travesseiro, o vizinho que liga o som tarde da noite. Mas olha, não é o café.
 
 ### Publicação 1
 - Objetivo do post: salvamentos
