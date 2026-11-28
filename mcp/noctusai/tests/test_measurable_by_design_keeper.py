@@ -107,6 +107,15 @@ class TestLifecycleNeedsEvents:
         out, _ = _run(tmp_path, sql)
         assert out == []
 
+    def test_seed_transition_log_render_under_an_aggregate_name_passes(self, tmp_path):
+        """The seed transition-log primitive names its events table after the AGGREGATE (`agenda_visita_events`), not
+        the state table, and adds its FK to the state table by ALTER TABLE inside a DO block."""
+        from noctusai_lib.domain.transition_log import TransitionLogConfig, transition_log_migration
+
+        cfg = TransitionLogConfig(schema="p", aggregate="agenda_visita", state_table="visitas", state_column="status")
+        out, _ = _run(tmp_path, self.ENTITY + "\n" + transition_log_migration(cfg))
+        assert out == []
+
     def test_added_status_column_on_existing_table_is_caught(self, tmp_path):
         out, _ = _run(tmp_path, "ALTER TABLE p.visitas ADD COLUMN etapa text NOT NULL DEFAULT 'a' CHECK (etapa IN ('a','b'));")
         assert _rules(out) == ["lifecycle_no_events"]

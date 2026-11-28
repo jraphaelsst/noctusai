@@ -8250,6 +8250,11 @@ _SW_FIXTURES: dict[str, tuple[str, str]] = {
         "SELECT id FROM social_wiring.clientes LIMIT 1",
         "v_cliente",
     ),
+    # a WhatsApp line (org + id): the FK target of a per-org line config (372)
+    "conexao": (
+        "SELECT org_id, id FROM social_wiring.whatsapp_connections LIMIT 1",
+        "v_org, v_conexao",
+    ),
     "empresa": (
         "SELECT id FROM social_wiring.empresas LIMIT 1",
         "v_empresa",
@@ -8279,7 +8284,7 @@ def _sw_junction_probe(
     # Each probe uses at most one org source (`registry` or `atendimento_org`).
     declares = (
         "  v_org uuid;\n  v_codigo text;\n  v_atendimento uuid;\n"
-        "  v_cliente uuid;\n  v_empresa uuid;\n  v_constraint text;\n"
+        "  v_cliente uuid;\n  v_empresa uuid;\n  v_conexao uuid;\n  v_constraint text;\n"
     )
     setup = "".join(_table_fixture_check(t) for t in tabelas)
     for name in fixtures:
@@ -14433,6 +14438,65 @@ _SW_362_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+
+_M_VIDEOS_PRONTOS = "372_julia_videos_prontos.sql"
+_T_VIDEOS_PRONTOS = (f"{_S}.julia_videos_prontos_config", f"{_S}.julia_videos_prontos_submissoes")
+
+
+def _vp_probe(probe_id: str, *, guard_name: str, rationale: str, ops_sql: str, cond: str, what: str,
+              fixtures: tuple[str, ...] = ("registry",)) -> GuardProbe:
+    # `guard_name=` stays a keyword literal at each call: the keeper reads a branch's probes from the syntax tree
+    return _sw_junction_probe(
+        probe_id=f"julia_videos_prontos.{probe_id}", guard_name=guard_name, migration=_M_VIDEOS_PRONTOS, rationale=rationale,
+        fixtures=fixtures, ops_sql=ops_sql, sqlstate_condition=cond, what=what, tabelas=_T_VIDEOS_PRONTOS,
+    )
+
+
+def _vp_config_ins(chat: str = "'120363000000000000@g.us'", privacy: str = "'private'") -> str:
+    return (f"    INSERT INTO {_S}.julia_videos_prontos_config (org_id, connection_id, chat_id, privacy_status)\n"
+            f"    VALUES (v_org, v_conexao, {chat}, {privacy});")
+
+
+def _vp_sub_ins(remetente: str = "'noc-probe@c.us'", status: str = "'aguardando'", par: bool = False) -> str:
+    cols, vals = "org_id, chat_id, remetente, status", f"v_org, 'noc-probe@g.us', {remetente}, {status}"
+    if par:
+        cols, vals = cols + ", codigo, drive_folder_id", vals + ", 'NOC1234', 'noc-probe-folder'"
+    return f"    INSERT INTO {_S}.julia_videos_prontos_submissoes ({cols})\n    VALUES ({vals});"
+
+
+#: Migration 372 -- Julia "Vídeos Prontos" (julia-videos-prontos-youtube S2). Unapplied guards read `no_fixture`.
+_SW_372_PROBES: tuple[GuardProbe, ...] = (
+    _vp_probe(
+        "config.chat_grupo", guard_name="julia_videos_prontos_config_chat_grupo",
+        rationale="The intake answers group messages only; a 1:1 chat as the Vídeos Prontos group would upload whatever a lead sends.",
+        ops_sql=_vp_config_ins(chat="'5541999990000@c.us'"), cond=_CHECK, what="a Vídeos Prontos config on a non-group chat",
+        fixtures=("conexao",),
+    ),
+    _vp_probe(
+        "config.privacy_valida", guard_name="julia_videos_prontos_config_privacy_valida",
+        rationale="The privacy goes straight to the YouTube upload; an unknown value would fail every upload of the org.",
+        ops_sql=_vp_config_ins(privacy="'noc_probe_bogus'"), cond=_CHECK, what="a Vídeos Prontos config with an unknown privacy",
+        fixtures=("conexao",),
+    ),
+    _vp_probe(
+        "submissoes.status_valido", guard_name="julia_videos_prontos_submissoes_status_valido",
+        rationale="The status drives pairing, the debounce no-op and the retry; an unknown one would strand the submission.",
+        ops_sql=_vp_sub_ins(status="'noc_probe_bogus'"), cond=_CHECK, what="a submission with an unknown status",
+    ),
+    _vp_probe(
+        "submissoes.aberta_unica", guard_name="julia_videos_prontos_submissoes_aberta_uq",
+        rationale="One OPEN pairing slot per sender: two would split one property's code and folder across two submissions.",
+        ops_sql=_vp_sub_ins() + "\n" + _vp_sub_ins(), cond=_UNIQ, what="two open pairing slots for the same sender",
+    ),
+    _vp_probe(
+        "submissoes.par_unico", guard_name="julia_videos_prontos_submissoes_par_uq",
+        rationale="The duplicate-upload guard: the same (code, folder) uploaded twice would publish every video twice.",
+        ops_sql=_vp_sub_ins("'noc-probe-a@c.us'", "'concluido'", par=True) + "\n"
+        + _vp_sub_ins("'noc-probe-b@c.us'", "'processando'", par=True),
+        cond=_UNIQ, what="a second upload of an already-uploaded (code, folder) pair",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -14575,6 +14639,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_370_PROBES,
     *_SW_371_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
+    *_SW_372_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
     *_SW_JULIA_STAFF_PROT_PROBES,

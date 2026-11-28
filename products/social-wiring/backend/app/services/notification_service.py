@@ -625,6 +625,29 @@ class NotificationService:
             message={"subject": f"Sincronização de imóveis: {status}", "html": html, "text": texto},
         )
 
+    #: The Vídeos Prontos outcomes (`notification_kinds` declares each one; `julia_videos_prontos_service` sends them).
+    VIDEO_PRONTO_KINDS: frozenset[str] = frozenset({
+        "video_pronto_concluido", "video_pronto_parcial", "video_pronto_falhou", "video_pronto_sem_videos",
+        "video_pronto_incompleto",
+    })
+
+    async def notify_video_pronto(self, *, org_id: UUID, kind: str, assunto: str, texto: str) -> DispatchOutcome:
+        """Owner notice for one Vídeos Prontos submission outcome (the group intake of Julia). Org-wide roster; the
+        caller composes the pt-BR text (code, YouTube links, reason). An unknown kind is a programming error."""
+        if kind not in self.VIDEO_PRONTO_KINDS:
+            raise NotificationServiceError(f"notify_video_pronto: unknown kind {kind!r}")
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_video_pronto: %s for org=%s but NO active notification recipient is configured — "
+                           "nobody was warned.", kind, org_id)
+            return await self._no_recipient(kind=kind, org_id=org_id)
+        html = "<div style='font-family:sans-serif;max-width:560px'>" + "".join(
+            f"<p style='margin:0 0 8px'>{_html.escape(linha)}</p>" for linha in texto.split("\n")) + "</div>"
+        return await self._dispatch(
+            kind=kind, org_id=org_id, recipients=recipients,
+            message={"subject": assunto, "html": html, "text": texto},
+        )
+
     async def _no_recipient(self, *, kind: str, org_id: UUID) -> DispatchOutcome:
         """Record on core's send ledger that a notification had nobody to reach (the caller already logged it), so
         the owner's Notificações page shows the gap instead of an innocent-looking silence."""

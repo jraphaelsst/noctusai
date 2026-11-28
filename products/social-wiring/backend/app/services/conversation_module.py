@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional, Protocol
@@ -66,6 +65,7 @@ from noctusai_lib.integrations.redis import (
 from noctusai_lib.primitives.background import spawn_background
 
 from app.config import settings
+from app.services.gdrive_service import DRIVE_URL_SCAN_PATTERN
 from app.services.julia_agente_service import LEAD_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -86,10 +86,7 @@ logger = logging.getLogger(__name__)
 # Canonical scanner — imported, never re-declared. Three hand-synced copies
 # of this pattern previously drifted; see the seed module's docstring.
 _PRODUCT_CODE_RE = PRODUCT_CODE_SCAN_PATTERN
-_DRIVE_URL_RE = re.compile(
-    r"https?://(?:drive|docs)\.google\.com/[^\s]+",
-    re.IGNORECASE,
-)
+_DRIVE_URL_RE = DRIVE_URL_SCAN_PATTERN
 
 
 def _regex_extract(text: str) -> tuple[str | None, str | None]:

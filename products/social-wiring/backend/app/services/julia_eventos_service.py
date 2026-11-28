@@ -68,9 +68,18 @@ TIPOS_JULIA_V2: frozenset[str] = frozenset({
 #: com_dono?, ator}`: the area, the spec/setting keys, counts and the acting user id -- never a value, a name or a number).
 #: Not notifiable: it is the measurable record of the change (who/when/what).
 TIPOS_CONFIGURACAO: frozenset[str] = frozenset({"configuracao_alterada"})
+#: Vídeos Prontos (Julia as an entry point to the YouTube upload, `julia_videos_prontos_service`): one per submission
+#: transition, payload `{submissao_id, codigo?, batch_id?, publicados?, falhas?, tentativa?, motivo?}` -- ids, the property
+#: code, counts and closed reason codes only. Not notifiable by vocabulary: the owner notice is the scripted
+#: notification (`notification_kinds` `video_pronto_*`).
+TIPOS_VIDEOS_PRONTOS: frozenset[str] = frozenset({
+    "video_pronto_recebido", "video_pronto_upload_iniciado", "video_pronto_concluido", "video_pronto_parcial",
+    "video_pronto_falhou", "video_pronto_sem_videos", "video_pronto_incompleto",
+})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
     | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2 | TIPOS_CONFIGURACAO
+    | TIPOS_VIDEOS_PRONTOS
 )
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no
@@ -124,4 +133,4 @@ def emitir(
     return stored
 
 
-__all__ = ["TIPOS", "TIPOS_ALERTA_DONO", "TIPOS_CONSULTA", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "emitir", "registrar_sink"]
+__all__ = ["TIPOS", "TIPOS_ALERTA_DONO", "TIPOS_CONSULTA", "TIPOS_DIAGNOSTICO", "TIPOS_NOTIFICAVEIS", "TIPOS_VIDEOS_PRONTOS", "emitir", "registrar_sink"]

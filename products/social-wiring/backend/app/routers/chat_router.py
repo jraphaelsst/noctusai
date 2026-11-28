@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -39,7 +38,7 @@ from app.services.credential_vault import CredentialStore, EncryptionNotConfigur
 from app.services.account_credentials import build_youtube_service_for_org
 from app.services import vista_credenciais
 from app.services.media_service import make_media_service
-from app.modules.youtube.services.upload import stage_browser_upload
+from app.modules.youtube.services.upload import UPLOAD_DIR, stage_browser_upload
 from app.services.whatsapp_intake_service import WhatsAppIntakeService, web_reply_sink
 from app.modules.youtube.services.youtube import YouTubeService, YouTubeServiceError
 
@@ -47,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 router = make_router(tier="org", guard=get_current_user_org, prefix="/api/chat", tags=["chat"])
 
-_UPLOAD_DIR = Path("/tmp/uploads")
+_UPLOAD_DIR = UPLOAD_DIR
 _WEB_SESSION_PREFIX = "web:"
 
 

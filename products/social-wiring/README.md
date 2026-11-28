@@ -95,6 +95,19 @@ a Short; in an exclusive listing (two copies per orientation) the copy with the
 One logo watermark is detected by `app/modules/youtube/services/watermark.py`
 and the clean partner copy is skipped.
 
+**"Vídeos Prontos" group (Julia, 2026-11-27, migration 372)**: the editor posts, in the org's WhatsApp group, a
+property code (`ONE10898`, optionally `(EXCLUSIVIDADE)`) and the Drive folder link, in either order or in one
+message. `app/services/julia_videos_prontos_service.py` pairs them per sender (one open `aguardando` slot), waits
+`JULIA_YOUTUBE_UPLOAD_WAIT_SECONDS` (8 s; every message restarts the window) and hands the folder to the SAME
+`UploadService.queue_drive_folder_upload` + `run_upload_job` (its own worker, `julia_videos_prontos_worker`).
+Outcomes `concluido` / `parcial` / `falhou` / `no_videos_found` / `incompleto` (transition log
+`julia_video_pronto_events`); ONE automatic retry of the failed videos only after
+`JULIA_YOUTUBE_RETRY_DELAY_SECONDS` (120 s); manual retry `POST /api/julia/videos-prontos/{id}/retry`, list
+`GET /api/julia/videos-prontos`. The first published 16:9 video fills the property's YouTube field; Shorts never do.
+The owner is notified of every outcome (`video_pronto_*` kinds); the group hears only about problems, never a
+success. A (code, folder) pair already uploading / uploaded is refused. Off until an org has an `ativo` row in
+`julia_videos_prontos_config` (connection + group chat + privacy).
+
 ## Vista imóveis mirror (refresh, schedule, divergences)
 
 `social_wiring.imoveis` mirrors Vista and is refreshed **every 2 hours** (`IMOVEIS_SYNC_INTERVALO_S`, default 7200) for every org that stores a Vista credential (Settings › Chaves API › Vista CRM). Each run tries Vista's `listar` first; while `listar` is silent (outage since 2026-10-23) it falls back to a per-code refresh (`/imoveis/detalhes`) of the vitrine, plus discovery of new codes (`/imoveis/destaques` + a forward code probe, `IMOVEIS_SONDA_MAX_FALHAS`, default 40), and the rest of the catalog once a day (`IMOVEIS_SYNC_RESTO_INTERVALO_S`). An empty `listar` never delists the catalog. Every run is recorded (`imoveis_sync_execucoes`): `GET /api/imoveis/sync/ultimo`, `POST /api/imoveis/sync?modo=auto|listar|detalhes` (org admin), MCP `noctus.sw.imoveis_sync`. The sync writes Vista columns only — notas, captação, `imovel_dados` and owner confirmations are ours. While the owner keeps both systems, a difference between Vista and our data is handled by the sync itself (owner 2026-11-04): Vista wins over our overlay, every change is written to the imóvel **Histórico** (`imovel_historico`, migration 349, via the seed card_hub timeline: `GET /api/imoveis/{codigo}/historico`), an owner-confirmed price is either sent to Vista (switch `vista_escrita_ativa`, default OFF; each edit REQUIRES a reason and leaves a dated note in Vista's `ObsVenda`/`ObsLocacao`) or opens an approval, and the admins get in-app notices (no e-mail) plus the switchable WhatsApp digest of opened approvals (Notificações kind `vista_divergencias`); transitional, removable. Depth: `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md` § 6c.

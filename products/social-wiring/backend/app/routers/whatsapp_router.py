@@ -89,6 +89,7 @@ from app.schemas.whatsapp import WAHAMessage, WAHAMessagePayload, WAHASessionSta
 from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_avaliacao_service, julia_conversas_service, julia_origem_service, julia_protecao_service, julia_staff_service, julia_thread_service
+from app.services import julia_videos_prontos_service
 from app.services.conversation_module import get_conversation_module
 from app.services.media_service import MidiaLead, make_media_service, midia_recusada
 from app.services.message_store import DuplicateMessage, MessageStore, StoredMessage
@@ -937,6 +938,17 @@ async def _process_waha_body(
                 connection_id=connection.id,
                 event=EVENT_CHAT_UPSERT,
                 payload=chat_summary.as_dict(),
+            )
+
+        # Julia "Vídeos Prontos": a STORED message of a group is offered to the intake (it answers "fora" unless the chat
+        # is the org's active Vídeos Prontos group). Before the staff return below -- the editor may well be staff.
+        if is_group and not from_me:
+            _fire_and_forget(
+                julia_videos_prontos_service.ingerir_do_webhook(
+                    org_id=connection.org_id, connection_id=connection.id, chat_id=chat_id,
+                    remetente=(getattr(payload, "participant", None) or sender), mensagem_id=provider_message_id or None,
+                    texto=payload.body or "",
+                )
             )
 
     if from_me:
