@@ -213,6 +213,11 @@ class SocialWiringSettings(ProductSettings):
     # which uses 8s — keep aligned so the seed-buffer test suite stays
     # representative.
     message_debounce_seconds: int = 8
+    # Julia "Vídeos Prontos" group intake (julia_videos_prontos_service): how long a submission waits after the LAST
+    # relevant message (code or Drive folder link) before it is processed -- the editor posts the link and the code a
+    # few seconds apart -- and how long a failed / partial submission waits before its ONE automatic retry.
+    julia_youtube_upload_wait_seconds: float = Field(8.0, validation_alias=_com_legado('julia_youtube_upload_wait_seconds'))
+    julia_youtube_retry_delay_seconds: float = Field(120.0, validation_alias=_com_legado('julia_youtube_retry_delay_seconds'))
     # Julia (lead agent, contract 10.1 M4): limits applied by SW BEFORE a
     # turn is sent to agents. A flood on one chat, or on one number, must not
     # become LLM spend. Over a limit the turn is dropped (logged), never queued.
@@ -449,6 +454,8 @@ class SocialWiringSettings(ProductSettings):
     geracao_lease_seconds: float = 600.0
     # Julia wave 4 (reengajamento): worker over the `julia_reengajar_*` / `julia_regua_tentativa` job types.
     julia_reengajamento_worker_enabled: bool = Field(True, validation_alias=_com_legado('julia_reengajamento_worker_enabled'))
+    # kill switch of the Vídeos Prontos worker (julia_videos_prontos_worker); it also needs NOCTUS_SCHEDULERS_ENABLED
+    julia_videos_prontos_worker_enabled: bool = Field(True, validation_alias=_com_legado('julia_videos_prontos_worker_enabled'))
     julia_reengajamento_poll_seconds: float = Field(5.0, validation_alias=_com_legado('julia_reengajamento_poll_seconds'))
     julia_reengajamento_lease_seconds: float = Field(600.0, validation_alias=_com_legado('julia_reengajamento_lease_seconds'))
     # CoreStudio criação (criacao-pipeline-contract.md 5): the media worker is a SEPARATE process (`worker criacao`,

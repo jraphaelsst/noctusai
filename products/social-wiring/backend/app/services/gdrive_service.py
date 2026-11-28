@@ -65,6 +65,17 @@ class UnsupportedVideoFormat(GoogleDriveError):
     """File extension isn't on the YouTube-accepted list."""
 
 
+class DriveFolderEmpty(GoogleDriveError):
+    """The folder was reachable but yielded no accepted video: gdown listed nothing (an empty folder looks the same
+    as one that is not shared publicly) or nothing it listed is an accepted video. Typed so a caller can tell
+    "no videos" apart from "the download itself broke" without matching message text."""
+
+
+#: A Drive / Docs link inside free text (a WhatsApp message). The one scanner: `conversation_module` and the
+#: Vídeos Prontos intake import it; `parse_folder_id` then decides whether the link is a folder.
+DRIVE_URL_SCAN_PATTERN = re.compile(r"https?://(?:drive|docs)\.google\.com/[^\s]+", re.IGNORECASE)
+
+
 @dataclass
 class DownloadResult:
     """What :func:`download_from_drive` returns to the upload pipeline."""
@@ -796,7 +807,7 @@ def iter_drive_folder_videos(
         ) from exc
 
     if not downloaded_paths:
-        raise GoogleDriveError(
+        raise DriveFolderEmpty(
             f"gdown returned no files for folder_id={folder_id} — "
             "usually a permissions issue (not publicly shared)."
         )
@@ -866,7 +877,7 @@ def iter_drive_folder_videos(
         )
 
     if not refs:
-        raise GoogleDriveError(
+        raise DriveFolderEmpty(
             f"No accepted video files found in folder_id={folder_id} "
             f"(at most one subfolder deep). Accepted extensions: "
             f"{sorted(ACCEPTED_VIDEO_EXTENSIONS)}"

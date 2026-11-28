@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -62,6 +61,7 @@ from app.services.credential_vault import (
 from app.services.account_credentials import build_youtube_service_for_org
 from app.services.notification_service import build_notification_service
 from app.modules.youtube.services.upload import (
+    UPLOAD_DIR,
     UploadService,
     UploadServiceError,
     rename_for_job,
@@ -76,7 +76,7 @@ router = APIRouter(prefix="/api/videos/upload", tags=["upload"])
 # Where browser-uploaded multipart bodies and Drive downloads are staged.
 # Mounted as a docker volume in compose so files survive container
 # restarts mid-upload (rare, but the data loss would be irrecoverable).
-_UPLOAD_DIR = Path("/tmp/uploads")
+_UPLOAD_DIR = UPLOAD_DIR
 
 
 # ─── Service construction helper ───────────────────────────────────────
@@ -197,59 +197,35 @@ async def _resolve_metadata_from_product_code(
     privacy_status: str,
     org_id: UUID,
 ) -> UploadMetadata:
-    """Local-catalog lookup → UploadMetadata. Mirrors the chatbot intake's
-    enrichment path (``whatsapp_intake_service._resolve_property_local``)
-    so a curl/dashboard caller gets the same title/description shape
-    the WhatsApp flow produces.
-
-    Resolves against `social_wiring.imoveis` — never a live Vista call.
-    No fallback branch on a miss (roadmap
-    `social-wiring-imoveis-vista-2026-08`, P2.5): a code not in the local
-    catalog is real information, reported as 404, not silently retried
-    against Vista.
+    """HTTP face of `upload_metadata.resolve_metadata_from_product_code` (the one derivation, shared with
+    Julia's Vídeos Prontos intake). Resolves against `social_wiring.imoveis` -- never a live Vista call.
 
     HTTP error map (raised as `HTTPException`, not return values):
       - 422: invalid product code format.
       - 404: code valid, but no property found in the local catalog.
       - 502: the local lookup itself failed (DB/transport problem).
     """
-    from app.services.imoveis_service import ImoveisLookupError, build_imoveis_service
-    from noctusai_lib.domain.real_estate import (
-        build_youtube_metadata,
-        validate_product_code,
+    from app.modules.youtube.services.upload_metadata import (
+        InvalidProductCode,
+        MetadataLookupFailed,
+        PropertyNotFound,
+        resolve_metadata_from_product_code,
     )
-
-    code = (product_code or "").strip().upper()
-    if not validate_product_code(code):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"invalid product_code format: {code!r}",
-        )
 
     try:
-        prop = build_imoveis_service(get_admin_client()).get_property_data(org_id, code)
-    except ImoveisLookupError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"local imoveis lookup failed: {exc}",
-        ) from exc
-
-    if prop is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"no property found for product_code={code} in local catalog",
+        return resolve_metadata_from_product_code(
+            get_admin_client(), product_code=product_code, privacy_status=privacy_status, org_id=org_id,
         )
-
-    yt_meta = build_youtube_metadata(prop, code)
-    return UploadMetadata(
-        title=yt_meta["title"],
-        description=yt_meta["description"],
-        tags=yt_meta["tags"],
-        privacy_status=privacy_status,
-        category_id="22",
-        notify_recipients=[],
-        product_code=code,
-    )
+    except InvalidProductCode as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"invalid product_code format: {exc.code!r}") from exc
+    except PropertyNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"no property found for product_code={exc.code} in local catalog") from exc
+    except MetadataLookupFailed as exc:
+        # the cause (DB / transport text) is logged here, never echoed to the client
+        logger.error("upload: local imoveis lookup failed for product_code=%s (%s)", product_code, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="local imoveis lookup failed") from exc
 
 
 def _user_id(user) -> UUID | None:

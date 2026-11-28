@@ -141,6 +141,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_visitas_router import router as julia_visitas_router
     from app.routers.julia_notificacoes_router import router as julia_notificacoes_router
     from app.routers.julia_reengajamento_router import router as julia_reengajamento_router
+    from app.routers.julia_videos_prontos_router import router as julia_videos_prontos_router
     from app.routers.julia_cloud_router import router as julia_cloud_router
     from app.routers.julia_painel_router import router as julia_painel_router
     from app.routers.julia_qualificacao_router import router as julia_qualificacao_router
@@ -163,6 +164,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_contatos_setoriais_router import router as julia_contatos_setoriais_router
     from app.routers.julia_conhecimento_editor_router import router as julia_conhecimento_editor_router
     from app.services import julia_reengajamento_worker
+    from app.services import julia_videos_prontos_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.limites_geracao_router import router as limites_geracao_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -295,6 +297,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_visitas_router,
             julia_notificacoes_router,
             julia_reengajamento_router,
+            julia_videos_prontos_router,
             julia_cloud_router,
             julia_painel_router,
             julia_qualificacao_router,
@@ -341,8 +344,8 @@ def _register_media_wiring() -> ModuleRegistration:
             custos_router,
         ],
         standard_routers=("health", "notificacoes", "team"),
-        startup=[julia_reengajamento_worker.startup_hook],
-        shutdown=[julia_reengajamento_worker.stop_worker],
+        startup=[julia_reengajamento_worker.startup_hook, julia_videos_prontos_worker.startup_hook],
+        shutdown=[julia_reengajamento_worker.stop_worker, julia_videos_prontos_worker.stop_worker],
     )
 
 

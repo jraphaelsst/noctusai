@@ -187,6 +187,12 @@ def companion_events_exist(table: str, schema: str | None, corpus_lower: str) ->
         return True  # a trigger on the table feeds a generic movement/event ledger (pipeline_movimentos shape)
     if re.search(rf"(?:transition_log_migration|es_events|es_streams)[^;]*\b{base}\b", corpus_lower, re.S):
         return True
+    # an event-ish table whose FK to this table is added by ALTER TABLE (the seed transition-log render: its events
+    # table is named after the AGGREGATE, e.g. `visita_events` for `visitas`, and adds its FK in a DO block)
+    if re.search(r"alter\s+table\s+(?:[\w\"-]+\.)?\"?[\w-]*(?:_eventos?|_events?|_transicoes|_transitions?|_historico)\"?"
+                 rf"\s+add\s+constraint\s+[\w\"-]+\s+foreign\s+key\s*\([^)]*\)\s*references\s+(?:[\w\"-]+\.)?\"?{base}\"?\s*\(",
+                 corpus_lower):
+        return True
     # (4) a generic ledger (e.g. core.audit_logs / fin_ledger) is declared as the capture for it
     return False
 

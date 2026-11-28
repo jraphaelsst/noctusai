@@ -51,6 +51,12 @@ logger = logging.getLogger(__name__)
 _TABLE = "upload_jobs"
 _SCHEMA = "social_wiring"
 
+#: Where browser-uploaded multipart bodies and Drive downloads are staged -- ONE path for every entry point (the
+#: upload router, the chat router, Julia's Vídeos Prontos worker): `run_upload_job` / the dashboard retry find a
+#: staged file under the SAME directory the queue step wrote it to. Mounted as a docker volume in compose so files
+#: survive container restarts mid-upload.
+UPLOAD_DIR = Path("/tmp/uploads")
+
 # YT-side processing wait (S4-1). After videos.insert, the bytes are on
 # YT but transcoding may still be in flight. We wait for
 # upload_status="processed" so the completion message arrives only when
