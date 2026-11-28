@@ -48,7 +48,6 @@ async def retry(
     except svc.SubmissaoNaoEncontrada as exc:
         raise AppException("nao_encontrada", "Submissão não encontrada.", status_code=404) from exc
     except svc.RetryRecusado as exc:
-        msg = ("Essa pasta já foi enviada ao YouTube para este imóvel." if exc.codigo == "duplicado"
-               else "Só dá para tentar de novo uma submissão que falhou (total ou em parte).")
-        raise AppException("nao_retentavel", msg, status_code=409) from exc
+        raise AppException("nao_retentavel", "Só dá para tentar de novo uma submissão que falhou (total ou em parte).",
+                           status_code=409) from exc
     return {"data": out}

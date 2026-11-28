@@ -15,27 +15,33 @@
 --      switched on by hand (the SQL is in the slice's delivery note).
 --   2. `julia_videos_prontos_submissoes` -- one row per (code, folder) submission: the pairing slot while it waits
 --      (`aguardando`, `versao` + `due_at` = the debounce), then its outcome. `status` is a CHECK enum:
---        aguardando -> processando -> concluido | parcial | falhou | no_videos_found ; aguardando -> incompleto
---        parcial | falhou -> processando (the ONE automatic retry, or a manual one)
---      Two partial UNIQUE indexes:
---        * one OPEN slot per (org, chat, sender) -- the pairing invariant under concurrent webhook deliveries;
---        * the duplicate-upload guard: one (org, code, folder) pair in processando / concluido / parcial. A pair
---          that ended `no_videos_found` / `falhou` / `incompleto` may be resubmitted. `aguardando` is deliberately
---          NOT in the guard: a slot fills field by field and must never fail its own merge; the handler refuses a
---          duplicate before it claims the slot and this index is the race backstop.
---   3. The status history: the seed transition-log primitive (`julia_video_pronto_events` + RPCs), rendered below --
+--        aguardando -> processando -> concluido | parcial | falhou | no_videos_found | ja_publicado
+--        aguardando -> incompleto ; parcial | falhou -> processando (the ONE automatic retry, or a manual one)
+--      One partial UNIQUE index: one OPEN slot per (org, chat, sender) -- the pairing invariant under concurrent
+--      webhook deliveries. A repeated (code, folder) is NOT refused (owner 2026-11-28): dedup is per FILE (item 3).
+--   3. `upload_jobs.source_file_id` -- the Drive id of the file a Drive-folder fan-out queued (written by
+--      `UploadService.queue_drive_folder_upload` for every caller; NULL for browser / single-link uploads and for rows
+--      older than this migration). With `file_size_bytes` it identifies "the same file": the opt-in
+--      `skip_published_for_product` does not upload again a file already PUBLISHED for the org + product code
+--      (every file of the folder already published -> the submission ends `ja_publicado`). A NEW file (a re-edit) is
+--      uploaded and then SUPERSEDES the property's previous published video(s) of the same kind (set private on
+--      YouTube, `app/modules/youtube/services/video_lifecycle.py`); the property field moves to the new video.
+--   4. The status history: the seed transition-log primitive (`julia_video_pronto_events` + RPCs), rendered below --
 --      every status change is one row-locked compare-and-set that writes state + event in ONE transaction
 --      (EOA; never a hand-written history table). The Julia event bus (`julia_eventos`, `video_pronto_*`) carries the
 --      same transitions for the timeline; the transition log is the measurable source.
 --
 -- Records -> metrics: submissions per org / day; time from first message to processing (created_at -> the
--- `upload_iniciado` event); outcome mix (concluido / parcial / falhou / no_videos_found / incompleto) per org and per
--- sender; automatic-retry recovery rate (parcial|falhou -> concluido after `tentativas_retry` = 1); videos per
--- submission (batch_id -> upload_jobs).
+-- `upload_iniciado` event); outcome mix (concluido / parcial / falhou / no_videos_found / ja_publicado / incompleto)
+-- per org and per sender; automatic-retry recovery rate (parcial|falhou -> concluido after `tentativas_retry` = 1);
+-- videos per submission (batch_id -> upload_jobs); remakes per property (upload_jobs per product_code with distinct
+-- source_file_id; the supersede events `video_pronto_substituido` in julia_eventos) and re-posts of an identical file
+-- (`ja_publicado`).
 --
 -- tier:org on both tables (service-role only: the API reads/writes through the service-role client after the
 -- session's org is resolved; `authenticated` / `anon` get nothing).
--- Backward compatible with the previous image (N-1): two NEW tables and new functions, nothing existing altered.
+-- Backward compatible with the previous image (N-1): two NEW tables, new functions, and one NULLABLE column + a partial
+-- index on upload_jobs (the previous image never writes nor reads `source_file_id`).
 -- FORWARD-ONLY, IDEMPOTENT. NOT applied by the author.
 -- GuardProbes: _SW_372_PROBES in mcp/noctusai/tools/noctus/dev/verify_db_guards.py.
 -- ============================================================================
@@ -60,7 +66,8 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_videos_prontos_config (
     connection_id   UUID NOT NULL REFERENCES social_wiring.whatsapp_connections (id) ON DELETE CASCADE,
     -- the group JID, e.g. 120363369180055435@g.us
     chat_id         TEXT NOT NULL CONSTRAINT julia_videos_prontos_config_chat_grupo CHECK (chat_id LIKE '%@g.us'),
-    privacy_status  TEXT NOT NULL DEFAULT 'private'
+    -- owner 2026-11-28: the group's videos are published as public by default
+    privacy_status  TEXT NOT NULL DEFAULT 'public'
                         CONSTRAINT julia_videos_prontos_config_privacy_valida CHECK (privacy_status IN ('private', 'unlisted', 'public')),
     ativo           BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -89,7 +96,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_videos_prontos_submissoes (
     status                  TEXT NOT NULL DEFAULT 'aguardando'
                                 CONSTRAINT julia_videos_prontos_submissoes_status_valido CHECK (status IN (
                                     'aguardando', 'incompleto', 'processando', 'concluido', 'parcial', 'falhou',
-                                    'no_videos_found')),
+                                    'no_videos_found', 'ja_publicado')),
     -- the debounce: every relevant message bumps `versao` and pushes `due_at`; only the job of the current version runs
     versao                  INTEGER NOT NULL DEFAULT 1,
     due_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -109,15 +116,21 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_videos_prontos_submissoes (
 -- one OPEN pairing slot per sender in a group
 CREATE UNIQUE INDEX IF NOT EXISTS julia_videos_prontos_submissoes_aberta_uq
     ON social_wiring.julia_videos_prontos_submissoes (org_id, chat_id, remetente) WHERE status = 'aguardando';
--- the duplicate-upload guard: a pair being uploaded or already uploaded is never uploaded again
-CREATE UNIQUE INDEX IF NOT EXISTS julia_videos_prontos_submissoes_par_uq
-    ON social_wiring.julia_videos_prontos_submissoes (org_id, codigo, drive_folder_id)
-    WHERE status IN ('processando', 'concluido', 'parcial') AND codigo IS NOT NULL AND drive_folder_id IS NOT NULL;
 -- the list endpoint (newest first, per org) and the batch -> submission lookup
 CREATE INDEX IF NOT EXISTS julia_videos_prontos_submissoes_org_idx
     ON social_wiring.julia_videos_prontos_submissoes (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS julia_videos_prontos_submissoes_batch_idx
     ON social_wiring.julia_videos_prontos_submissoes (batch_id) WHERE batch_id IS NOT NULL;
+
+-- ----------------------------------------------------------------------------
+-- 2b. upload_jobs.source_file_id -- the Drive file a folder fan-out queued (the per-file dedup key, item 3 above)
+-- ----------------------------------------------------------------------------
+ALTER TABLE social_wiring.upload_jobs ADD COLUMN IF NOT EXISTS source_file_id TEXT;
+COMMENT ON COLUMN social_wiring.upload_jobs.source_file_id IS
+    'Drive file id of a Drive-folder fan-out video (queue_drive_folder_upload); NULL for browser / single-link uploads.';
+-- the "already published?" lookup: (org, product code, Drive file) among the rows that carry a Drive id
+CREATE INDEX IF NOT EXISTS upload_jobs_org_produto_arquivo_idx
+    ON social_wiring.upload_jobs (org_id, product_code, source_file_id) WHERE source_file_id IS NOT NULL;
 
 -- ----------------------------------------------------------------------------
 -- 3. RLS + grants (service-role only), tier

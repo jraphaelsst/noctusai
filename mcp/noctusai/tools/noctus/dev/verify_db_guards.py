@@ -14457,10 +14457,8 @@ def _vp_config_ins(chat: str = "'120363000000000000@g.us'", privacy: str = "'pri
             f"    VALUES (v_org, v_conexao, {chat}, {privacy});")
 
 
-def _vp_sub_ins(remetente: str = "'noc-probe@c.us'", status: str = "'aguardando'", par: bool = False) -> str:
+def _vp_sub_ins(remetente: str = "'noc-probe@c.us'", status: str = "'aguardando'") -> str:
     cols, vals = "org_id, chat_id, remetente, status", f"v_org, 'noc-probe@g.us', {remetente}, {status}"
-    if par:
-        cols, vals = cols + ", codigo, drive_folder_id", vals + ", 'NOC1234', 'noc-probe-folder'"
     return f"    INSERT INTO {_S}.julia_videos_prontos_submissoes ({cols})\n    VALUES ({vals});"
 
 
@@ -14487,13 +14485,6 @@ _SW_372_PROBES: tuple[GuardProbe, ...] = (
         "submissoes.aberta_unica", guard_name="julia_videos_prontos_submissoes_aberta_uq",
         rationale="One OPEN pairing slot per sender: two would split one property's code and folder across two submissions.",
         ops_sql=_vp_sub_ins() + "\n" + _vp_sub_ins(), cond=_UNIQ, what="two open pairing slots for the same sender",
-    ),
-    _vp_probe(
-        "submissoes.par_unico", guard_name="julia_videos_prontos_submissoes_par_uq",
-        rationale="The duplicate-upload guard: the same (code, folder) uploaded twice would publish every video twice.",
-        ops_sql=_vp_sub_ins("'noc-probe-a@c.us'", "'concluido'", par=True) + "\n"
-        + _vp_sub_ins("'noc-probe-b@c.us'", "'processando'", par=True),
-        cond=_UNIQ, what="a second upload of an already-uploaded (code, folder) pair",
     ),
 )
 
