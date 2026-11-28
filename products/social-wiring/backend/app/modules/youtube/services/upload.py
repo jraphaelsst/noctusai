@@ -1228,4 +1228,4 @@ def _filename_from_drive_url(url: str) -> str:
     Real filename gets backfilled by ``_materialise_source`` once the
     Content-Disposition header is parsed; this placeholder is only ever
     visible if the job stays queued (e.g. background worker crashed)."""
-    return f"drive-pending.mp4"
+    return "drive-pending.mp4"

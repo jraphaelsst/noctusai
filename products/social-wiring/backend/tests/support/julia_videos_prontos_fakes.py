@@ -268,7 +268,7 @@ class Relogio:
 
 
 class World:
-    def __init__(self, org: str = ORG) -> None:
+    def __init__(self, org: str = ORG, *, ciclo_video_factory=None) -> None:
         self.org = org
         self.upload = FakeUpload()
         self.repo = FakeRepo(self.upload)
@@ -285,8 +285,8 @@ class World:
         self.service = svc.JuliaVideosProntosService(
             repo=self.repo, jobs=self.jobs, upload_factory=lambda: self.upload, resolver_metadados=self._resolver,
             imovel_video_factory=lambda: self.imovel,
-            ciclo_video_factory=lambda org: ProductVideoLifecycle(
-                org_id=org, jobs=FakeLookup(self.upload), youtube=self.youtube, catalog=FakeCatalog(self.upload)),
+            ciclo_video_factory=ciclo_video_factory or (lambda org: ProductVideoLifecycle(
+                org_id=org, jobs=FakeLookup(self.upload), youtube=self.youtube, catalog=FakeCatalog(self.upload))),
             notificar=self._notificar, enviar_grupo=self._grupo,
             emitir=lambda org, tipo, payload: self.eventos.append((tipo, payload)),
             wait_seconds=8.0, retry_delay_seconds=120.0, agora=self.relogio,
