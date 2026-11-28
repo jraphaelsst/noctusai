@@ -27,6 +27,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     Imovel,
     ImovelFoto,
     ImovelPage,
+    ImovelVideo,
     caracteristica_slug,
     clean_text,
     derive_finalidades,
@@ -37,6 +38,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     parse_count,
     parse_date,
     parse_imovel_fotos,
+    parse_imovel_videos,
     parse_money,
     parse_sim_nao,
 )
@@ -79,6 +81,7 @@ __all__ = [
     "Imovel",
     "ImovelFoto",
     "ImovelPage",
+    "ImovelVideo",
     "caracteristica_slug",
     "clean_text",
     "derive_finalidades",
@@ -89,6 +92,7 @@ __all__ = [
     "parse_count",
     "parse_date",
     "parse_imovel_fotos",
+    "parse_imovel_videos",
     "parse_money",
     "parse_sim_nao",
     # Property-swap scoring. Pure functions over two dicts — the full surface

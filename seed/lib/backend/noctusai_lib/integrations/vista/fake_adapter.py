@@ -32,8 +32,10 @@ from noctusai_lib.domain.real_estate import (
     Imovel,
     ImovelFoto,
     ImovelPage,
+    ImovelVideo,
     PropertyData,
     parse_imovel_fotos,
+    parse_imovel_videos,
 )
 
 
@@ -121,6 +123,9 @@ class FakeVistaAdapter:
         self._atualizacoes: list[tuple[str, dict[str, Any]]] = []
         self._registros: dict[str, dict[str, Any]] = {}
         self._erro_leitura: Optional[Exception] = None
+        # The `Video` relation, raw (dict-keyed or list, Vista's shape) + per-code errors (unpublished / unknown / 404).
+        self._videos: dict[str, Any] = {}
+        self._erros_videos: dict[str, Exception] = {}
 
     # ── PropertyData surface ──
 
@@ -190,6 +195,25 @@ class FakeVistaAdapter:
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel; ``[]`` when unseeded."""
         return parse_imovel_fotos(self._fotos.get(codigo, {}))
+
+    # ── Video surface ──
+
+    def add_imovel_videos(self, codigo: str, videos_raw: Any) -> None:
+        """Seed one imóvel's raw `Video` relation (Vista's shape), e.g. ``{"7": {"VideoCodigo": "7", "Video": "<id>", "Tipo": "youtube"}}``."""
+        self._videos[codigo] = videos_raw
+
+    def falhar_videos(self, codigo: str, erro: Optional[Exception]) -> None:
+        """Make `list_imovel_videos(codigo)` raise `erro` (e.g. `VistaRecordUnpublished`); None clears it."""
+        if erro is None:
+            self._erros_videos.pop(codigo, None)
+        else:
+            self._erros_videos[codigo] = erro
+
+    async def list_imovel_videos(self, codigo: str) -> list[ImovelVideo]:
+        """The seeded relation through `parse_imovel_videos`; ``[]`` when unseeded; a seeded error is raised."""
+        if codigo in self._erros_videos:
+            raise self._erros_videos[codigo]
+        return parse_imovel_videos(self._videos.get(codigo))
 
     def permitir_escrita(self, permitido: Optional[bool], erro: Optional[Exception] = None) -> None:
         """Seed the write side: the probe verdict (`True`/`False`/`None`) and an optional error every `atualizar_imovel` raises."""

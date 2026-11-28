@@ -144,6 +144,16 @@ relations:
 > (`"Sim"` on exactly one), `Tipo`, `Descricao`. `FotoDestaque` on `/imoveis/listar`
 > returns only that one cover photo — it is a *cover* field, not a gallery.
 
+- `Video` (on **`/imoveis/detalhes`**, 2026-11-27) → `Codigo`, `VideoCodigo`, `Data`, `Descricao`, `DescricaoWeb`, `Destaque`,
+  `ExibirNoSite`, `ExibirSite`, `Video`, `Tipo` (per `listarcampos`). Live sample: `{"Video": "9cgV72Lq9gs", "Tipo": "youtube",
+  "Destaque": "Nao", "ExibirNoSite": "Sim", "Data": "2025-08-01"}` — `Video` is the bare YouTube id (a full URL also occurs).
+  A 40-sample probe found videos on ~45% of listings, all YouTube. **Not** a root field: the imóveis sync never sees it.
+  Seed read: `VistaCRMAdapter.list_imovel_videos(codigo) -> list[ImovelVideo]` (`parse_imovel_videos`: dict-or-list,
+  ordered by `VideoCodigo`); it asks `{"Corretor": ["Codigo"]}` along ONLY so `VistaRecordUnpublished.payload_keys` tells an
+  unpublished listing (`["Corretor"]`) from an unknown code (`[]`) — both propagate, unlike `list_imovel_fotos`. Consumer:
+  social-wiring `imovel_videos_vista_import_service` (→ `imovel_video_youtube`, `origem='vista'`).
+  ⚠️ Shape of a multi-video record (dict-keyed vs list) not yet observed live — the parser accepts both.
+
 > **Public-doc warning.** "Caso você não informe os campos que quer utilizar, a
 > API retornará apenas o código." — without explicit `fields`, only the primary
 > id comes back. Always pass `fields` explicitly.

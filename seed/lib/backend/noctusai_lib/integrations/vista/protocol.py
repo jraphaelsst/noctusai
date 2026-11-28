@@ -26,7 +26,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Mapping, Optional, Protocol
 
-from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, PropertyData
+from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, ImovelVideo, PropertyData
 
 
 class VistaCRMAdapter(Protocol):
@@ -52,6 +52,12 @@ class VistaCRMAdapter(Protocol):
     read-only photo gallery, proven live against `/imoveis/detalhes` with a
     nested `{"Foto": [...]}` field — distinct from `listar`'s
     `FotoDestaque` and from the write-only (405-on-GET) `/imoveis/fotos`.
+
+    **Why `list_imovel_videos` was added (2026-11-27, project
+    `julia-videos-prontos-youtube` S3).** Vista keeps a listing's videos in
+    the `Video` relation of `/imoveis/detalhes` (subfields per
+    `listarcampos`: `VideoCodigo`, `Video`, `Tipo`, `Destaque`, ...), not in
+    any root field, so neither the sync nor `get_imovel` ever sees them.
     """
 
     async def get_property(self, code: str) -> PropertyData | None:
@@ -139,6 +145,18 @@ class VistaCRMAdapter(Protocol):
         add/update/delete-photo method on this Protocol; the equivalent
         Vista endpoint (`/imoveis/fotos`) is write-only and can DELETE
         photos from a live listing.
+        """
+        ...
+
+    async def list_imovel_videos(self, codigo: str) -> list[ImovelVideo]:
+        """Read-only `Video` relation of one imóvel (ordered by `VideoCodigo`).
+
+        `[]` when the listing has no video (or the code is malformed). UNLIKE
+        `list_imovel_fotos`, an unpublished record / unknown code is NOT
+        folded into `[]`: `VistaRecordUnpublished` propagates, and its
+        `payload_keys` tell them apart (`["Corretor"]` = a hidden listing,
+        `[]` = no such code) -- an importer must count them apart from "no
+        video". `VistaNotFound` (HTTP 404) propagates too.
         """
         ...
 

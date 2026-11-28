@@ -63,6 +63,10 @@ class VideoYoutubeInvalido(ValueError):
     """The value is not a usable YouTube video (bad id/URL, a Short, an unknown origem, no motivo) -- a 422 on the API."""
 
 
+class VideoYoutubeShort(VideoYoutubeInvalido):
+    """A `/shorts/` link: a real YouTube video that does NOT belong in this field (the Vista import counts it `short_ignorado`)."""
+
+
 @dataclass(frozen=True)
 class ImovelVideoYoutube:
     org_id: str
@@ -106,7 +110,7 @@ def extrair_video_id(valor: str) -> str:
         candidato = partes[0] if partes else None
     elif host in _HOSTS:
         if partes and partes[0] == "shorts":
-            raise VideoYoutubeInvalido("Shorts não entram aqui: informe o vídeo padrão (horizontal) do imóvel.")
+            raise VideoYoutubeShort("Shorts não entram aqui: informe o vídeo padrão (horizontal) do imóvel.")
         if partes[:1] == ["watch"] or not partes:
             candidato = (parse_qs(url.query).get("v") or [None])[0]
         elif len(partes) >= 2 and partes[0] in ("embed", "live", "v"):
@@ -235,6 +239,6 @@ def build_imovel_video_youtube_service(client: Any, *, vista_provider: Optional[
 
 
 __all__ = [
-    "CAMPO", "CAMPO_VISTA", "ORIGENS", "ImovelVideoYoutube", "ImovelVideoYoutubeService", "VideoYoutubeInvalido",
+    "CAMPO", "CAMPO_VISTA", "ORIGENS", "ImovelVideoYoutube", "ImovelVideoYoutubeService", "VideoYoutubeInvalido", "VideoYoutubeShort",
     "build_imovel_video_youtube_service", "extrair_video_id", "url_de",
 ]
