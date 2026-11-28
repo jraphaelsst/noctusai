@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -55,7 +56,7 @@ _SCHEMA = "social_wiring"
 #: upload router, the chat router, Julia's Vídeos Prontos worker): `run_upload_job` / the dashboard retry find a
 #: staged file under the SAME directory the queue step wrote it to. Mounted as a docker volume in compose so files
 #: survive container restarts mid-upload.
-UPLOAD_DIR = Path("/tmp/uploads")
+UPLOAD_DIR = Path(tempfile.gettempdir()) / "uploads"  # /tmp/uploads in the container (no TMPDIR set)
 
 # YT-side processing wait (S4-1). After videos.insert, the bytes are on
 # YT but transcoding may still be in flight. We wait for

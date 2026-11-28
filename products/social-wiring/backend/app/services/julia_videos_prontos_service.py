@@ -41,6 +41,7 @@ from uuid import UUID
 from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
 
 from app.services import gdrive_service
+from app.services.identidade_mascara import ref as ref_log
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +280,7 @@ class JuliaVideosProntosService:
                 await self._agendar({**aberta, **campos})
                 self._evento(org_id, "video_pronto_recebido", {**aberta, **campos})
                 return "atualizada"
-        logger.error("videos prontos: slot contention never settled org=%s chat=%s", org_id, chat_id)
+        logger.error("videos prontos: slot contention never settled org=%s chat=%s", org_id, ref_log(chat_id))
         self._emitir(org_id, "acao_falhou", {"acao": "video_pronto_receber", "motivo": "concorrencia"})
         return "conflito"
 
@@ -398,7 +399,7 @@ class JuliaVideosProntosService:
                 return await self._retentar_filhos(row, tentativa=tentativa)
             return await self._enviar_pasta(row, tentativa=tentativa)
         except Exception as exc:
-            logger.exception("videos prontos: processing crashed submissao=%s", row.get("id"))
+            logger.error("videos prontos: processing crashed submissao=%s (%s)", row.get("id"), type(exc).__name__)
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_ERRO_INTERNO, tentativa=tentativa,
                                          detalhe=type(exc).__name__)
 
@@ -413,7 +414,7 @@ class JuliaVideosProntosService:
         except PropertyNotFound:
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_IMOVEL_NAO_ENCONTRADO, tentativa=tentativa)
         except UploadMetadataError as exc:
-            logger.error("videos prontos: metadata lookup failed submissao=%s (%s)", row["id"], exc)
+            logger.error("videos prontos: metadata lookup failed submissao=%s (%s)", row["id"], type(exc).__name__)
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_CATALOGO_INDISPONIVEL, tentativa=tentativa)
         try:
             upload = self._upload_factory()
@@ -428,7 +429,7 @@ class JuliaVideosProntosService:
         except UploadServiceError as exc:
             if any(isinstance(c, gdrive_service.DriveFolderEmpty) for c in _causas(exc)):
                 return await self._finalizar(row, SEM_VIDEOS, motivo=MOTIVO_PASTA_VAZIA, tentativa=tentativa)
-            logger.warning("videos prontos: Drive folder fan-out failed submissao=%s (%s)", row["id"], exc)
+            logger.warning("videos prontos: Drive folder fan-out failed submissao=%s (%s)", row["id"], type(exc).__name__)
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_PASTA_INACESSIVEL, tentativa=tentativa)
         self.repo.atualizar(row["id"], {"batch_id": str(lote.batch_id)})
         row = {**row, "batch_id": str(lote.batch_id)}
@@ -889,7 +890,8 @@ async def ingerir_do_webhook(
         return await service.receber(org_id=org_id, connection_id=connection_id, chat_id=chat_id, remetente=remetente,
                                      mensagem_id=mensagem_id, texto=texto)
     except Exception as exc:
-        logger.exception("videos prontos: group message NOT ingested org=%s chat=%s", org_id, chat_id)
+        logger.error("videos prontos: group message NOT ingested org=%s chat=%s (%s)", org_id, ref_log(chat_id),
+                     type(exc).__name__)
         try:
             (emitir or _emitir_padrao)(org_id, "acao_falhou", {"acao": "video_pronto_receber", "motivo": type(exc).__name__})
         except Exception as exc2:
