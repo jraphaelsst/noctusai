@@ -1,7 +1,7 @@
 ---
 name: noc-refs-sheet
-description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + Vídeos count (an Observação ONLY when there is a real warning/reminder — never a description); on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM — a price that changed in Vista is UPDATED with a dated `valor atualizado…` Observação. The link TARGET differs per sheet — getting that wrong means redoing every row.
-version: 1.4.0
+description: Use when filling a midiasone reference spreadsheet from the Drive — triggers "update the Cindy spreadsheet", "feed the Priscila sheet", "fetch the reference links", "atualizar a planilha", "ONExxxxx links", "refs spreadsheet". Resolves each ONExxxxx reference to a Drive folder, counts its videos and writes link + Vídeos count (an Observação for every warning the reader must know: price changes, Vista-unpublished, repeated code, missing code — never a description); on EVERY run also fixes every Código to canonical `ONE<digits>` and fills/normalizes `Imóvel / Valor` (`Condomínio - Preço`) from the Vista CRM — a price that changed in Vista is UPDATED with a dated `valor atualizado…` Observação. The link TARGET differs per sheet — getting that wrong means redoing every row.
+version: 1.5.0
 ---
 
 # noc-refs-sheet — ONExxxxx references into a midiasone spreadsheet
@@ -105,7 +105,8 @@ U+2060 word-joiners before the code (§3).
   sheet wrong. Retype every non-canonical cell (typing over a selected cell replaces it).
 - **Unfixable** (no `ONE` prefix, no digits, a different prefix): do NOT guess. Leave
   the cell and list it for the user, with the row.
-- A row with a date but **no** Código: leave it and flag it.
+- A row with a date but **no** Código: leave the Código empty and write the Observação
+  `data sem código — preencher o Código` (§4a). Clear it once a code is typed.
 
 ## 2b · `Imóvel / Valor` — `Condomínio - Preço`, from Vista, on every run
 
@@ -138,8 +139,12 @@ the thousands separator, no `R$`, no cents. Regex: `^.+ - \d{1,3}(\.\d{3})+$`.
   - A price that later returns to the sheet's value needs no note — remove our stale one.
   - Report every update in chat too: row, old → new.
 - **`VistaRecordUnpublished`** (`ExibirNoSite=Nao`; the API key cannot see the record) ⇒
-  leave the cell as it is (empty stays empty) and tell the user. Never invent a value,
-  and never "update" a price you could not read.
+  leave the `Imóvel / Valor` cell as it is (empty stays empty) and **write the warning in
+  the Observação** (owner's rule, 2026-11-27 — a chat-only warning is a warning nobody sees
+  later): filled cell ⇒ `não publicado no Vista — preço não conferido em DD/MM/AAAA`;
+  empty cell ⇒ `não publicado no Vista — condomínio/preço pendentes`. On each run, refresh
+  the date; once the record is published and checked, remove the note. Never invent a
+  value, and never "update" a price you could not read.
 - 🔴 **Every ref comes back blank (no `Empreendimento`, no `ValorVenda`) ⇒ suspect the
   lookup, not the data.** On 2026-11-04 `/imoveis/listar` began answering "A pesquisa não
   retornou resultados." for every query, so the detail calibrator had no sample record and
@@ -197,9 +202,11 @@ worktree copy has none and every row comes back `VistaConfigError`).
   (`Vídeos - Google Drive`), so a naive `^https?:` test flags it as empty. A non-empty link
   cell is the user's — leave it.
 - **The same code can appear on two rows** (Cindy `ONE10602`, rows 4 and 17; `ONE8627`,
-  rows 6 and 8). Fill both the same way and mention it in the chat report, not the
-  sheet: the user cleared these notes on 2026-10-20 (a repeat is often a deliberate
-  re-post). Deleting a row is the user's call.
+  rows 6 and 8). Fill both the same way and **write the Observação on EACH row, naming
+  the other row(s)**: `código repetido — também na linha 17` (owner's rule, 2026-11-27 —
+  replaces the 2026-10-20 "chat report only"; the reader must see it in the sheet). A
+  repeat is often a deliberate re-post, so the note flags it, it does not judge it.
+  Deleting a row is the user's call. Rows move ⇒ recompute the line numbers every run.
 - **Codes are sometimes lowercase** (`one10846`, `One8400`). Drive search is
   case-insensitive, but the cell itself gets fixed to `ONE10846` (§2a), not just the Observação.
 - **A column run can land one row off.** On 2026-10-20 a `Down`×N hop after a `Return`
@@ -230,9 +237,11 @@ connector, and the calendar service account does not carry a `spreadsheets` scop
 
 ### 4a · Observação — EMPTY by default; only for an annotation that adds value
 
-The owner's rule (2026-10-20): the Observação column is for **warnings, reminders and
-things the reader must act on**, never a description of what the row already shows.
-Most rows have **no** Observação. Everything descriptive goes in the chat report.
+The owner's rules (2026-10-20, widened 2026-11-27): the Observação column is for
+**warnings, reminders and things the reader must act on**, never a description of what
+the row already shows. 🔴 **Every warning you would report in chat ALSO goes in the
+sheet** — the owner reads the sheet, not old chats, so a chat-only warning is a lost one.
+Descriptions (folder month, link target, video breakdown) stay in the chat report only.
 
 | ✅ Write it (short, pt-BR) | ❌ Never write it |
 |---|---|
@@ -240,11 +249,16 @@ Most rows have **no** Observação. Everything descriptive goes in the chat repo
 | a second folder with more videos, with its URL (`vídeos em outra pasta: <url>`) | `link aponta para a subpasta VIDEOS`; the folder holds FOTOS + VIDEOS |
 | `não publicado no Vista — condomínio/preço pendentes` | the video breakdown (`YT + REELS, normal e EXCLUSIVA`) |
 | a decoy/wrong-property folder nearby (`cuidado: pasta "VIDEO ERRADO…" é outro imóvel`) | loose videos at the root; duplicate photo-only folders |
-| `valor atualizado em 04/11/2026: 780.000 → 740.000 (Vista)` — every price §2b updated | `código repetido` (chat report only) |
+| `valor atualizado em 04/11/2026: 780.000 → 740.000 (Vista)` — every price §2b updated | |
+| `não publicado no Vista — preço não conferido em DD/MM/AAAA` (§2b) | |
+| `código repetido — também na linha N` on each repeated row (§3) | |
+| `data sem código — preencher o Código` (§2a) | |
 
 - 🔴 **A non-empty Observação is the user's** (e.g. row 7 `Casa de Exclusividade Casa
   Noble - video de parceiros`). Never overwrite or "clean" it; append only with ` · `.
-- Once the warning is resolved (folder found, record published), clear the note you wrote.
+- Several warnings on one row ⇒ join them with ` · ` (e.g. `valor atualizado… · código
+  repetido — também na linha 17`).
+- Once the warning is resolved (folder found, record published, repeat removed), clear the note you wrote.
   A `valor atualizado…` note is a record, not a warning — it stays (§2b says when it changes).
 
 ### 4b · Vídeos — the count column, kept filled on every row
@@ -274,6 +288,8 @@ Re-export the CSV (`cache:'no-store'`) and assert programmatically:
 3. every non-empty `Código` matches `^ONE\d+$` (§2a); **and**
 3a. every row with a `Código` has an integer `Vídeos` (`^\d+$`, §4b), and every
    Observação you wrote is in the ✅ column of §4a; **and**
+3b. every warning in the ✅ column of §4a that applies to a row (unpublished, repeated
+   code with the right line numbers, date without code) IS in that row's Observação; **and**
 4. every non-empty `Imóvel / Valor` matches `^.+ - \d{1,3}(\.\d{3})+$` **and** sits on
    the row of its own code (compare against the Vista value you fetched, row by row; a
    shifted run passes the regex but fails this check); **and**
