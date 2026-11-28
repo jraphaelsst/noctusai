@@ -1,17 +1,22 @@
 """Fakes for Julia "Vídeos Prontos" (julia-videos-prontos-youtube S2): every collaborator of
-`JuliaVideosProntosService` -- the repository (with the two partial UNIQUE indexes of migration 372), the job queue
-(dedupe keys), the YouTube `UploadService` (an `upload_jobs` table per batch), the metadata resolver, S1's
-property-field service, the owner notifier, the group sender and the event emitter -- plus a `World` wiring them."""
+`JuliaVideosProntosService` -- the repository (with the open-slot partial UNIQUE index of migration 372), the job queue
+(dedupe keys), the YouTube `UploadService` (one `upload_jobs` table; the opt-in per-file skip of an already-published
+Drive file), the metadata resolver, S1's property-field service, the owner notifier, the group sender and the event
+emitter -- plus a `World` wiring them. The property-video lifecycle is the REAL `ProductVideoLifecycle` over a fake
+job lookup / YouTube privacy call / catalog mirror (the supersede rule itself is exercised, not faked)."""
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from app.modules.youtube.services.upload import BatchChild, BatchQueued, UploadServiceError
+from app.modules.youtube.services.upload import BatchChild, BatchQueued, SkippedFile, UploadServiceError
 from app.modules.youtube.services.upload_metadata import PropertyNotFound
+from app.modules.youtube.services.video_lifecycle import ProductVideoLifecycle
+from app.modules.youtube.services.youtube import YouTubeServiceError
+from app.services.imovel_video_youtube_service import ImovelVideoYoutube, url_de
 from app.services import gdrive_service
 from app.services import julia_videos_prontos_service as svc
 
@@ -32,8 +37,8 @@ def run(coro):
 
 # ─── fakes ──────────────────────────────────────────────────────────────────
 class FakeRepo:
-    """In memory, with migration 372's guards: one OPEN slot per (org, chat, sender) and one (org, code, folder) pair
-    in processando / concluido / parcial (an insert / transition that would break either is refused / raises)."""
+    """In memory, with migration 372's guard: one OPEN slot per (org, chat, sender) (an insert that would break it is
+    refused)."""
 
     def __init__(self, uploads: "FakeUpload") -> None:
         self.rows: dict[str, dict] = {}
@@ -79,27 +84,13 @@ class FakeRepo:
     def atualizar(self, submissao_id, campos):
         self.rows[str(submissao_id)].update(campos)
 
-    def _par_violado(self, r, para):
-        if para not in (svc.PROCESSANDO, svc.CONCLUIDO, svc.PARCIAL):
-            return False
-        return any(o["id"] != r["id"] and o["org_id"] == r["org_id"] and o["codigo"] == r["codigo"]
-                   and o["drive_folder_id"] == r["drive_folder_id"]
-                   and o["status"] in (svc.PROCESSANDO, svc.CONCLUIDO, svc.PARCIAL) for o in self.rows.values())
-
     def transicionar(self, org_id, submissao_id, *, de, para, evento, dados, ator_id=None):
         r = self.rows.get(str(submissao_id))
         if r is None or r["status"] != de:
             return False
-        if self._par_violado(r, para):
-            raise RuntimeError("duplicate key value violates unique constraint julia_videos_prontos_submissoes_par_uq")
         r["status"] = para
         self.eventos.append((r["id"], de, para))
         return True
-
-    def par_em_uso(self, org_id, codigo, drive_folder_id, *, exceto):
-        return next(({"id": r["id"]} for r in self.rows.values() if r["id"] != str(exceto) and r["org_id"] == str(org_id)
-                     and r["codigo"] == codigo and r["drive_folder_id"] == drive_folder_id
-                     and r["status"] in (svc.PROCESSANDO, svc.CONCLUIDO, svc.PARCIAL)), None)
 
     def jobs_do_lote(self, batch_id):
         return [dict(j) for j in self.uploads.jobs.values() if j["batch_id"] == str(batch_id)]
@@ -129,6 +120,12 @@ class Video:
     nome: str
     formato: str  # youtube | shorts
     falhas: int = 0  # how many runs fail before it publishes
+    file_id: Optional[str] = None  # the Drive file id (default: derived from the name -- the same file on every post)
+    tamanho: int = 100
+
+    @property
+    def drive_id(self) -> str:
+        return self.file_id or f"drv_{self.nome}"
 
 
 class FakeUpload:
@@ -142,23 +139,49 @@ class FakeUpload:
         self.execucoes: list[str] = []
         self.retentados: list[str] = []
         self.fanouts = 0
+        self.skip_pedido: list[bool] = []
+        self._seq = 0
 
-    def queue_drive_folder_upload(self, *, org_id, created_by, metadata, drive_folder_url):
+    def _novo_job(self, **campos) -> dict:
+        self._seq += 1
+        jid = str(uuid4())
+        self.jobs[jid] = {"id": jid, "status": "queued", "youtube_video_id": None, "target_format": "unknown",
+                          "privacy_status": "public", "seq": self._seq, **campos}
+        return self.jobs[jid]
+
+    def publicado_antes(self, codigo: str, nome: str, formato: str, *, file_id: Optional[str] = None,
+                        tamanho: int = 100, privacy: str = "public") -> dict:
+        """A video of the property published by an EARLIER upload (another batch)."""
+        return self._novo_job(batch_id=str(uuid4()), product_code=codigo, file_name=nome, status="published",
+                              youtube_video_id=f"yt_{nome}", target_format=formato,
+                              source_file_id=file_id or f"drv_{nome}", file_size_bytes=tamanho, privacy_status=privacy)
+
+    def queue_drive_folder_upload(self, *, org_id, created_by, metadata, drive_folder_url,
+                                  skip_published_for_product=False):
         self.fanouts += 1
+        self.skip_pedido.append(skip_published_for_product)
         conteudo = self.pastas.get(gdrive_service.parse_folder_id(drive_folder_url), [])
         if isinstance(conteudo, Exception):
             raise UploadServiceError("Drive folder fanout failed") from conteudo
         if not conteudo:
             raise UploadServiceError("Drive folder fanout failed") from gdrive_service.DriveFolderEmpty("no videos")
+        codigo = metadata["title"]
         batch = uuid4()
-        filhos = []
+        filhos, ignorados = [], []
         for v in conteudo:
-            jid = uuid4()
-            self.jobs[str(jid)] = {"id": str(jid), "batch_id": str(batch), "status": "queued", "youtube_video_id": None,
-                                   "target_format": "unknown", "file_name": v.nome, "metadata": metadata}
-            self.roteiro[str(jid)] = Video(v.nome, v.formato, v.falhas)
-            filhos.append(BatchChild(job_id=jid, file_name=v.nome, parent_subfolder=None))
-        return BatchQueued(batch_id=batch, children=filhos)
+            ja = next((j for j in self.jobs.values() if skip_published_for_product and j.get("product_code") == codigo
+                       and j["status"] in ("published", "notified") and j.get("source_file_id") == v.drive_id
+                       and j.get("file_size_bytes") == v.tamanho), None)
+            if ja is not None:
+                ignorados.append(SkippedFile(file_name=v.nome, drive_file_id=v.drive_id, upload_job_id=ja["id"],
+                                             youtube_video_id=ja["youtube_video_id"], target_format=ja["target_format"]))
+                continue
+            job = self._novo_job(batch_id=str(batch), product_code=codigo, file_name=v.nome, metadata=metadata,
+                                 source_file_id=v.drive_id, file_size_bytes=v.tamanho,
+                                 privacy_status=metadata["privacy_status"])
+            self.roteiro[job["id"]] = Video(v.nome, v.formato, v.falhas, v.file_id, v.tamanho)
+            filhos.append(BatchChild(job_id=UUID(job["id"]), file_name=v.nome, parent_subfolder=None))
+        return BatchQueued(batch_id=batch, children=filhos, skipped=ignorados)
 
     def run_upload_job(self, *, job_id):
         jid = str(job_id)
@@ -179,12 +202,58 @@ class FakeUpload:
 
 
 class FakeImovelVideo:
+    """S1's property field: `obter` / `definir` (replace)."""
+
     def __init__(self) -> None:
         self.chamadas: list[dict] = []
+        self.atual: dict[str, ImovelVideoYoutube] = {}
+
+    def apontar(self, codigo: str, video_id: str, origem: str) -> None:
+        self.atual[codigo] = ImovelVideoYoutube(org_id=ORG, codigo=codigo, youtube_video_id=video_id,
+                                                youtube_url=url_de(video_id), origem=origem)
+
+    def obter(self, org_id, codigo):
+        return self.atual.get(codigo)
 
     def definir(self, org_id, codigo, *, youtube_video_id, origem, motivo, upload_job_id):
         self.chamadas.append({"codigo": codigo, "youtube_video_id": youtube_video_id, "origem": origem, "motivo": motivo,
                               "upload_job_id": upload_job_id})
+        self.apontar(codigo, youtube_video_id, origem)
+
+
+class FakeLookup:
+    """`SupabaseJobLookup.list_jobs` over the fake `upload_jobs` (newest first)."""
+
+    def __init__(self, uploads: FakeUpload) -> None:
+        self.uploads = uploads
+
+    def list_jobs(self, code):
+        rows = [dict(j) for j in self.uploads.jobs.values() if j.get("product_code") == code.upper()]
+        return sorted(rows, key=lambda j: j["seq"], reverse=True)
+
+
+class FakeYouTube:
+    """`YouTubeService.update_video_metadata`: records every privacy change; `recusar` = videos it refuses."""
+
+    def __init__(self) -> None:
+        self.privados: list[str] = []
+        self.recusar: set[str] = set()
+
+    def update_video_metadata(self, *, org_id, video_id, privacy_status=None, title=None, description=None):
+        if video_id in self.recusar:
+            raise YouTubeServiceError("YouTube API error 403: forbidden")
+        assert privacy_status == "private"
+        self.privados.append(video_id)
+
+
+class FakeCatalog:
+    def __init__(self, uploads: FakeUpload) -> None:
+        self.uploads = uploads
+
+    def mirror_update(self, video_id, patch):
+        for j in self.uploads.jobs.values():
+            if j.get("youtube_video_id") == video_id:
+                j.update(patch)
 
 
 class Relogio:
@@ -207,6 +276,7 @@ class World:
                                   "privacy_status": "public"}
         self.jobs = FakeJobs()
         self.imovel = FakeImovelVideo()
+        self.youtube = FakeYouTube()
         self.donos: list[tuple[str, str]] = []
         self.grupo: list[str] = []
         self.eventos: list[tuple[str, dict]] = []
@@ -214,7 +284,10 @@ class World:
         self.catalogo = {"ONE10898", "CA2411", "ONE20000"}
         self.service = svc.JuliaVideosProntosService(
             repo=self.repo, jobs=self.jobs, upload_factory=lambda: self.upload, resolver_metadados=self._resolver,
-            imovel_video_factory=lambda: self.imovel, notificar=self._notificar, enviar_grupo=self._grupo,
+            imovel_video_factory=lambda: self.imovel,
+            ciclo_video_factory=lambda org: ProductVideoLifecycle(
+                org_id=org, jobs=FakeLookup(self.upload), youtube=self.youtube, catalog=FakeCatalog(self.upload)),
+            notificar=self._notificar, enviar_grupo=self._grupo,
             emitir=lambda org, tipo, payload: self.eventos.append((tipo, payload)),
             wait_seconds=8.0, retry_delay_seconds=120.0, agora=self.relogio,
         )

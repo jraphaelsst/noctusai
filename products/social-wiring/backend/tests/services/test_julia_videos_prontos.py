@@ -302,55 +302,159 @@ class TestRetry:
             run(w.service.solicitar_retry("99999999-9999-9999-9999-999999999999", w.unica()["id"], ator_id="u1"))
 
 
-# ─── the duplicate-upload guard ─────────────────────────────────────────────
-class TestReenvio:
-    def test_reenvio_depois_de_pasta_vazia_e_permitido(self):
-        w = World()
-        w.msg(f"ONE10898 {PASTA_A}")
-        w.relogio.avancar(8)
-        w.drenar()
-        w.upload.pastas[ID_A] = [Video("a", "youtube")]
-        w.relogio.avancar(60)
-        w.msg(f"ONE10898 {PASTA_A}")
-        w.relogio.avancar(8)
-        w.drenar()
-        assert sorted(r["status"] for r in w.repo.rows.values()) == [svc.CONCLUIDO, svc.SEM_VIDEOS]
-
-    def test_reenvio_de_par_concluido_e_recusado(self):
-        w = World()
-        w.upload.pastas[ID_A] = [Video("a", "youtube")]
-        w.msg(f"ONE10898 {PASTA_A}")
+# ─── remake replaces / identical file skipped (owner 2026-11-28) ────────────
+class TestRefacao:
+    def _postar(self, w: World, texto: str = f"ONE10898 {PASTA_A}", remetente: str = EDITOR) -> None:
+        w.msg(texto, remetente=remetente)
         w.relogio.avancar(8)
         w.drenar()
         w.relogio.avancar(600)
+
+    def _ultima(self, w: World) -> dict:
+        return max(w.repo.rows.values(), key=lambda r: list(w.repo.rows).index(r["id"]))
+
+    def test_o_fluxo_pede_o_skip_por_arquivo_ao_modulo_youtube(self):
+        w = World()
+        w.upload.pastas[ID_A] = [Video("h", "youtube")]
+        self._postar(w)
+        assert w.upload.skip_pedido == [True]
+
+    def test_reenvio_depois_de_pasta_vazia_e_permitido(self):
+        w = World()
+        self._postar(w)
+        w.upload.pastas[ID_A] = [Video("a", "youtube")]
+        self._postar(w)
+        assert sorted(r["status"] for r in w.repo.rows.values()) == [svc.CONCLUIDO, svc.SEM_VIDEOS]
+
+    def test_arquivo_identico_repostado_e_ignorado_ja_publicado(self):
+        w = World()
+        w.upload.pastas[ID_A] = [Video("h", "youtube"), Video("s", "shorts")]
+        self._postar(w)
+        privados_antes, execucoes_antes, donos_antes = list(w.youtube.privados), len(w.upload.execucoes), len(w.donos)
+        self._postar(w)  # the same code + folder, the same files
+        novo = self._ultima(w)
+        assert (novo["status"], novo["motivo"]) == (svc.JA_PUBLICADO, svc.MOTIVO_JA_PUBLICADO)
+        assert len(w.upload.execucoes) == execucoes_antes  # nothing uploaded
+        assert w.youtube.privados == privados_antes  # no YouTube call
+        assert novo["batch_id"] is None
+        kind, texto = w.donos[donos_antes]
+        assert kind == "video_pronto_ja_publicado" and "nada novo" in texto and "https://youtu.be/yt_h" in texto
+        assert w.grupo == []  # nothing in the group
+        assert w.jobs.do_tipo(svc.JOB_RETRY) == []
+        assert "video_pronto_ja_publicado" in w.tipos()
+        assert len(w.imovel.chamadas) == 1  # the field is not touched again
+
+    def test_refacao_sobe_o_novo_privatiza_o_antigo_e_move_o_campo(self):
+        w = World()
+        antigo = w.upload.publicado_antes("ONE10898", "velho", "youtube")
+        w.imovel.apontar("ONE10898", "yt_velho", "julia")
+        w.upload.pastas[ID_A] = [Video("novo", "youtube")]
+        self._postar(w)
+        r = w.unica()
+        assert r["status"] == svc.CONCLUIDO
+        assert w.youtube.privados == ["yt_velho"]
+        assert w.upload.jobs[antigo["id"]]["privacy_status"] == "private"  # the catalog mirror
+        assert w.imovel.atual["ONE10898"].youtube_video_id == "yt_novo"
+        assert [c["youtube_video_id"] for c in w.imovel.chamadas] == ["yt_novo"]
+        ev = [p for t, p in w.eventos if t == "video_pronto_substituido"]
+        assert ev == [{"submissao_id": r["id"], "codigo": "ONE10898", "batch_id": r["batch_id"],
+                       "youtube_video_id": "yt_velho", "upload_job_id": antigo["id"], "target_format": "youtube",
+                       "resultado": "privado", "origem": "upload_job"}]
+        kind, texto = w.donos[-1]
+        assert kind == "video_pronto_concluido"
+        assert "https://youtu.be/yt_novo" in texto and "ficaram privados" in texto and "https://youtu.be/yt_velho" in texto
+
+    def test_pasta_com_um_identico_e_um_novo_so_o_novo_sobe_e_so_o_seu_tipo_e_substituido(self):
+        w = World()
+        w.upload.pastas[ID_A] = [Video("h1", "youtube"), Video("s1", "shorts")]
+        self._postar(w)
+        assert w.youtube.privados == []
+        # the editor re-edits the Short only and re-posts the same folder
+        w.upload.pastas[ID_A] = [Video("h1", "youtube"), Video("s2", "shorts")]
+        self._postar(w)
+        novo = self._ultima(w)
+        assert novo["status"] == svc.CONCLUIDO
+        do_lote = [j for j in w.upload.jobs.values() if j["batch_id"] == novo["batch_id"]]
+        assert [j["file_name"] for j in do_lote] == ["s2"]  # the identical standard video is not uploaded again
+        assert w.youtube.privados == ["yt_s1"]  # only the Short kind is superseded; yt_h1 stays public
+        assert w.imovel.atual["ONE10898"].youtube_video_id == "yt_h1"  # Shorts never move the field
+        assert "1 arquivo(s) da pasta já estavam publicados" in w.donos[-1][1]
+
+    def test_novo_upload_que_falha_nao_privatiza_o_antigo(self):
+        w = World()
+        w.upload.publicado_antes("ONE10898", "velho", "youtube")
+        w.imovel.apontar("ONE10898", "yt_velho", "julia")
+        w.upload.pastas[ID_A] = [Video("novo", "youtube", falhas=5)]
+        self._postar(w)
+        assert w.unica()["status"] == svc.FALHOU
+        assert w.youtube.privados == []
+        assert w.imovel.atual["ONE10898"].youtube_video_id == "yt_velho"
+        assert "video_pronto_substituido" not in w.tipos()
+
+    def test_privacidade_recusada_e_registrada_e_a_submissao_conclui(self):
+        w = World()
+        w.upload.publicado_antes("ONE10898", "velho", "youtube")
+        w.youtube.recusar.add("yt_velho")
+        w.upload.pastas[ID_A] = [Video("novo", "youtube")]
+        self._postar(w)
+        assert w.unica()["status"] == svc.CONCLUIDO
+        ev = [p for t, p in w.eventos if t == "video_pronto_substituido"]
+        assert [(e["youtube_video_id"], e["resultado"], e["erro"]) for e in ev] == [("yt_velho", "recusado", "YouTubeServiceError")]
+        assert "Não consegui deixar privados" in w.donos[-1][1]
+        assert w.imovel.atual["ONE10898"].youtube_video_id == "yt_novo"  # the field still moves
+
+    def test_refacao_so_de_shorts_privatiza_os_shorts_antigos_e_nao_toca_o_campo(self):
+        w = World()
+        w.upload.publicado_antes("ONE10898", "padrao", "youtube")
+        w.upload.publicado_antes("ONE10898", "short_velho", "shorts")
+        w.imovel.apontar("ONE10898", "yt_padrao", "julia")
+        w.upload.pastas[ID_A] = [Video("short_novo", "shorts")]
+        self._postar(w)
+        assert w.unica()["status"] == svc.CONCLUIDO
+        assert w.youtube.privados == ["yt_short_velho"]
+        assert w.imovel.chamadas == [] and w.imovel.atual["ONE10898"].youtube_video_id == "yt_padrao"
+
+    def test_campo_apontando_para_video_do_vista_tenta_privatizar_e_tolera_a_recusa(self):
+        w = World()
+        w.imovel.apontar("ONE10898", "VISTA123456", "vista")
+        w.youtube.recusar.add("VISTA123456")  # not our channel
+        w.upload.pastas[ID_A] = [Video("novo", "youtube")]
+        self._postar(w)
+        assert w.unica()["status"] == svc.CONCLUIDO
+        ev = [p for t, p in w.eventos if t == "video_pronto_substituido"]
+        assert [(e["youtube_video_id"], e["resultado"], e["origem"]) for e in ev] == [("VISTA123456", "recusado", "extra")]
+        assert w.imovel.atual["ONE10898"].youtube_video_id == "yt_novo"
+
+    def test_campo_apontando_para_video_manual_e_privatizado(self):
+        w = World()
+        w.imovel.apontar("ONE10898", "MANUAL12345", "manual")
+        w.upload.pastas[ID_A] = [Video("novo", "youtube")]
+        self._postar(w)
+        assert w.youtube.privados == ["MANUAL12345"]
+
+    def test_retry_nao_privatiza_o_que_o_proprio_lote_publicou(self):
+        w = World()
+        w.upload.publicado_antes("ONE10898", "velho", "youtube")
+        w.upload.pastas[ID_A] = [Video("ok", "youtube"), Video("tarde", "youtube", falhas=1)]
         w.msg(f"ONE10898 {PASTA_A}")
         w.relogio.avancar(8)
         w.drenar()
-        novo = next(r for r in w.repo.rows.values() if r["status"] != svc.CONCLUIDO)
-        assert (novo["status"], novo["motivo"]) == (svc.FALHOU, svc.MOTIVO_DUPLICADO)
-        assert w.upload.fanouts == 1
-        assert w.jobs.do_tipo(svc.JOB_RETRY) == []  # a refused duplicate is never retried
-        assert "já foram enviados" in w.grupo[-1]
+        w.relogio.avancar(120)
+        assert w.drenar() == [svc.CONCLUIDO]
+        assert w.youtube.privados == ["yt_velho"]  # once; yt_ok (same batch) never superseded
 
-    def test_corrida_no_claim_e_barrada_pelo_indice(self):
-        """Two slots of the same pair claimed back-to-back: the second claim breaks the pair UNIQUE index -> refused."""
+    def test_falha_do_passo_de_substituicao_inteiro_nao_derruba_o_upload(self):
         w = World()
-        w.upload.pastas[ID_A] = [Video("a", "youtube")]
-        w.msg(f"ONE10898 {PASTA_A}", remetente=EDITOR)
-        w.msg(f"ONE10898 {PASTA_A}", remetente=OUTRO)
-        a, b = list(w.repo.rows.values())
-        # the pre-check of `b` cannot see `a` yet: `a` is claimed in between (index raise, then refused as duplicate)
-        w.repo.rows[a["id"]]["status"] = svc.PROCESSANDO
-        par_em_uso = w.repo.par_em_uso
-        chamadas = {"n": 0}
 
-        def cego_na_primeira(*args, **kw):
-            chamadas["n"] += 1
-            return None if chamadas["n"] == 1 else par_em_uso(*args, **kw)
+        def quebra(org):
+            raise RuntimeError("no credentials")
 
-        w.repo.par_em_uso = cego_na_primeira  # the fake repo's own read (a race window), not a guard of ours
-        assert run(w.service.processar(b["id"], b["versao"])) == svc.FALHOU
-        assert w.repo.rows[b["id"]]["motivo"] == svc.MOTIVO_DUPLICADO
+        w.service._ciclo_video_factory = quebra  # the constructor seam, swapped for this scenario
+        w.upload.pastas[ID_A] = [Video("novo", "youtube")]
+        self._postar(w)
+        assert w.unica()["status"] == svc.CONCLUIDO
+        assert ("acao_falhou", {"acao": "video_pronto_substituir", "submissao_id": w.unica()["id"],
+                                "codigo": "ONE10898"}) in w.eventos
 
 
 # ─── the webhook entry ──────────────────────────────────────────────────────

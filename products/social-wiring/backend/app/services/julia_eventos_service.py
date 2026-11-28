@@ -69,12 +69,16 @@ TIPOS_JULIA_V2: frozenset[str] = frozenset({
 #: Not notifiable: it is the measurable record of the change (who/when/what).
 TIPOS_CONFIGURACAO: frozenset[str] = frozenset({"configuracao_alterada"})
 #: Vídeos Prontos (Julia as an entry point to the YouTube upload, `julia_videos_prontos_service`): one per submission
-#: transition, payload `{submissao_id, codigo?, batch_id?, publicados?, falhas?, tentativa?, motivo?}` -- ids, the property
-#: code, counts and closed reason codes only. Not notifiable by vocabulary: the owner notice is the scripted
-#: notification (`notification_kinds` `video_pronto_*`).
+#: transition, payload `{submissao_id, codigo?, batch_id?, publicados?, falhas?, ignorados?, tentativa?, motivo?}` -- ids,
+#: the property code, counts and closed reason codes only. `video_pronto_ja_publicado` = every file of the folder was
+#: already published (nothing uploaded); `video_pronto_substituido` = one previous video of the property set private
+#: by a remake (`{submissao_id, codigo, youtube_video_id, upload_job_id?, target_format, resultado, erro?, origem}`,
+#: `resultado` privado | recusado). Not notifiable by vocabulary: the owner notice is the scripted notification
+#: (`notification_kinds` `video_pronto_*`).
 TIPOS_VIDEOS_PRONTOS: frozenset[str] = frozenset({
     "video_pronto_recebido", "video_pronto_upload_iniciado", "video_pronto_concluido", "video_pronto_parcial",
-    "video_pronto_falhou", "video_pronto_sem_videos", "video_pronto_incompleto",
+    "video_pronto_falhou", "video_pronto_sem_videos", "video_pronto_incompleto", "video_pronto_ja_publicado",
+    "video_pronto_substituido",
 })
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA

@@ -628,7 +628,7 @@ class NotificationService:
     #: The Vídeos Prontos outcomes (`notification_kinds` declares each one; `julia_videos_prontos_service` sends them).
     VIDEO_PRONTO_KINDS: frozenset[str] = frozenset({
         "video_pronto_concluido", "video_pronto_parcial", "video_pronto_falhou", "video_pronto_sem_videos",
-        "video_pronto_incompleto",
+        "video_pronto_incompleto", "video_pronto_ja_publicado",
     })
 
     async def notify_video_pronto(self, *, org_id: UUID, kind: str, assunto: str, texto: str) -> DispatchOutcome:

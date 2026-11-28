@@ -123,7 +123,8 @@ KINDS: tuple[NotificationKind, ...] = (
         kind="video_pronto_concluido",
         titulo="Vídeos do grupo publicados no YouTube",
         descricao="Código do imóvel e os links do YouTube de todos os vídeos de uma pasta enviada no grupo Vídeos "
-                  "Prontos (indica se é vídeo normal ou Shorts).",
+                  "Prontos (indica se é vídeo normal ou Shorts); numa refação, quais vídeos antigos do imóvel ficaram "
+                  "privados e os arquivos idênticos que não foram enviados de novo.",
         gatilho="Todos os vídeos da pasta postada no grupo foram enviados ao YouTube (também após a nova tentativa).",
     ),
     NotificationKind(
@@ -137,7 +138,7 @@ KINDS: tuple[NotificationKind, ...] = (
         kind="video_pronto_falhou",
         titulo="Vídeos do grupo: envio falhou",
         descricao="Código do imóvel e o motivo resumido (pasta inacessível, imóvel fora do catálogo, YouTube "
-                  "desconectado, pasta já enviada antes); diz se a Julia ainda vai tentar de novo sozinha.",
+                  "desconectado); diz se a Julia ainda vai tentar de novo sozinha.",
         gatilho="Nenhum vídeo da pasta postada no grupo subiu ao YouTube (1ª tentativa ou após a nova tentativa).",
     ),
     NotificationKind(
@@ -151,6 +152,13 @@ KINDS: tuple[NotificationKind, ...] = (
         titulo="Vídeos do grupo: faltou código ou link",
         descricao="O que chegou (só o código ou só o link da pasta) e que nada foi enviado ao YouTube.",
         gatilho="Uma postagem no grupo Vídeos Prontos ficou sem o par código + link depois da espera.",
+    ),
+    NotificationKind(
+        kind="video_pronto_ja_publicado",
+        titulo="Vídeos do grupo: já publicados, nada novo",
+        descricao="Código do imóvel e os links dos vídeos que já estavam no YouTube: todos os arquivos da pasta já "
+                  "tinham sido publicados para esse imóvel, nada foi enviado de novo.",
+        gatilho="Uma pasta postada no grupo Vídeos Prontos só tinha arquivos já publicados para o imóvel.",
     ),
 )
 

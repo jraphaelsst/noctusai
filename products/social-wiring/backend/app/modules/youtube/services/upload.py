@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 _TABLE = "upload_jobs"
 _SCHEMA = "social_wiring"
+#: `upload_jobs.status` values that mean the video is on YouTube (`notified` = published + the recipients were told).
+PUBLISHED_STATUSES: frozenset[str] = frozenset({"published", "notified"})
 
 #: Where browser-uploaded multipart bodies and Drive downloads are staged -- ONE path for every entry point (the
 #: upload router, the chat router, Julia's Vídeos Prontos worker): `run_upload_job` / the dashboard retry find a
@@ -92,6 +94,19 @@ class BatchChild:
     parent_subfolder: str | None
 
 
+@dataclass(frozen=True)
+class SkippedFile:
+    """A Drive file ``queue_drive_folder_upload(skip_published_for_product=True)`` did NOT queue: the same Drive file
+    (same Drive id AND same size) is already published for this org + product code. ``upload_job_id`` /
+    ``youtube_video_id`` / ``target_format`` are the existing publication's."""
+
+    file_name: str
+    drive_file_id: str
+    upload_job_id: str
+    youtube_video_id: str | None
+    target_format: str | None
+
+
 @dataclass
 class BatchQueued:
     """What ``queue_drive_folder_upload`` returns to the router.
@@ -100,10 +115,14 @@ class BatchQueued:
     per-video list the router uses to spawn one BackgroundTask each. An
     empty ``children`` list is never returned — if no videos were found
     the service raises :class:`UploadServiceError` BEFORE inserting
-    anything (mirrors the single-file path's pre-insert validation)."""
+    anything (mirrors the single-file path's pre-insert validation).
+    The ONE exception is the opt-in ``skip_published_for_product``: when
+    every file of the folder is already published, ``children`` is empty
+    and ``skipped`` names them (nothing was inserted under ``batch_id``)."""
 
     batch_id: UUID
     children: list[BatchChild] = field(default_factory=list)
+    skipped: list[SkippedFile] = field(default_factory=list)
 
 
 class UploadService:
@@ -233,6 +252,7 @@ class UploadService:
         file_size_bytes: int | None,
         batch_id: UUID | None = None,
         target_format: str | None = None,
+        source_file_id: str | None = None,
     ) -> QueuedJob:
         payload = {
             "org_id": str(org_id),
@@ -257,6 +277,8 @@ class UploadService:
             payload["batch_id"] = str(batch_id)
         if target_format is not None:
             payload["target_format"] = target_format
+        if source_file_id is not None:
+            payload["source_file_id"] = source_file_id
 
         response = (
             self._user
@@ -280,8 +302,21 @@ class UploadService:
         created_by: UUID | None,
         metadata: UploadMetadata,
         drive_folder_url: str,
+        skip_published_for_product: bool = False,
     ) -> BatchQueued:
         """Download a Drive folder + queue one row per video found.
+
+        Every queued row records the video's Drive file id in
+        ``upload_jobs.source_file_id`` (when gdown's listing gave it) -- the
+        file's identity across re-posts of the same folder.
+
+        ``skip_published_for_product=True`` (opt-in; requires
+        ``metadata.product_code``): a file whose Drive id AND size match an
+        upload_jobs row already PUBLISHED for this org + product code is not
+        queued again (no YouTube duplicate) and comes back in
+        ``BatchQueued.skipped``; a re-edited file (new id, or the same id with
+        another size) is queued as usual. A file whose id is unknown is
+        queued (it cannot be recognised; logged at WARNING).
 
         Strategy:
           1. Parse the folder URL upfront (cheap; bad URL → 4xx without
@@ -318,6 +353,8 @@ class UploadService:
             gdrive_service.parse_folder_id(drive_folder_url)
         except gdrive_service.InvalidDriveURL as exc:
             raise UploadServiceError(str(exc)) from exc
+        if skip_published_for_product and not metadata.product_code:
+            raise UploadServiceError("skip_published_for_product requires metadata.product_code")
 
         batch_id = uuid4()
         target_dir = self._upload_dir / "drive-batch" / str(batch_id)
@@ -331,6 +368,14 @@ class UploadService:
             raise UploadServiceError(
                 f"Drive folder fanout failed: {exc}"
             ) from exc
+
+        skipped: list[SkippedFile] = []
+        if skip_published_for_product:
+            refs, skipped = self._drop_already_published(org_id, str(metadata.product_code), refs)
+            if not refs:
+                logger.info("queue_drive_folder_upload: every file (%d) of batch %s is already published for %s",
+                            len(skipped), batch_id, metadata.product_code)
+                return BatchQueued(batch_id=batch_id, children=[], skipped=skipped)
 
         children: list[BatchChild] = []
         first_error: Exception | None = None
@@ -348,6 +393,7 @@ class UploadService:
                     file_name=ref.file_name,
                     file_size_bytes=ref.file_size_bytes,
                     batch_id=batch_id,
+                    source_file_id=ref.drive_file_id,
                 )
             except UploadServiceError as exc:
                 # Insert failure: drop this ref's file (the worker would
@@ -408,7 +454,45 @@ class UploadService:
                 "Drive folder fanout produced no queued jobs (unreachable branch)"
             )
 
-        return BatchQueued(batch_id=batch_id, children=children)
+        return BatchQueued(batch_id=batch_id, children=children, skipped=skipped)
+
+    def _drop_already_published(
+        self, org_id: UUID, product_code: str, refs: list[gdrive_service.DriveFolderVideoRef],
+    ) -> tuple[list[gdrive_service.DriveFolderVideoRef], list[SkippedFile]]:
+        """Split ``refs`` into (to queue, skipped): a ref is skipped when an upload_jobs row of this org + product
+        code is PUBLISHED with the same ``source_file_id`` AND the same ``file_size_bytes``. The skipped file's
+        local copy is cleaned up (it will never be uploaded)."""
+        ids = sorted({r.drive_file_id for r in refs if r.drive_file_id})
+        unknown = sum(1 for r in refs if not r.drive_file_id)
+        if unknown:
+            logger.warning("queue_drive_folder_upload: %d file(s) have no Drive id -- they cannot be recognised as "
+                           "already published and are uploaded", unknown)
+        if not ids:
+            return refs, []
+        rows = (
+            self._user.schema(_SCHEMA).table(_TABLE)
+            .select("id,source_file_id,file_size_bytes,youtube_video_id,target_format,status")
+            .eq("org_id", str(org_id)).eq("product_code", product_code)
+            .in_("status", sorted(PUBLISHED_STATUSES)).in_("source_file_id", ids)
+            .execute().data or []
+        )
+        published: dict[tuple[str, int | None], dict[str, Any]] = {}
+        for row in rows:
+            size = row.get("file_size_bytes")
+            published.setdefault((str(row["source_file_id"]), int(size) if size is not None else None), row)
+        keep: list[gdrive_service.DriveFolderVideoRef] = []
+        skipped: list[SkippedFile] = []
+        for ref in refs:
+            hit = published.get((ref.drive_file_id, ref.file_size_bytes)) if ref.drive_file_id else None
+            if hit is None:
+                keep.append(ref)
+                continue
+            gdrive_service.cleanup(ref.local_path)
+            skipped.append(SkippedFile(
+                file_name=ref.file_name, drive_file_id=str(ref.drive_file_id), upload_job_id=str(hit["id"]),
+                youtube_video_id=hit.get("youtube_video_id"), target_format=hit.get("target_format"),
+            ))
+        return keep, skipped
 
     # ─── Run (background; uses service-role client) ────────────────────
     def run_upload_job(self, *, job_id: UUID) -> None:

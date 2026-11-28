@@ -11,11 +11,19 @@ usually seconds apart, one submission at a time. This module pairs them and hand
     is a no-op. Every relevant message bumps `versao` and pushes `due_at` (the debounce,
     `julia_youtube_upload_wait_seconds`) and enqueues `julia_videos_prontos.processar` with dedupe `vp:{id}:v{versao}`:
     only the job of the CURRENT version runs.
-  * processing (`processar`) -- incomplete -> `incompleto`; a (code, folder) pair already uploading / uploaded ->
-    refused; else `UploadService.queue_drive_folder_upload` (an empty folder -> `no_videos_found`), every child
-    `run_upload_job` in turn, outcome aggregated from `upload_jobs` -> `concluido` / `parcial` / `falhou`. The
-    orientation is the worker's `target_format` (never re-classified here). The FIRST published standard (16:9) video
-    fills the property's YouTube field (S1 contract `imovel_video_youtube_service`), Shorts never do.
+  * processing (`processar`) -- incomplete -> `incompleto`; else `UploadService.queue_drive_folder_upload` with
+    `skip_published_for_product=True` (an empty folder -> `no_videos_found`), every child `run_upload_job` in turn,
+    outcome aggregated from `upload_jobs` -> `concluido` / `parcial` / `falhou`. The orientation is the worker's
+    `target_format` (never re-classified here).
+  * remake replaces (owner 2026-11-28) -- a repeated code + folder is NOT refused: dedup is per FILE (the Drive file id
+    + size, `upload_jobs.source_file_id`), and lives in the YouTube module. A file already published for the property is
+    skipped (no YouTube duplicate); every file skipped -> `ja_publicado` (owner told "nada novo", nothing in the group).
+    A NEW file (a re-edit) is uploaded and, ONLY once it is published, the property's previous published video(s) of
+    the SAME kind are set private (`video_lifecycle.ProductVideoLifecycle.supersede_previous`; also the video the
+    property field points at when no upload_jobs row covers it, e.g. imported from Vista). A refusal is recorded +
+    evented (`video_pronto_substituido`, `resultado=recusado`), never raised. Then the FIRST published standard (16:9)
+    video moves the property's YouTube field (S1 `imovel_video_youtube_service.definir`: replace + history + gated
+    Vista write); Shorts never touch the field (but still supersede older Shorts).
   * retry (`retry`) -- ONE automatic retry `julia_youtube_retry_delay_seconds` after a `parcial` / `falhou`: only the
     FAILED children are retried (`retry_failed_job` + `run_upload_job`), published ones are never re-uploaded. A manual
     retry (`POST /api/julia/videos-prontos/{id}/retry`) takes the same path. No second automatic retry.
@@ -24,7 +32,8 @@ usually seconds apart, one submission at a time. This module pairs them and hand
     Every transition is a transition-log event (`julia_video_pronto_events`, migration 372) and a `julia_eventos` row.
 
 Every collaborator is a constructor seam (Fake in tests): the repository, the job queue, the upload service factory,
-the metadata resolver, the S1 property-field service, the owner notifier, the group sender and the event emitter.
+the metadata resolver, the S1 property-field service, the YouTube video-lifecycle factory, the owner notifier, the group
+sender and the event emitter.
 """
 from __future__ import annotations
 
@@ -40,8 +49,10 @@ from uuid import UUID
 
 from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
 
+from app.modules.youtube.services.upload import PUBLISHED_STATUSES
 from app.services import gdrive_service
 from app.services.identidade_mascara import ref as ref_log
+from app.services.imovel_video_youtube_service import ImovelVideoYoutube, build_imovel_video_youtube_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +69,16 @@ JOB_TYPES: tuple[str, ...] = (JOB_PROCESSAR, JOB_RETRY, JOB_EXECUTAR)
 
 AGUARDANDO, INCOMPLETO, PROCESSANDO = "aguardando", "incompleto", "processando"
 CONCLUIDO, PARCIAL, FALHOU, SEM_VIDEOS = "concluido", "parcial", "falhou", "no_videos_found"
-STATUS: frozenset[str] = frozenset({AGUARDANDO, INCOMPLETO, PROCESSANDO, CONCLUIDO, PARCIAL, FALHOU, SEM_VIDEOS})
+#: every file of the folder was already published for the property: nothing uploaded (owner 2026-11-28)
+JA_PUBLICADO = "ja_publicado"
+STATUS: frozenset[str] = frozenset({AGUARDANDO, INCOMPLETO, PROCESSANDO, CONCLUIDO, PARCIAL, FALHOU, SEM_VIDEOS,
+                                    JA_PUBLICADO})
 RETENTAVEIS: frozenset[str] = frozenset({PARCIAL, FALHOU})
 
 #: Closed failure reason codes (`motivo`); the human text is `ERROS[motivo]`.
 MOTIVO_FALTOU_CODIGO = "faltou_codigo"
 MOTIVO_FALTOU_LINK = "faltou_link"
-MOTIVO_DUPLICADO = "duplicado"
+MOTIVO_JA_PUBLICADO = "ja_publicado"
 MOTIVO_PASTA_VAZIA = "pasta_vazia"
 MOTIVO_PASTA_INACESSIVEL = "pasta_inacessivel"
 MOTIVO_IMOVEL_NAO_ENCONTRADO = "imovel_nao_encontrado"
@@ -75,7 +89,7 @@ MOTIVO_ERRO_INTERNO = "erro_interno"
 ERROS: dict[str, str] = {
     MOTIVO_FALTOU_CODIGO: "faltou o código do imóvel",
     MOTIVO_FALTOU_LINK: "faltou o link da pasta do Drive",
-    MOTIVO_DUPLICADO: "essa pasta já foi enviada ao YouTube para este imóvel",
+    MOTIVO_JA_PUBLICADO: "todos os arquivos da pasta já estão publicados no YouTube para este imóvel",
     MOTIVO_PASTA_VAZIA: "a pasta do Drive não tem vídeos (ou não está compartilhada com qualquer pessoa com o link)",
     MOTIVO_PASTA_INACESSIVEL: "não foi possível abrir a pasta do Drive (confira o compartilhamento)",
     MOTIVO_IMOVEL_NAO_ENCONTRADO: "o código não existe no cadastro de imóveis",
@@ -85,8 +99,8 @@ ERROS: dict[str, str] = {
     MOTIVO_ERRO_INTERNO: "erro interno ao processar",
 }
 
-#: `upload_jobs.status` values that mean the video is on YouTube.
-PUBLICADOS: frozenset[str] = frozenset({"published", "notified"})
+#: `upload_jobs.status` values that mean the video is on YouTube (the YouTube module's own set).
+PUBLICADOS: frozenset[str] = PUBLISHED_STATUSES
 #: The property-field rule: only a standard (16:9) upload fills it -- Shorts never do.
 FORMATO_PADRAO = "youtube"
 
@@ -147,7 +161,6 @@ class SubmissoesRepo(Protocol):
     def atualizar(self, submissao_id: Any, campos: dict) -> None: ...
     def transicionar(self, org_id: Any, submissao_id: Any, *, de: str, para: str, evento: str, dados: dict,
                      ator_id: Optional[str] = None) -> bool: ...
-    def par_em_uso(self, org_id: Any, codigo: str, drive_folder_id: str, *, exceto: Any) -> Optional[dict]: ...
     def jobs_do_lote(self, batch_id: Any) -> list[dict]: ...
     def listar(self, org_id: Any, limite: int) -> list[dict]: ...
 
@@ -156,16 +169,23 @@ class UploadPort(Protocol):
     """The slice of `UploadService` this intake drives (never re-implemented)."""
 
     def queue_drive_folder_upload(self, *, org_id: UUID, created_by: Optional[UUID], metadata: Any,
-                                  drive_folder_url: str) -> Any: ...
+                                  drive_folder_url: str, skip_published_for_product: bool = False) -> Any: ...
     def run_upload_job(self, *, job_id: UUID) -> None: ...
     def retry_failed_job(self, *, job_id: UUID, org_id: UUID) -> dict: ...
 
 
 class ImovelVideoPort(Protocol):
-    """S1's contract (`app.services.imovel_video_youtube_service`): set the property's YouTube video."""
+    """S1's contract (`app.services.imovel_video_youtube_service`): read / set the property's YouTube video."""
 
+    def obter(self, org_id: Any, codigo: str) -> Optional[ImovelVideoYoutube]: ...
     def definir(self, org_id: Any, codigo: str, *, youtube_video_id: str, origem: str, motivo: str,
                 upload_job_id: Any) -> Any: ...
+
+
+class CicloVideoPort(Protocol):
+    """The YouTube module's property-video lifecycle (`video_lifecycle.ProductVideoLifecycle`)."""
+
+    def supersede_previous(self, *, product_code: str, new_jobs: Any, extra_video_ids: Iterable[str] = ()) -> list[Any]: ...
 
 
 class JobsPort(Protocol):
@@ -231,6 +251,7 @@ class JuliaVideosProntosService:
         upload_factory: Callable[[], UploadPort],
         resolver_metadados: ResolverMetadados,
         imovel_video_factory: Callable[[], ImovelVideoPort],
+        ciclo_video_factory: Callable[[Any], CicloVideoPort],
         notificar: Notificar,
         enviar_grupo: EnviarGrupo,
         emitir: Emitir,
@@ -243,6 +264,7 @@ class JuliaVideosProntosService:
         self._upload_factory = upload_factory
         self._resolver = resolver_metadados
         self._imovel_video_factory = imovel_video_factory
+        self._ciclo_video_factory = ciclo_video_factory
         self._notificar = notificar
         self._enviar_grupo = enviar_grupo
         self._emitir = emitir
@@ -326,7 +348,7 @@ class JuliaVideosProntosService:
 
     async def _fechar(self, aberta: dict) -> None:
         """Close the open slot NOW (a different property / folder arrived from the same sender): it is claimed here
-        (incomplete -> `incompleto`, duplicate -> refused, else `processando`) and a claimed upload runs as a job --
+        (incomplete -> `incompleto`, else `processando`) and a claimed upload runs as a job --
         never inline on the webhook path. Its pending debounce jobs then find it no longer waiting (no-op)."""
         claimed = await self._reivindicar(aberta)
         if isinstance(claimed, dict):
@@ -361,8 +383,8 @@ class JuliaVideosProntosService:
         return await self._executar(row, tentativa=0)
 
     async def _reivindicar(self, row: dict) -> "dict | str":
-        """Leave `aguardando`: incomplete -> `incompleto`, an already-uploaded pair -> refused, else `processando`.
-        Returns the fresh claimed row, or the outcome label."""
+        """Leave `aguardando`: incomplete -> `incompleto`, else `processando` (a repeated code + folder is NOT refused:
+        dedup is per file, at upload time). Returns the fresh claimed row, or the outcome label."""
         org_id = row["org_id"]
         if not (row.get("codigo") and row.get("drive_folder_id")):
             motivo = MOTIVO_FALTOU_LINK if row.get("codigo") else MOTIVO_FALTOU_CODIGO
@@ -370,27 +392,13 @@ class JuliaVideosProntosService:
                                           dados={"motivo": motivo}):
                 return "obsoleto"
             return await self._encerrar({**row, "status": INCOMPLETO}, INCOMPLETO, motivo=motivo)
-        if self.repo.par_em_uso(org_id, row["codigo"], row["drive_folder_id"], exceto=row["id"]) is not None:
-            return await self._recusar_duplicado(row)
-        try:
-            claimed = self.repo.transicionar(org_id, row["id"], de=AGUARDANDO, para=PROCESSANDO, evento="upload_iniciado",
-                                             dados={"codigo": row["codigo"]})
-        except Exception:
-            # the duplicate-pair UNIQUE index is the race backstop: a pair claimed in between refuses this claim
-            if self.repo.par_em_uso(org_id, row["codigo"], row["drive_folder_id"], exceto=row["id"]) is not None:
-                return await self._recusar_duplicado(row)
-            raise
+        claimed = self.repo.transicionar(org_id, row["id"], de=AGUARDANDO, para=PROCESSANDO, evento="upload_iniciado",
+                                         dados={"codigo": row["codigo"]})
         if not claimed:
             return "obsoleto"
         atual = self.repo.obter(row["id"]) or {**row, "status": PROCESSANDO}
         self._evento(org_id, "video_pronto_upload_iniciado", atual, tentativa=0)
         return atual
-
-    async def _recusar_duplicado(self, row: dict) -> str:
-        if not self.repo.transicionar(row["org_id"], row["id"], de=AGUARDANDO, para=FALHOU, evento="duplicado_recusado",
-                                      dados={"codigo": row.get("codigo")}):
-            return "obsoleto"
-        return await self._encerrar({**row, "status": FALHOU}, FALHOU, motivo=MOTIVO_DUPLICADO)
 
     async def _executar(self, row: dict, *, tentativa: int) -> str:
         """Fan the folder out (or retry its failed children) and close the submission. Never leaves it `processando`."""
@@ -410,7 +418,7 @@ class JuliaVideosProntosService:
         org_id = row["org_id"]
         config = self.repo.config_da_org(org_id) or {}
         try:
-            metadata = await asyncio.to_thread(self._resolver, org_id, row["codigo"], config.get("privacy_status") or "private")
+            metadata = await asyncio.to_thread(self._resolver, org_id, row["codigo"], config.get("privacy_status") or "public")
         except PropertyNotFound:
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_IMOVEL_NAO_ENCONTRADO, tentativa=tentativa)
         except UploadMetadataError as exc:
@@ -424,18 +432,22 @@ class JuliaVideosProntosService:
         try:
             lote = await asyncio.to_thread(
                 upload.queue_drive_folder_upload, org_id=UUID(str(org_id)), created_by=None, metadata=metadata,
-                drive_folder_url=row["drive_folder_url"],
+                drive_folder_url=row["drive_folder_url"], skip_published_for_product=True,
             )
         except UploadServiceError as exc:
             if any(isinstance(c, gdrive_service.DriveFolderEmpty) for c in _causas(exc)):
                 return await self._finalizar(row, SEM_VIDEOS, motivo=MOTIVO_PASTA_VAZIA, tentativa=tentativa)
             logger.warning("videos prontos: Drive folder fan-out failed submissao=%s (%s)", row["id"], type(exc).__name__)
             return await self._finalizar(row, FALHOU, motivo=MOTIVO_PASTA_INACESSIVEL, tentativa=tentativa)
+        ignorados = list(getattr(lote, "skipped", None) or [])
+        if not lote.children:  # every file of the folder is already published for the property: nothing new
+            return await self._finalizar(row, JA_PUBLICADO, motivo=MOTIVO_JA_PUBLICADO, tentativa=tentativa,
+                                         ignorados=ignorados)
         self.repo.atualizar(row["id"], {"batch_id": str(lote.batch_id)})
         row = {**row, "batch_id": str(lote.batch_id)}
         for filho in lote.children:  # one at a time: the upload queue's own budget is shared with every entry point
             await asyncio.to_thread(upload.run_upload_job, job_id=filho.job_id)
-        return await self._concluir(row, tentativa=tentativa)
+        return await self._concluir(row, tentativa=tentativa, ignorados=ignorados)
 
     async def _retentar_filhos(self, row: dict, *, tentativa: int) -> str:
         try:
@@ -452,11 +464,51 @@ class JuliaVideosProntosService:
             await asyncio.to_thread(upload.run_upload_job, job_id=job_id)
         return await self._concluir(row, tentativa=tentativa)
 
-    async def _concluir(self, row: dict, *, tentativa: int) -> str:
+    async def _concluir(self, row: dict, *, tentativa: int, ignorados: Optional[list] = None) -> str:
         resultado = agregar(self.repo.jobs_do_lote(row["batch_id"]))
         motivo = None if resultado.status == CONCLUIDO else MOTIVO_UPLOAD_FALHOU
+        # supersede BEFORE the field moves (the field's current video is one of the candidates) and only for what is
+        # PUBLISHED now: a failed new upload never privates the old one
+        substituidos = await self._substituir_anteriores(row, resultado)
         await self._definir_campo_imovel(row, resultado)
-        return await self._finalizar(row, resultado.status, motivo=motivo, tentativa=tentativa, resultado=resultado)
+        return await self._finalizar(row, resultado.status, motivo=motivo, tentativa=tentativa, resultado=resultado,
+                                     ignorados=ignorados, substituidos=substituidos)
+
+    async def _substituir_anteriores(self, row: dict, resultado: Resultado) -> list:
+        """Remake replaces: the property's previous published video(s) of each kind just published are set private
+        (the YouTube module's `supersede_previous`). Each one is recorded (`video_pronto_substituido`); a refusal is a
+        recorded result, never raised; a crash of the whole step is loud (`acao_falhou`) and never fails the upload."""
+        if not resultado.publicados:
+            return []
+        org_id, codigo = row["org_id"], row["codigo"]
+        novos = {j["youtube_video_id"] for j in resultado.publicados}
+        extra: list[str] = []
+        if any(j.get("target_format") == FORMATO_PADRAO for j in resultado.publicados):
+            try:
+                atual = await asyncio.to_thread(self._imovel_video_factory().obter, org_id, codigo)
+            except Exception as exc:  # the field could not be read: its video (if not ours) is not superseded
+                logger.error("videos prontos: property YouTube field NOT read submissao=%s codigo=%s (%s)",
+                             row["id"], codigo, type(exc).__name__)
+                self._emitir(org_id, "acao_falhou", {"acao": "video_pronto_ler_campo_imovel", "submissao_id": str(row["id"]),
+                                                     "codigo": codigo})
+                atual = None
+            if atual is not None and atual.youtube_video_id not in novos:
+                extra.append(atual.youtube_video_id)
+        try:
+            ciclo = self._ciclo_video_factory(org_id)
+            saida = await asyncio.to_thread(ciclo.supersede_previous, product_code=codigo,
+                                            new_jobs=resultado.publicados, extra_video_ids=extra)
+        except Exception as exc:
+            logger.error("videos prontos: previous videos NOT superseded submissao=%s codigo=%s (%s)",
+                         row["id"], codigo, type(exc).__name__)
+            self._emitir(org_id, "acao_falhou", {"acao": "video_pronto_substituir", "submissao_id": str(row["id"]),
+                                                 "codigo": codigo})
+            return []
+        for s in saida:
+            self._evento(org_id, "video_pronto_substituido", row, youtube_video_id=s.youtube_video_id,
+                         upload_job_id=s.upload_job_id, target_format=s.target_format, resultado=s.result,
+                         erro=s.error, origem=s.source)
+        return list(saida)
 
     async def _definir_campo_imovel(self, row: dict, resultado: Resultado) -> None:
         """S1: the FIRST published standard video becomes the property's YouTube video, once. Shorts-only: untouched."""
@@ -483,29 +535,39 @@ class JuliaVideosProntosService:
         row["video_imovel_youtube_id"] = padrao["youtube_video_id"]
 
     async def _finalizar(self, row: dict, para: str, *, motivo: Optional[str], tentativa: int,
-                         resultado: Optional[Resultado] = None, detalhe: Optional[str] = None) -> str:
-        if not self.repo.transicionar(row["org_id"], row["id"], de=PROCESSANDO, para=para, evento=para,
-                                      dados={"motivo": motivo, "tentativa": tentativa}):
+                         resultado: Optional[Resultado] = None, detalhe: Optional[str] = None,
+                         ignorados: Optional[list] = None, substituidos: Optional[list] = None) -> str:
+        dados = {"motivo": motivo, "tentativa": tentativa}
+        if ignorados:
+            dados["ignorados"] = len(ignorados)
+        if substituidos:
+            dados["substituidos"] = sum(1 for s in substituidos if s.ok)
+            dados["substituicao_recusada"] = sum(1 for s in substituidos if not s.ok)
+        if not self.repo.transicionar(row["org_id"], row["id"], de=PROCESSANDO, para=para, evento=para, dados=dados):
             logger.error("videos prontos: could not close submissao=%s as %s (state moved)", row["id"], para)
             return "obsoleto"
         return await self._encerrar({**row, "status": para}, para, motivo=motivo, tentativa=tentativa,
-                                    resultado=resultado, detalhe=detalhe)
+                                    resultado=resultado, detalhe=detalhe, ignorados=ignorados, substituidos=substituidos)
 
     async def _encerrar(self, row: dict, para: str, *, motivo: Optional[str], tentativa: int = 0,
-                        resultado: Optional[Resultado] = None, detalhe: Optional[str] = None) -> str:
+                        resultado: Optional[Resultado] = None, detalhe: Optional[str] = None,
+                        ignorados: Optional[list] = None, substituidos: Optional[list] = None) -> str:
         """After the transition: record the reason, emit, notify the owner, maybe the group, maybe arm the retry."""
         erro = ERROS.get(motivo) if motivo else None
         if detalhe and erro:
             erro = f"{erro} ({detalhe})"
         self.repo.atualizar(row["id"], {"motivo": motivo, "erro": erro})
-        vai_retentar = para in RETENTAVEIS and motivo != MOTIVO_DUPLICADO and int(row.get("tentativas_retry") or 0) == 0
+        vai_retentar = para in RETENTAVEIS and int(row.get("tentativas_retry") or 0) == 0
         tipo = {CONCLUIDO: "video_pronto_concluido", PARCIAL: "video_pronto_parcial", FALHOU: "video_pronto_falhou",
-                SEM_VIDEOS: "video_pronto_sem_videos", INCOMPLETO: "video_pronto_incompleto"}[para]
+                SEM_VIDEOS: "video_pronto_sem_videos", INCOMPLETO: "video_pronto_incompleto",
+                JA_PUBLICADO: "video_pronto_ja_publicado"}[para]
         self._evento(row["org_id"], tipo, row, motivo=motivo, tentativa=tentativa,
                      publicados=len(resultado.publicados) if resultado else 0,
-                     falhas=len(resultado.falhos) if resultado else 0)
+                     falhas=len(resultado.falhos) if resultado else 0,
+                     ignorados=len(ignorados) if ignorados else None,
+                     substituidos=sum(1 for s in substituidos if s.ok) if substituidos else None)
         await self._avisar_dono(row, para, motivo=motivo, erro=erro, resultado=resultado, tentativa=tentativa,
-                                vai_retentar=vai_retentar)
+                                vai_retentar=vai_retentar, ignorados=ignorados or [], substituidos=substituidos or [])
         texto_grupo = self._texto_grupo(row, para, motivo=motivo, resultado=resultado, vai_retentar=vai_retentar)
         if texto_grupo:
             await self._postar_grupo(row, texto_grupo)
@@ -524,7 +586,7 @@ class JuliaVideosProntosService:
 
     async def retry(self, submissao_id: Any, tentativa: int, ator_id: Optional[str] = None) -> str:
         row = self.repo.obter(submissao_id)
-        if (row is None or row.get("status") not in RETENTAVEIS or row.get("motivo") == MOTIVO_DUPLICADO
+        if (row is None or row.get("status") not in RETENTAVEIS
                 or int(row.get("tentativas_retry") or 0) >= int(tentativa)):
             return "obsoleto"
         if not self.repo.transicionar(row["org_id"], row["id"], de=row["status"], para=PROCESSANDO, evento="retry_iniciado",
@@ -542,8 +604,6 @@ class JuliaVideosProntosService:
             raise SubmissaoNaoEncontrada(submissao_id)
         if row.get("status") not in RETENTAVEIS:
             raise RetryRecusado("status_nao_retentavel", row.get("status"))
-        if row.get("motivo") == MOTIVO_DUPLICADO:
-            raise RetryRecusado("duplicado", row.get("status"))
         tentativa = int(row.get("tentativas_retry") or 0) + 1
         await self.agendar_retry(row, tentativa=tentativa, atraso_s=0, ator_id=ator_id)
         return {"submissao_id": str(row["id"]), "tentativa": tentativa, "agendado": True}
@@ -555,12 +615,13 @@ class JuliaVideosProntosService:
         self._emitir(org_id, tipo, payload)
 
     async def _avisar_dono(self, row: dict, para: str, *, motivo: Optional[str], erro: Optional[str],
-                           resultado: Optional[Resultado], tentativa: int, vai_retentar: bool) -> None:
+                           resultado: Optional[Resultado], tentativa: int, vai_retentar: bool,
+                           ignorados: list, substituidos: list) -> None:
         codigo = row.get("codigo") or "(sem código)"
         apos = " (após nova tentativa)" if tentativa else ""
-        links = [f"• {_url_video(j['youtube_video_id'], j.get('target_format'))}"
-                 f" ({'Shorts' if j.get('target_format') == 'shorts' else 'vídeo'})"
+        links = [f"• {_url_video(j['youtube_video_id'], j.get('target_format'))} ({_rotulo(j.get('target_format'))})"
                  for j in (resultado.publicados if resultado else [])]
+        extras = _linhas_refacao(ignorados, substituidos)
         if vai_retentar:
             proximo = f"Vou tentar de novo sozinha em {int(self.retry_delay_seconds // 60) or 1} min."
         else:
@@ -568,17 +629,22 @@ class JuliaVideosProntosService:
             proximo = f"Para tentar de novo os que falharam: POST /api/julia/videos-prontos/{row.get('id')}/retry."
         if para == CONCLUIDO:
             kind, assunto = "video_pronto_concluido", f"Vídeos do {codigo} publicados no YouTube"
-            linhas = [f"✅ Vídeos do imóvel {codigo} publicados no YouTube{apos}:", *links]
+            linhas = [f"✅ Vídeos do imóvel {codigo} publicados no YouTube{apos}:", *links, *extras]
         elif para == PARCIAL:
             n = len(resultado.publicados) + len(resultado.falhos) if resultado else 0
             kind, assunto = "video_pronto_parcial", f"Vídeos do {codigo}: parte falhou"
             linhas = [f"⚠️ Imóvel {codigo}: {len(resultado.publicados) if resultado else 0} de {n} vídeos publicados{apos}; "
-                      f"{len(resultado.falhos) if resultado else 0} falharam.", *links, proximo]
+                      f"{len(resultado.falhos) if resultado else 0} falharam.", *links, *extras, proximo]
         elif para == FALHOU:
             kind, assunto = "video_pronto_falhou", f"Vídeos do {codigo}: envio falhou"
-            linhas = [f"❌ Imóvel {codigo}: nenhum vídeo foi publicado{apos}. Motivo: {erro or ERROS[MOTIVO_UPLOAD_FALHOU]}."]
-            if motivo != MOTIVO_DUPLICADO:
-                linhas.append(proximo)
+            linhas = [f"❌ Imóvel {codigo}: nenhum vídeo foi publicado{apos}. Motivo: {erro or ERROS[MOTIVO_UPLOAD_FALHOU]}.",
+                      *extras, proximo]
+        elif para == JA_PUBLICADO:
+            kind, assunto = "video_pronto_ja_publicado", f"Vídeos do {codigo}: já publicados, nada novo"
+            ja = [f"• {_url_video(i.youtube_video_id, i.target_format)} ({_rotulo(i.target_format)})"
+                  for i in ignorados if i.youtube_video_id]
+            linhas = [f"ℹ️ Imóvel {codigo}: os vídeos dessa pasta já estão publicados no YouTube, nada novo foi enviado.",
+                      *ja]
         elif para == SEM_VIDEOS:
             kind, assunto = "video_pronto_sem_videos", f"Vídeos do {codigo}: pasta sem vídeos"
             linhas = [f"📂 Imóvel {codigo}: {ERROS[MOTIVO_PASTA_VAZIA]}. Nada foi enviado ao YouTube.",
@@ -608,8 +674,6 @@ class JuliaVideosProntosService:
                     "compartilhada com qualquer pessoa com o link.")
         if motivo == MOTIVO_PASTA_INACESSIVEL:
             return f"Não consegui abrir a pasta do {codigo}. Confira se ela está compartilhada com qualquer pessoa com o link."
-        if motivo == MOTIVO_DUPLICADO:
-            return f"Os vídeos do {codigo} dessa pasta já foram enviados ao YouTube, não vou subir de novo."
         if motivo == MOTIVO_IMOVEL_NAO_ENCONTRADO:
             return f"Não encontrei o imóvel {codigo} no cadastro. Confira o código e mande de novo com o link."
         if para in RETENTAVEIS and not vai_retentar:
@@ -631,6 +695,27 @@ class JuliaVideosProntosService:
 
     def listar(self, org_id: Any, limite: int = 50) -> list[dict]:
         return self.repo.listar(org_id, max(1, min(int(limite), 200)))
+
+
+def _rotulo(target_format: Optional[str]) -> str:
+    return "Shorts" if target_format == "shorts" else "vídeo"
+
+
+def _linhas_refacao(ignorados: list, substituidos: list) -> list[str]:
+    """The remake part of the owner notice: the old videos set private (or that could not be), the identical files
+    not sent again."""
+    linhas: list[str] = []
+    privados = [s for s in substituidos if s.ok]
+    recusados = [s for s in substituidos if not s.ok]
+    if privados:
+        linhas.append("Vídeos antigos do imóvel que ficaram privados (substituídos):")
+        linhas += [f"• {_url_video(s.youtube_video_id, s.target_format)} ({_rotulo(s.target_format)})" for s in privados]
+    if recusados:
+        linhas.append("Não consegui deixar privados (confira no YouTube):")
+        linhas += [f"• {_url_video(s.youtube_video_id, s.target_format)} ({_rotulo(s.target_format)})" for s in recusados]
+    if ignorados:
+        linhas.append(f"{len(ignorados)} arquivo(s) da pasta já estavam publicados e não foram enviados de novo.")
+    return linhas
 
 
 class SubmissaoNaoEncontrada(LookupError):
@@ -714,11 +799,6 @@ class SupabaseSubmissoesRepo:
             logger.error("videos prontos: transition %s->%s refused (%s) submissao=%s", de, para, outcome.code, submissao_id)
         return False
 
-    def par_em_uso(self, org_id: Any, codigo: str, drive_folder_id: str, *, exceto: Any) -> Optional[dict]:
-        return self._um(self.db.table(T_SUBMISSOES).select("id,status").eq("org_id", str(org_id)).eq("codigo", codigo)
-                        .eq("drive_folder_id", drive_folder_id).in_("status", [PROCESSANDO, CONCLUIDO, PARCIAL])
-                        .neq("id", str(exceto)))
-
     def jobs_do_lote(self, batch_id: Any) -> list[dict]:
         res = (self.db.table(T_UPLOAD_JOBS).select("id,status,youtube_video_id,target_format,file_name,created_at")
                .eq("batch_id", str(batch_id)).order("created_at").execute())
@@ -771,9 +851,13 @@ def _resolver_metadados(org_id: Any, codigo: str, privacy_status: str) -> Any:
 
 
 def _imovel_video_service() -> ImovelVideoPort:
-    from app.services.imovel_video_youtube_service import build_imovel_video_youtube_service  # S1 (lands first)
-
     return build_imovel_video_youtube_service(_scoped())
+
+
+def _ciclo_video(org_id: Any) -> CicloVideoPort:
+    from app.modules.youtube.services.video_lifecycle import build_product_video_lifecycle
+
+    return build_product_video_lifecycle(org_id)
 
 
 async def _notificar_dono(org_id: Any, kind: str, assunto: str, texto: str) -> Any:
@@ -844,6 +928,7 @@ def build_service(*, jobs: Optional[JobsPort] = None, repo: Optional[SubmissoesR
         upload_factory=build_upload_service,
         resolver_metadados=_resolver_metadados,
         imovel_video_factory=_imovel_video_service,
+        ciclo_video_factory=_ciclo_video,
         notificar=_notificar_dono,
         enviar_grupo=enviar_no_grupo,
         emitir=_emitir_padrao,
@@ -920,7 +1005,7 @@ def handlers(service_factory: Callable[[], JuliaVideosProntosService] = build_se
 
 
 __all__ = [
-    "CONCLUIDO", "ERROS", "Extracao", "FALHOU", "INCOMPLETO", "JOB_EXECUTAR", "JOB_PROCESSAR", "JOB_RETRY", "JOB_TYPES",
+    "CONCLUIDO", "ERROS", "Extracao", "FALHOU", "INCOMPLETO", "JA_PUBLICADO", "JOB_EXECUTAR", "JOB_PROCESSAR", "JOB_RETRY", "JOB_TYPES",
     "JuliaVideosProntosService", "PARCIAL", "PROCESSANDO", "RetryRecusado", "SEM_VIDEOS", "SubmissaoNaoEncontrada",
     "SupabaseSubmissoesRepo", "agregar", "build_service", "build_upload_service", "enviar_no_grupo", "extrair",
     "handlers", "ingerir_do_webhook", "limpar_cache_config", "transition_log_config",

@@ -23,7 +23,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -742,12 +742,42 @@ class DriveFolderVideoRef:
             the root. Used purely for human-readable batch display
             (``"Episode 3/clip.mp4"`` vs ``"clip.mp4"``); not a
             functional key.
+        drive_file_id: the Drive id of THIS file (from gdown's folder
+            listing) -- the file's identity across re-posts of the same
+            folder (``upload_jobs.source_file_id``). ``None`` when the
+            listing could not be read (logged at WARNING by
+            :func:`iter_drive_folder_videos`); such a file can never be
+            recognised as already published.
     """
 
     local_path: Path
     file_name: str
     file_size_bytes: int
     parent_subfolder: str | None
+    drive_file_id: str | None = None
+
+
+def _list_folder_file_ids(gdown: Any, *, folder_id: str, output: str) -> dict[str, str]:
+    """``{normalised local path: Drive file id}`` for every file of the folder, from gdown's listing
+    (``skip_download=True``: the same walk ``download_folder`` downloads from, nothing fetched). gdown's download
+    returns paths only, so this is the one place a downloaded file is tied back to its Drive id.
+
+    Never raises: an unreadable listing (older gdown, a Drive hiccup) is logged at WARNING and yields ``{}`` --
+    the files are still uploaded, they simply cannot be recognised as already published."""
+    try:
+        listed = gdown.download_folder(id=folder_id, output=output, quiet=True, skip_download=True)
+    except Exception as exc:  # the download right after surfaces a real access problem; ids are best-effort
+        logger.warning("iter_drive_folder_videos: Drive listing (file ids) unavailable for folder_id=%s (%s)",
+                       folder_id, type(exc).__name__)
+        return {}
+    ids: dict[str, str] = {}
+    for item in listed or []:
+        file_id, local_path = getattr(item, "id", None), getattr(item, "local_path", None)
+        if file_id and local_path:
+            ids[os.path.normpath(str(local_path))] = str(file_id)
+    if listed and not ids:
+        logger.warning("iter_drive_folder_videos: Drive listing for folder_id=%s carried no file ids", folder_id)
+    return ids
 
 
 def iter_drive_folder_videos(
@@ -795,6 +825,7 @@ def iter_drive_folder_videos(
             "gdown isn't installed. `pip install gdown` and retry."
         ) from exc
 
+    file_ids = _list_folder_file_ids(gdown, folder_id=folder_id, output=str(target_dir))
     try:
         downloaded_paths = gdown.download_folder(
             id=folder_id,
@@ -873,6 +904,7 @@ def iter_drive_folder_videos(
                 file_name=path.name,
                 file_size_bytes=size,
                 parent_subfolder=parent_subfolder,
+                drive_file_id=file_ids.get(os.path.normpath(path_str)),
             )
         )
 

@@ -105,8 +105,30 @@ Outcomes `concluido` / `parcial` / `falhou` / `no_videos_found` / `incompleto` (
 `JULIA_YOUTUBE_RETRY_DELAY_SECONDS` (120 s); manual retry `POST /api/julia/videos-prontos/{id}/retry`, list
 `GET /api/julia/videos-prontos`. The first published 16:9 video fills the property's YouTube field; Shorts never do.
 The owner is notified of every outcome (`video_pronto_*` kinds); the group hears only about problems, never a
-success. A (code, folder) pair already uploading / uploaded is refused. Off until an org has an `ativo` row in
-`julia_videos_prontos_config` (connection + group chat + privacy).
+success. Uploads are `public` by default (`julia_videos_prontos_config.privacy_status`).
+
+**Remake replaces; identical file skipped; dedup per FILE** (owner 2026-11-28). A repeated code + folder is never
+refused. Each video of a Drive-folder fan-out records its Drive file id (`upload_jobs.source_file_id`); with
+`skip_published_for_product=True` (the YouTube module's opt-in, used by this flow) a file whose Drive id AND size are
+already PUBLISHED for the org + property code is not uploaded again. Every file already published -> the submission
+ends `ja_publicado` (owner told "já publicado, nada novo", nothing in the group). A NEW file (a re-edit) is uploaded
+and, only once it is published, the property's previous published video(s) of the SAME kind (standard <-> standard,
+Shorts <-> Shorts) are set **private** on YouTube (`app/modules/youtube/services/video_lifecycle.py`, the same
+`update_video_metadata` call as the chat command `privacidade` + the catalog mirror); the video the property field
+points at is also tried when no upload_jobs row covers it (e.g. imported from Vista) -- a YouTube refusal is
+recorded (`video_pronto_substituido`, `resultado=recusado`) and listed to the owner, never raised. Then the field moves
+to the new first standard video (S1 `definir`: replace + history + gated Vista write); a Shorts-only remake leaves the
+field alone. A failed new upload never privates the old one. The owner's success notice lists the new URLs and the old
+videos set private.
+
+Off until an org has an `ativo` row in `julia_videos_prontos_config`:
+
+```sql
+INSERT INTO social_wiring.julia_videos_prontos_config (org_id, connection_id, chat_id, privacy_status, ativo)
+VALUES ('<org uuid>', '<whatsapp_connections.id of the org line>', '<group jid>@g.us', 'public', true)
+ON CONFLICT (org_id) DO UPDATE SET connection_id = EXCLUDED.connection_id, chat_id = EXCLUDED.chat_id,
+    privacy_status = EXCLUDED.privacy_status, ativo = EXCLUDED.ativo, updated_at = now();
+```
 
 ## Vista imóveis mirror (refresh, schedule, divergences)
 
