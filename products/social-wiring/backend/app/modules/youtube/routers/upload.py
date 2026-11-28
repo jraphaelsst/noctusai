@@ -36,6 +36,8 @@ from fastapi import (
 )
 from pydantic import ValidationError
 
+from noctusai_lib.api.integration_errors import integration_error
+
 from app.config import SocialWiringSettings
 from app.dependencies import (
     coerce_org_uuid,
@@ -216,16 +218,16 @@ async def _resolve_metadata_from_product_code(
         return resolve_metadata_from_product_code(
             get_admin_client(), product_code=product_code, privacy_status=privacy_status, org_id=org_id,
         )
-    except InvalidProductCode as exc:
+    # The 422/404 texts echo only the caller's OWN request value (`product_code`), never an exception attribute.
+    except InvalidProductCode:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail=f"invalid product_code format: {exc.code!r}") from exc
-    except PropertyNotFound as exc:
+                            detail=f"invalid product_code format: {product_code!r}") from None
+    except PropertyNotFound:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"no property found for product_code={exc.code} in local catalog") from exc
+                            detail=f"no property found for product_code={product_code} in local catalog") from None
     except MetadataLookupFailed as exc:
-        # the cause (DB / transport text) is logged here, never echoed to the client
-        logger.error("upload: local imoveis lookup failed for product_code=%s (%s)", product_code, exc)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="local imoveis lookup failed") from exc
+        # the cause (DB / transport) is logged server-side by integration_error (class name only), never echoed
+        raise integration_error("upstream_error", exc=exc, op="upload_metadata_lookup") from exc
 
 
 def _user_id(user) -> UUID | None:
