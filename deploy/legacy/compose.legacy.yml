@@ -86,7 +86,7 @@ services:
 
   legacy-redis:
     # Same digest-pinned 7.4.6 the fleet's ACL Redis uses.
-    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    image: redis:8.12.0-alpine@sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
     container_name: legacy-permutas-redis
     env_file:
       - path: ./redis-auth/legacy.env   # LEGACY_REDIS_PASSWORD, derived
