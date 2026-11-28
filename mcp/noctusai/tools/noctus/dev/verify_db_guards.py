@@ -14488,6 +14488,25 @@ _SW_372_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+
+_SW_373_MIGRATION = "373_cs_direcao_producao.sql"
+_SW_373_INSERT = (
+    f"    INSERT INTO {_SW362}.cs_post_eventos (org_id, post_id, tipo, dados) "
+    "VALUES (v_org, v_post, 'direcao_solicitada', '{\"chave\": \"noc-probe\"}'::jsonb);"
+)
+
+_SW_373_PROBES: tuple[GuardProbe, ...] = (
+    _sw362_probe(
+        probe_id="sw373_direcao_solicitada_uma_por_chave", guard_name="cs_post_eventos_direcao_solicitada_uq",
+        migration=_SW_373_MIGRATION, statements=_SW_373_INSERT + "\n" + _SW_373_INSERT,
+        permitted_msg="the same approval pair was requested for production twice",
+        rationale=(
+            "The approval -> production trigger is idempotent by a database fact: one direcao_solicitada per (post, chave), "
+            "so a double click or a retry can never queue two runs."
+        ),
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -14626,6 +14645,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_358_PROBES,
     *_SW_361_PROBES,
     *_SW_362_PROBES,
+    *_SW_373_PROBES,
     *_SW_367_PROBES,
     *_SW_370_PROBES,
     *_SW_371_PROBES,

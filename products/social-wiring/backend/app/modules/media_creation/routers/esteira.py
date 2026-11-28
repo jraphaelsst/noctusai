@@ -38,6 +38,7 @@ from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.modules.card_hub.deps import get_storage_backend
+from app.modules.media_creation.direcao.gatilho import acionar_apos_aprovacao
 from app.modules.media_creation.esteira_config import CS_POST_HUB, ESTEIRA_PADRAO, PIPELINE_ESTEIRA
 from app.modules.media_creation.schemas.esteira import (
     CAMPOS_NAO_EDITAVEIS,
@@ -294,13 +295,14 @@ def aprovar_headline(
     post_id: str, auth=Depends(get_current_user_org), db=Depends(get_esteira_db),
     approvals: ApprovalService = Depends(get_headline_approvals),
 ):
-    """Approve the post's headline (any org member). With both approvals standing, ``/criacao/iniciar`` moves the card."""
+    """Approve the post's headline (any org member). With both approvals standing, ``/criacao/iniciar`` moves the card
+    (and a route with ``gatilho_automatico`` starts by itself: ``direcao.gatilho``, switch off by default)."""
     try:
-        return success_response(
-            hl_aprov.aprovar_headline(
-                db, _org(auth), _headline_do_post(db, auth, post_id), actor_id=str(auth[0].id), approvals=approvals
-            )
+        estado = hl_aprov.aprovar_headline(
+            db, _org(auth), _headline_do_post(db, auth, post_id), actor_id=str(auth[0].id), approvals=approvals
         )
+        anyio.from_thread.run(lambda: acionar_apos_aprovacao(db, _org(auth), post_id=post_id, ator_id=str(auth[0].id)))
+        return success_response(estado)
     except EsteiraError as exc:
         _raise(exc)
     except hl_aprov.AprovacaoHeadlineError as exc:
@@ -359,6 +361,8 @@ def decidir_aprovacao(
                     approvals.reject(_org(auth), "roteiro", str(row["roteiro_id"]), versao, actor_id=user, motivo=body.motivo)
             except ApprovalError as exc:
                 raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "detail": exc.message}) from exc  # detail-safe: ApprovalError code/message are fixed pt-BR refusals from the seed approvals organ, never exception text
+        if body.aprovada and body.alvo in ("headline", "roteiro"):  # the decision is durable: may complete the pair
+            anyio.from_thread.run(lambda: acionar_apos_aprovacao(db, _org(auth), post_id=post_id, ator_id=user))
         return success_response(_svc(auth, db).detalhe(post_id))
     except EsteiraError as exc:
         _raise(exc)

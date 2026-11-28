@@ -22,6 +22,7 @@ from noctusai_lib.primitives.responses import success_response
 from app.config import settings
 from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.deps import get_cerebro_storage
+from app.modules.media_creation.direcao.gatilho import acionar_apos_aprovacao
 from app.modules.media_creation.schemas.roteiros import (
     AprovarRoteiroRequest,
     ExcluirRequest,
@@ -166,7 +167,10 @@ async def aprovar_roteiro(
 ):
     """Approve the versao the member saw. Any org member. 409 ``versao_obsoleta`` / ``ja_decidido`` / ``roteiro_incompleto``."""
     try:
-        return success_response(await _svc(auth, cfg, approvals=approvals).aprovar(str(roteiro_id), body.versao))
+        estado = await _svc(auth, cfg, approvals=approvals).aprovar(str(roteiro_id), body.versao)
+        # the decision is durable: it may complete the headline+roteiro pair of a route with ``gatilho_automatico`` (never raises)
+        await acionar_apos_aprovacao(get_admin_client(), str(auth[2]), roteiro_id=str(roteiro_id), ator_id=str(auth[0].id))
+        return success_response(estado)
     except RoteiroError as exc:
         _raise(exc)
 

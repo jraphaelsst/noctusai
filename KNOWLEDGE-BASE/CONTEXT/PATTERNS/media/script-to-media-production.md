@@ -65,7 +65,8 @@ First implementation: the round's `lote.py` (ledger `producao/medicoes.ndjson`, 
 ## 7 · Open (named destinations)
 
 - Voice-ID ↔ consent-reference audit log in the connector → `KB § MCP-SERVERS/elevenlabs.md` open items.
-- A seed IO adapter (Protocol + Fake + Real + factory) for TTS when CoreStudio consumes it → same doc.
+- ~~A seed IO adapter for TTS~~ DONE: seed `integrations/tts` (Protocol + Fake + ElevenLabs Real + factory, consent-gated) and `integrations/motion_render` (retime by word id + `papel-explainer` render) are what the CoreStudio route `reel_narrado` runs.
+- **Approval → production trigger + the Diretor's stage graph (structure built, 2026-11-27, Fakes only):** approving BOTH headline and roteiro of a post on route `reel_dirigido` queues ONE idempotent run (event `direcao_solicitada`, DB-enforced key per approval pair + roteiro versao; switch off by default); the run is seven ledger stages (`recepcao → estilo → plano → midia → montagem → checagens → pacote`) with four seams (style resolver, scene planner, media generator, assembler) whose Real implementations are open owner decisions (storytelling approach, generator, render). Anchors stay word ids; the validators refuse new on-screen text and unmeasured checks. Code `products/social-wiring/backend/app/modules/media_creation/direcao/`; the route is not runnable until activated.
 - The production scripts (`produzir.py`, `pecas.py`, `ilustracoes.py`) live in the client's private study folder; turning them into the CoreStudio render worker is the agent's build step, after the owner validates this round.
 - Validate the PVC swap (same two commands, new voice id) → trial `narrated-reel-pipeline-ivc` follow-up.
 

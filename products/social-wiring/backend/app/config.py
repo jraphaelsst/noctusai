@@ -409,6 +409,10 @@ class SocialWiringSettings(ProductSettings):
     # Per-org strangler (criacao-pipeline-contract 4/8): the chat answered by the agents product's Diretor de Criacao
     # instead of the legacy direct-model stream. Default OFF; org_settings/platform_settings/env override it.
     chat_diretor_criacao: bool = False
+    # Diretor de Edição trigger (project diretor-edicao-reels): approving BOTH headline and roteiro of a post whose route has
+    # ``gatilho_automatico`` (only reel_dirigido) queues its production by itself. Default OFF; owner decision D1 (global vs
+    # per-org) is open -- today it is one global switch.
+    direcao_gatilho_ativo: bool = False
     biblioteca_max_perfis_org: int = 30
     biblioteca_classificacoes_dia_org: int = 300
     # A post is "viral" when its metric >= this x the profile median.

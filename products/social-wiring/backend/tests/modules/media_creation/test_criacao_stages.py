@@ -180,7 +180,9 @@ class TestRotas:
         assert resolver_rota("desconhecido") is None
 
     def test_every_route_key_is_admitted_by_the_database_enum(self):
-        sql = next(Path(__file__).resolve().parents[3].joinpath("migrations").glob("*_cs_criacao_posts.sql")).read_text()
+        migrations = Path(__file__).resolve().parents[3].joinpath("migrations")
+        # 362 declares the enum; later migrations only WIDEN it (373 adds reel_dirigido)
+        sql = "".join(next(migrations.glob(g)).read_text() for g in ("*_cs_criacao_posts.sql", "*_cs_direcao_producao.sql"))
         for chave in ROTAS:
             assert f"'{chave}'" in sql, chave
 
