@@ -65,6 +65,7 @@ Default pace = `natural`. Default approval = `previa` until a preset has approve
 Per-word timestamps: SHIPPED (2026-11-15). Call `noctus.transcription.transcribe` (or `submit`/`batch`) with `segmentos=true, palavras=true`; each segment carries `palavras[{texto, inicio, fim, confianca}]` (seconds). Verified live 2026-11-16. Word-anchored skills use them; they degrade only when a result lacks them, and say so.
 
 ## Open
+CoreStudio structure for the no-footage path exists (approval-triggered route `reel_dirigido`, stage graph, four seams, Fakes only): this agent's storytelling / generation decisions plug into the scene-planner, generator and assembler seams, not into a rebuilt flow. Where this agent runs (worker job vs agents product vs local) is an open owner decision. → `KB § PATTERNS/media/script-to-media-production.md` §7
 Safe-zone tables per rede must come from official docs, not memory. → `video-edit-spec.md` §8
 Grant the ElevenLabs connector tools in `tools:` once the server is registered for agents and the exact tool names are verified (2026-11-18: registered only in the local `.mcp.json`); until then the tech-lead runs TTS. → `KB § PATTERNS/media/script-to-media-production.md` §7
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from app.modules.media_creation.direcao.passos import PASSOS_DIRECAO, ROTA_DIRIGIDO
 from app.modules.media_creation.esteira_config import ROLE_EDICAO
 
 #: ``modo_producao`` default when the caller does not name one.
@@ -30,12 +31,19 @@ class Rota:
     etapas_puladas: frozenset[str] = frozenset()
     #: sub-step of the Edição stage, when the route carries one (avatar videos: the captions burn-in).
     subpasso_edicao: Optional[str] = None
+    #: the approval of BOTH headline and roteiro starts this route by itself (``direcao.gatilho``). Opt-in per route: the
+    #: routes that spend vendor credits on a human's explicit "iniciar" (reel_narrado) stay manual.
+    gatilho_automatico: bool = False
 
 
 ROTAS: dict[str, Rota] = {
     r.chave: r
     for r in (
         Rota("reel_narrado", ("tts", "render_motion", "mux"), frozenset({ROLE_EDICAO})),
+        # The Diretor de Edição's route (project diretor-edicao-reels). Selected ONLY by an explicit criacao_rota (never by
+        # (formato, modo) below) and not runnable until its Real adapters are decided: criacao_passos.PASSOS has no entry,
+        # so ``implementada`` is False and an enqueue is refused with the coded ``rota_nao_implementada``.
+        Rota(ROTA_DIRIGIDO, PASSOS_DIRECAO, frozenset({ROLE_EDICAO}), gatilho_automatico=True),
         Rota("carrossel", ("layout", "render_slides"), frozenset({ROLE_EDICAO})),
         Rota("estatico", ("layout", "render_estatico"), frozenset({ROLE_EDICAO})),
         Rota("avatar", ("tts", "heygen_avatar", "poll"), frozenset(), subpasso_edicao="legendas"),
