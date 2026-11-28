@@ -285,6 +285,7 @@ def make_onboarding_tools_factory(settings: Any):
     from app.grants.store import get_grant_store
     from app.onboarding.fabrica import make_onboarding_tools_factory as _make
     from app.onboarding.sw_settings import get_sw_settings
+    from app.routers.sw_canal_router import get_sw_canal_dep
     from app.stores.messages import get_message_store
     from app.stores.onboarding_sessoes import get_onboarding_store
     from app.stores.studio_definitions import get_studio_definition_store
@@ -292,7 +293,8 @@ def make_onboarding_tools_factory(settings: Any):
 
     return _make(
         store=get_onboarding_store(settings), messages=get_message_store(settings),
-        definitions=get_studio_definition_store(settings), grants=get_grant_store(settings), sw=get_sw_settings(),
+        definitions=get_studio_definition_store(settings), grants=get_grant_store(settings),
+        sw_fn=lambda org_id, ator: get_sw_settings(get_sw_canal_dep().como(org_id, ator)),
         config_fn=config_atual,
     )
 

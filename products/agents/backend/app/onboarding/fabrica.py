@@ -70,9 +70,12 @@ def entrevista_da_conversa(
 
 
 def make_onboarding_tools_factory(
-    *, store, messages, definitions, grants, sw: SwSettingsPort, config_fn: Callable[[], Any],
+    *, store, messages, definitions, grants, sw_fn: Callable[[Any, Any], SwSettingsPort], config_fn: Callable[[], Any],
 ):
-    """``(spec, ctx) -> McpSdkServerConfig`` for the ``onboarding`` tool group of one studio turn."""
+    """``(spec, ctx) -> McpSdkServerConfig`` for the ``onboarding`` tool group of one studio turn.
+
+    ``sw_fn(org_id, ator)`` builds the social-wiring settings port bound to who is acting, per turn (the turn's org
+    and requester, the binding the onboarding router uses); the runtime has no actor when it is built."""
 
     def _factory(spec: Any, ctx: Any) -> Any:
         from app.onboarding.ferramentas import build_onboarding_tools
@@ -80,6 +83,7 @@ def make_onboarding_tools_factory(
         from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
 
         grupo = GRUPOS_FERRAMENTAS["onboarding"]
+        sw = sw_fn(ctx.org_id, ctx.requested_by)
         descricoes = {grupo.nome_curto(f): d for f, d in pares_do_grupo(spec, "onboarding")}
         return build_onboarding_tools(
             lambda: entrevista_da_conversa(
