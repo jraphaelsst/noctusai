@@ -444,12 +444,10 @@ class TestRefacao:
         assert w.youtube.privados == ["yt_velho"]  # once; yt_ok (same batch) never superseded
 
     def test_falha_do_passo_de_substituicao_inteiro_nao_derruba_o_upload(self):
-        w = World()
-
         def quebra(org):
             raise RuntimeError("no credentials")
 
-        w.service._ciclo_video_factory = quebra  # the constructor seam, swapped for this scenario
+        w = World(ciclo_video_factory=quebra)
         w.upload.pastas[ID_A] = [Video("novo", "youtube")]
         self._postar(w)
         assert w.unica()["status"] == svc.CONCLUIDO
