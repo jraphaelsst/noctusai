@@ -468,6 +468,69 @@ def parse_imovel_fotos(raw: Any) -> list[ImovelFoto]:
     return out
 
 
+
+class ImovelVideo(BaseModel):
+    """One entry of an imóvel's ``Video`` relation (``/imoveis/detalhes``-only, like ``Foto``).
+
+    ``video`` is the raw value Vista holds -- usually a bare YouTube id (``"9cgV72Lq9gs"``, live 2026-11-27), sometimes a full
+    URL; a consumer parses it (social-wiring: ``imovel_video_youtube_service.extrair_video_id``). ``tipo`` is Vista's free label
+    (``"youtube"`` on every sampled row). ``codigo`` is ``VideoCodigo``. Go through `parse_imovel_videos`, never the raw payload.
+    """
+
+    codigo: Optional[str] = None
+    video: Optional[str] = None
+    tipo: Optional[str] = None
+    destaque: bool = False
+    exibir_no_site: Optional[bool] = None
+    data: Optional[str] = None
+    descricao: Optional[str] = None
+    descricao_web: Optional[str] = None
+
+
+def _ordem_codigo(codigo: Optional[str]) -> tuple[int, int, str]:
+    texto = codigo or ""
+    return (0, int(texto), "") if texto.isdigit() else (1, 0, texto)
+
+
+def parse_imovel_videos(raw: Any) -> list[ImovelVideo]:
+    """Normalize Vista's ``Video`` relation -- dict-keyed by video code or a list.
+
+    Deterministic ordering: ``VideoCodigo`` ascending (numeric when it is digits; Python's sort is stable, so ties keep Vista's
+    arrival order). ``Destaque`` is exposed as a flag and deliberately NOT an ordering key: "which video wins" is the consumer's
+    policy. Entries with no ``Video`` value are dropped (there is nothing to use).
+    """
+    if isinstance(raw, dict):
+        entries: Iterable[Any] = raw.values()
+    elif isinstance(raw, list):
+        entries = raw
+    else:
+        return []
+
+    out: list[ImovelVideo] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        valor = _clean(entry.get("Video"))
+        if not valor:
+            continue
+        exibir = _sim_nao(entry.get("ExibirNoSite"))
+        if exibir is None:
+            exibir = _sim_nao(entry.get("ExibirSite"))
+        out.append(
+            ImovelVideo(
+                codigo=_clean(entry.get("VideoCodigo")),
+                video=valor,
+                tipo=_clean(entry.get("Tipo")),
+                destaque=bool(_sim_nao(entry.get("Destaque"))),
+                exibir_no_site=exibir,
+                data=_clean(entry.get("Data")),
+                descricao=_clean(entry.get("Descricao")),
+                descricao_web=_clean(entry.get("DescricaoWeb")),
+            )
+        )
+    out.sort(key=lambda video: _ordem_codigo(video.codigo))
+    return out
+
 # ─── The model ────────────────────────────────────────────────────────────
 
 

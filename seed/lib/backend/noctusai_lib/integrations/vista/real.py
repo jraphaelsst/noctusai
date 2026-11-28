@@ -37,8 +37,10 @@ from noctusai_lib.domain.real_estate import (
     Imovel,
     ImovelFoto,
     ImovelPage,
+    ImovelVideo,
     PropertyData,
     parse_imovel_fotos,
+    parse_imovel_videos,
     validate_product_code,
 )
 from noctusai_lib.integrations.vista.calibration import calibrator
@@ -315,6 +317,29 @@ class VistaRESTAdapter:
         if not isinstance(result.data, dict):
             return []
         return parse_imovel_fotos(result.data.get("Foto"))
+
+    #: The `Video` relation's subfields, exactly as `/imoveis/listarcampos` lists them (2026-11-27).
+    _VIDEO_SUBCAMPOS = ["Codigo", "VideoCodigo", "Data", "Descricao", "DescricaoWeb", "Destaque", "ExibirNoSite", "ExibirSite", "Video", "Tipo"]
+
+    async def list_imovel_videos(self, codigo: str) -> list[ImovelVideo]:
+        """The listing's `Video` relation (`GET /imoveis/detalhes`, `fields=["Codigo", {"Video": [...]}, {"Corretor": ["Codigo"]}]`).
+
+        `Video` is a DETALHES relation like `Foto` (live sample 2026-11-27:
+        `{"Video": "9cgV72Lq9gs", "Tipo": "youtube", "Destaque": "Nao", ...}`).
+        `{"Corretor": ["Codigo"]}` rides along ONLY as the discriminator of
+        `VistaRecordUnpublished.payload_keys` (the persistent relation an
+        unpublished record keeps; a nonexistent code answers `[]`) -- no
+        broker data is read from it. Unpublished / unknown / 404 propagate
+        (see the Protocol); the call is paced + retried by `VistaClient`.
+        """
+        if not validate_product_code(codigo):
+            logger.warning("invalid product code format: %s", codigo)
+            return []
+        fields: list[Any] = ["Codigo", {"Video": list(self._VIDEO_SUBCAMPOS)}, {"Corretor": ["Codigo"]}]
+        result = await self._client().detalhes_imovel(codigo, fields=fields)
+        if not isinstance(result.data, dict):
+            return []
+        return parse_imovel_videos(result.data.get("Video"))
 
     async def list_imoveis(
         self, *, page: int = 1, page_size: int = 50, with_detalhes: bool = False

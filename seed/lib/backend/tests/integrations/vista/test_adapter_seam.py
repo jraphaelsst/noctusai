@@ -45,6 +45,7 @@ def test_protocol_declares_the_expected_surface():
         "list_corretores",
         "list_clientes",
         "list_imovel_fotos",
+        "list_imovel_videos",  # 2026-11-27: the `Video` relation (julia-videos-prontos-youtube S3)
         "list_changed_since",
         "atualizar_imovel",  # 2026-11-04: PUT /imoveis/detalhes (owner: Julia may edit Vista)
         "pode_atualizar_imovel",
